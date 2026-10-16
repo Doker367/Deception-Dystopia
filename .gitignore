@@ -106,3 +106,6 @@ config/deception/isos/
 config/deception/images/
 config/deception/vms.json
 secrets/
+
+# Runtime metrics history (host/device state, not source)
+config/metrics_history.json
