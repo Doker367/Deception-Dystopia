@@ -23,4 +23,4 @@ NETPULSE_DECEPTION_BIND_HOST="${NETPULSE_DECEPTION_BIND_HOST:-127.0.0.1}" \
 NETPULSE_DECEPTION_NETWORK_FILE="${NETPULSE_DECEPTION_NETWORK_FILE:-config/deception/network.dev.yaml}" \
 NETPULSE_DECEPTION_INGEST_TOKEN="${NETPULSE_DECEPTION_INGEST_TOKEN:-demo-token}" \
 NETPULSE_METRICS_ENABLED=false \
-exec .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port "${NETPULSE_PORT:-8082}"
+exec .venv/bin/uvicorn app.main:app --host 127.0.0.1 --port "${NETPULSE_PORT:-8082}"

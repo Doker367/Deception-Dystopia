@@ -226,7 +226,7 @@ def start_vm(vm_id: str) -> dict:
 
     disk = _ensure_disk(vm_id)
     pidfile = VMS_DIR / f"{vm_id}.pid"
-    vnc_display = f":{int(vm['vnc_port']) - 5900}"
+    vnc_display = f"127.0.0.1:{int(vm['vnc_port']) - 5900}"
 
     cmd = [exe, "-name", vm["name"], "-m", str(vm["ram_mb"]), "-smp", str(vm["cpus"]),
            "-cdrom", iso, "-boot", "d", "-vnc", vnc_display, "-display", "none",

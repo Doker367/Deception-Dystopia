@@ -16,7 +16,7 @@ from app.middleware.audit import AuditMiddleware
 from app.middleware.metrics import MetricsMiddleware
 from app.middleware.security import SecurityHeadersMiddleware
 from app.models.schemas import HealthResponse
-from app.routers import audit, auth, metrics as metrics_router, notifications, admin_users, prometheus_proxy, alerts, security_ext, integrations, deception, monitoring, ai, vms
+from app.routers import audit, auth, metrics as metrics_router, notifications, admin_users, prometheus_proxy, security_ext, deception, monitoring, ai, vms
 
 # ── Rate Limiter (definido en app/core/limiter.py) ──────────
 
@@ -136,7 +136,7 @@ app.add_middleware(MetricsMiddleware)
 async def health(request: Request):
     return HealthResponse(
         status="healthy",
-        devices_configured=topology_svc.summary().get("devices", 0),
+        devices_configured=__import__("app.services.deception.topology_svc", fromlist=["summary"]).summary().get("devices", 0),
     )
 
 
@@ -148,9 +148,7 @@ app.include_router(metrics_router.router)
 app.include_router(notifications.router)
 app.include_router(admin_users.router)
 app.include_router(prometheus_proxy.router)
-app.include_router(alerts.router)
 app.include_router(security_ext.router)
-app.include_router(integrations.router)
 app.include_router(deception.router)
 app.include_router(monitoring.router)
 app.include_router(ai.router)
