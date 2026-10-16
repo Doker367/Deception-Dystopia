@@ -137,26 +137,29 @@ def test_mysql_handshake_y_login(db_path):
     assert any(e["type"] == "login_success" for e in events)
 
 
-# ── NetBox sync ──────────────────────────────────────────────
+# ── NetBox sync (pertenece al NOC: en Dystopia es no-op) ─────
 
 
-def test_sync_from_netbox(tmp_path, monkeypatch):
+def test_sync_from_netbox_disabled_in_standalone(tmp_path, monkeypatch):
+    """NetBox es propiedad del NOC: Dystopia no debe sincronizar ni importarlo.
+
+    Contrato tras la separación (antes esta prueba verificaba el sync real
+    contra NetBox, una capacidad del NOC).
+    """
+    import importlib
+
     f = tmp_path / "network.yaml"
     f.write_text(yaml.safe_dump({"segments": [], "devices": []}))
     monkeypatch.setattr(topology_svc, "NETWORK_FILE", f)
     topology_svc.invalidate_cache()
 
-    from app.services.integrations import netbox_sync
-    monkeypatch.setattr(netbox_sync, "fetch_netbox_devices", lambda: [
-        {"name": "FW-01", "model": "FortiGate 60F", "status": "active"},
-        {"name": "SW-01", "model": "Catalyst 2960", "status": "active"},
-    ])
-
     result = topology_svc.sync_from_netbox()
-    assert result["added"] == 2
-    roles = {d["id"]: d["role"] for d in topology_svc.list_devices()}
-    assert roles["fw-01"] == "firewall"
-    assert roles["sw-01"] == "switch"
+    assert result.get("success") is False
+    assert result.get("disabled") is True, result
+    assert topology_svc.list_devices() == []
+
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module("app.services.integrations.netbox_sync")
 
 
 # ── Anti falsos positivos ────────────────────────────────────

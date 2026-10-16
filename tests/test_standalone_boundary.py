@@ -2,6 +2,9 @@
 
 Prueba estática/sin red: inspecciona enrutado, defaults y disponibilidad de
 módulos. No abre sockets, no arranca listeners y no contacta ningún equipo.
+
+Nota: FastAPI 0.141 envuelve los routers incluidos en ``_IncludedRouter``, por
+lo que ``app.routes`` no los aplana; se usa ``app.openapi()`` para las rutas.
 """
 
 import importlib
@@ -44,23 +47,28 @@ FORBIDDEN_MODULES = (
     "app.services.integrations.netbox_sync",
 )
 
+# Este archivo menciona rutas de otros productos a propósito al definir la
+# frontera, por lo que se excluye del escaneo de rutas cruzadas.
+_SELF = Path(__file__).resolve()
 
-def _route_paths() -> set[str]:
+
+def _http_paths() -> set[str]:
     from app.main import app
 
-    return {getattr(route, "path", "") for route in app.routes}
+    return set(app.openapi().get("paths", {}))
 
 
 def test_no_noc_routes_registered():
-    paths = _route_paths()
     leaked = sorted(
-        path for path in paths if any(path.startswith(p) for p in FORBIDDEN_PREFIXES)
+        path
+        for path in _http_paths()
+        if any(path.startswith(prefix) for prefix in FORBIDDEN_PREFIXES)
     )
     assert leaked == [], f"rutas del NOC dentro de Dystopia: {leaked}"
 
 
 def test_deception_surface_present():
-    paths = _route_paths()
+    paths = _http_paths()
     assert any(p.startswith("/api/deception") for p in paths), "falta /api/deception"
     assert any(p.startswith("/api/vms") for p in paths), "falta /api/vms"
     assert any(p.startswith("/api/auth") for p in paths), "falta auth propia"
@@ -87,10 +95,10 @@ def test_fail_closed_defaults():
 
 
 def test_no_shared_paths_with_the_other_product():
-    """Ningún archivo debe apuntar a rutas del NOC o del original."""
+    """Ningún archivo propio debe apuntar a rutas del NOC o del original."""
     offenders = []
     for path in ROOT.rglob("*.py"):
-        if ".git" in path.parts:
+        if ".git" in path.parts or path.resolve() == _SELF:
             continue
         text = path.read_text(encoding="utf-8", errors="ignore")
         for needle in ("/Users/doker/Netpulse", "/Users/doker/netpulse-noc"):
