@@ -8,9 +8,11 @@ from datetime import datetime, timedelta, timezone
 import json
 import os
 from pathlib import Path
+import shutil
 import socket
 import sqlite3
 import struct
+import tempfile
 import threading
 from uuid import uuid4
 
@@ -30,6 +32,16 @@ def synthetic_event(device='device-lab', *, marker='nested synthetic secret'):
 def store_fixture(path):
     store=EventStore(path,max_bytes=4*1024*1024)
     return store,QueryStore(path)
+
+
+@pytest.fixture
+def short_socket_dir():
+    """macOS caps AF_UNIX sun_path at 104 bytes, shorter than pytest's tmp_path."""
+    directory=tempfile.mkdtemp(prefix='dq-',dir='/tmp')
+    try:
+        yield Path(directory)
+    finally:
+        shutil.rmtree(directory,ignore_errors=True)
 
 
 def request(operation, **kwargs):
@@ -196,12 +208,12 @@ def test_bridge_rejects_duplicate_fields_and_nonfinite_numbers(tmp_path,monkeypa
         assert not thread.is_alive() and response['error']=='INVALID'
 
 
-def test_control_transport_uses_unix_socket_without_storage_credentials(tmp_path,monkeypatch):
+def test_control_transport_uses_unix_socket_without_storage_credentials(tmp_path,short_socket_dir,monkeypatch):
     _,store=store_fixture(tmp_path/'events.db')
     from runtime import query
     from app.services import query_client
     monkeypatch.setattr(query,'_peer_uid',lambda conn:os.geteuid())
-    address=tmp_path/'query.sock'
+    address=short_socket_dir/'query.sock'
     with socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) as listener:
         listener.bind(str(address))
         listener.listen(1)
@@ -216,9 +228,9 @@ def test_control_transport_uses_unix_socket_without_storage_credentials(tmp_path
     assert not thread.is_alive() and result['items']==[] and result['redacted'] is True
 
 
-def test_control_rejects_extra_payload_from_faulty_query_service(tmp_path,monkeypatch):
+def test_control_rejects_extra_payload_from_faulty_query_service(short_socket_dir,monkeypatch):
     from app.services import query_client
-    address=tmp_path/'bad-query.sock'
+    address=short_socket_dir/'bad-query.sock'
     with socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) as listener:
         listener.bind(str(address))
         listener.listen(1)
@@ -247,7 +259,7 @@ def test_control_rejects_extra_payload_from_faulty_query_service(tmp_path,monkey
     assert exc.value.status==503 and not thread.is_alive()
 
 
-def test_synthetic_sensor_ingest_query_control_and_csv(tmp_path,monkeypatch):
+def test_synthetic_sensor_ingest_query_control_and_csv(tmp_path,short_socket_dir,monkeypatch):
     """No real HTTP server: separate ASGI planes plus real scratch Unix socket."""
     import csv
     import io
@@ -288,7 +300,7 @@ def test_synthetic_sensor_ingest_query_control_and_csv(tmp_path,monkeypatch):
     assert writer.health()['events']==1
     reader=QueryStore(tmp_path/'events.db')
     monkeypatch.setattr(query,'_peer_uid',lambda conn:os.geteuid())
-    address=tmp_path/'bridge.sock'
+    address=short_socket_dir/'bridge.sock'
     with socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) as listener:
         listener.bind(str(address))
         listener.listen(2)
