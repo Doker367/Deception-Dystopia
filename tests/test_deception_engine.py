@@ -5,16 +5,14 @@ que las interacciones del "atacante" queden registradas en el store.
 """
 
 import asyncio
-import socket
 import sys
 from pathlib import Path
 
 import pytest
-import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.services.deception import engine_svc, store_svc, topology_svc
+from app.services.deception import engine_svc, store_svc
 from app.services.deception.listeners import (
     BannerListener,
     HttpListener,
@@ -29,12 +27,6 @@ def db_path(tmp_path, monkeypatch):
     db = tmp_path / "deception.db"
     monkeypatch.setattr(store_svc, "DB_PATH", db)
     return db
-
-
-def _free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
 
 
 async def _read_until(reader, marker: bytes, timeout: float = 3.0) -> bytes:
@@ -198,32 +190,27 @@ def test_ssh_captura_login_y_comando(db_path):
     )
 
 
-def test_engine_start_stop(db_path, tmp_path, monkeypatch):
-    port = _free_port()
-    network = {
-        "segments": [{"id": "vlan-x", "cidr": "10.99.0.0/24"}],
-        "devices": [{
-            "id": "pc-x", "role": "pc", "segment": "vlan-x", "ip": "10.99.0.5",
-            "services": [{"port": port, "proto": "telnet"}],
-        }],
-    }
-    f = tmp_path / "network.yaml"
-    f.write_text(yaml.safe_dump(network))
-    monkeypatch.setattr(topology_svc, "NETWORK_FILE", f)
-    topology_svc.invalidate_cache()
+def test_engine_start_stop_bloqueado(db_path):
+    """El motor heredado no arranca listeners en el plano de control.
 
-    monkeypatch.setattr(engine_svc, "DECEPTION_ENABLED", True)
-    monkeypatch.setattr(engine_svc, "DECEPTION_BIND_HOST", "127.0.0.1")
+    Los listeners deben vivir en una celda sensor validada; el contrato aquí
+    es la negativa explícita y la ausencia de estado en ejecución.
+    """
 
     async def scenario():
         report = await engine_svc.start()
-        assert report["status"] == "started", report
-        assert report["started"] == 1
+        assert report["status"] == "blocked", report
+        assert report["started"] == 0
+        assert "sensor" in report["reason"]
+        assert engine_svc.is_running() is False
+
         st = engine_svc.status()
-        assert st["running"] is True
-        assert st["count"] == 1
+        assert st["running"] is False
+        assert st["count"] == 0
+        assert st["state"] == "blocked"
+
         stop = await engine_svc.stop()
-        assert stop["stopped"] == 1
+        assert stop["stopped"] == 0
         assert engine_svc.status()["running"] is False
 
     asyncio.run(scenario())

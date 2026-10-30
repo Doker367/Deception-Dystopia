@@ -67,16 +67,16 @@ def test_attack_map(db_path):
 # ── Firewall ─────────────────────────────────────────────────
 
 
-def test_firewall_dry_run(block_file, monkeypatch):
-    monkeypatch.setattr(firewall_svc, "FIREWALL_ENABLED", False)
-    res = firewall_svc.block("203.0.113.9", "test")
-    assert res["blocked"] is True
-    assert res["applied"] is False
-    assert res["commands"]
-    assert blocklist_svc.is_blocked("203.0.113.9")
+def test_firewall_block_denegado(block_file):
+    """El plano de control no muta el firewall del host."""
+    with pytest.raises(RuntimeError, match="isolation"):
+        firewall_svc.block("203.0.113.9", "test")
+    assert not blocklist_svc.is_blocked("203.0.113.9")
 
 
-def test_firewall_status(block_file, monkeypatch):
-    monkeypatch.setattr(firewall_svc, "FIREWALL_ENABLED", False)
+def test_firewall_status(block_file):
     st = firewall_svc.status()
-    assert "platform" in st and "preview" in st
+    assert st["enabled"] is False
+    assert st["applied"] is False
+    assert st["blocked"] == []
+    assert "reason" in st

@@ -170,6 +170,15 @@ def allow_file(tmp_path, monkeypatch):
     monkeypatch.setattr(allowlist_svc, "ALLOWLIST_FILE", tmp_path / "allowlist.json")
 
 
+@pytest.fixture(autouse=True)
+def _alert_state(monkeypatch):
+    monkeypatch.setattr(alert_svc, "DECEPTION_ALERTS_ENABLED", True)
+    monkeypatch.setattr(alert_svc, "DECEPTION_ALERT_COOLDOWN", 0)
+    alert_svc._last_fired.clear()
+    yield
+    alert_svc._last_fired.clear()
+
+
 def test_allowlist_cidr(allow_file):
     allowlist_svc.add("10.0.0.0/8", "gestion")
     assert allowlist_svc.is_allowed("10.1.2.3")
@@ -177,37 +186,39 @@ def test_allowlist_cidr(allow_file):
     assert allowlist_svc.remove("10.0.0.0/8")
 
 
-def test_alert_ignora_simulado(db_path, allow_file, monkeypatch):
-    monkeypatch.setattr(alert_svc, "DECEPTION_ALERTS_ENABLED", True)
-    monkeypatch.setattr(alert_svc, "DECEPTION_ALERT_IGNORE_SIMULATED", True)
+def test_alert_no_suprime_simulado(db_path, allow_file):
+    """El flag de simulación heredado no silencia alertas (sin autoridad)."""
     rec = store_svc.log_event(DeceptionEventIn(
         device_id="srv-01", src_ip="203.0.113.9", proto="ssh",
         type=DeceptionEventType.LOGIN_SUCCESS, success=True,
         detail={"simulated": True},
     ))
-    assert alert_svc.evaluate(rec) == []
+    fired = alert_svc.evaluate(rec)
+    assert len(fired) == 1
+    assert fired[0]["rule"] == "login_success"
 
 
-def test_alert_ignora_loopback(db_path, allow_file, monkeypatch):
-    monkeypatch.setattr(alert_svc, "DECEPTION_ALERTS_ENABLED", True)
-    monkeypatch.setattr(alert_svc, "DECEPTION_ALERT_IGNORE_LOOPBACK", True)
+def test_alert_no_suprime_loopback(db_path, allow_file):
+    """Loopback tampoco se descarta de forma implícita."""
     rec = store_svc.log_event(DeceptionEventIn(
         device_id="srv-01", src_ip="127.0.0.1", proto="ssh",
         type=DeceptionEventType.LOGIN_SUCCESS, success=True,
     ))
-    assert alert_svc.evaluate(rec) == []
+    fired = alert_svc.evaluate(rec)
+    assert len(fired) == 1
+    assert fired[0]["rule"] == "login_success"
 
 
-def test_alert_ignora_allowlisted(db_path, allow_file, monkeypatch):
-    monkeypatch.setattr(alert_svc, "DECEPTION_ALERTS_ENABLED", True)
-    monkeypatch.setattr(alert_svc, "DECEPTION_ALERT_IGNORE_SIMULATED", False)
-    monkeypatch.setattr(alert_svc, "DECEPTION_ALERT_IGNORE_LOOPBACK", False)
+def test_alert_no_suprime_allowlisted(db_path, allow_file):
+    """La allowlist heredada no es autoridad para suprimir detecciones."""
     allowlist_svc.add("203.0.113.0/24", "scanner propio")
     rec = store_svc.log_event(DeceptionEventIn(
         device_id="srv-01", src_ip="203.0.113.9", proto="ssh",
         type=DeceptionEventType.LOGIN_SUCCESS, success=True,
     ))
-    assert alert_svc.evaluate(rec) == []
+    fired = alert_svc.evaluate(rec)
+    assert len(fired) == 1
+    assert fired[0]["rule"] == "login_success"
 
 
 def test_ioc_clasifica_loopback_como_lab(db_path, block_file, allow_file):

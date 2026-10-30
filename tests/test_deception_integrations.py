@@ -1,7 +1,6 @@
 """Tests de integraciones de honeypots reales (Fase C): parsers y tailer."""
 
 import sys
-import time
 from pathlib import Path
 
 import pytest
@@ -78,32 +77,11 @@ def test_opencanary_snmp_y_login():
 # ── Tailer ───────────────────────────────────────────────────
 
 
-def test_tailer_ingesta(db_path, tmp_path, monkeypatch):
-    log = tmp_path / "cowrie.json"
-    log.write_text("")  # existe vacío
-
-    monkeypatch.setattr(tailer_svc, "SOURCES", {
-        "cowrie-test": {"path": str(log), "device_id": "srv-test",
-                        "parser": cowrie_svc.parse},
-    })
-
-    tailer_svc.start()
-    try:
-        line = (
-            '{"eventid":"cowrie.login.success","src_ip":"203.0.113.9",'
-            '"username":"root","password":"toor","session":"s1"}'
-        )
-        with open(log, "a", encoding="utf-8") as f:
-            f.write(line + "\n")
-
-        deadline = time.time() + 5
-        events = []
-        while time.time() < deadline:
-            events = store_svc.get_events()
-            if any(e["type"] == "login_success" for e in events):
-                break
-            time.sleep(0.1)
-        assert any(e["type"] == "login_success" and e["device_id"] == "srv-test"
-                   for e in events)
-    finally:
-        tailer_svc.stop()
+def test_tailer_retirado(db_path):
+    """La ingesta de logs vive en el sensor independiente, no en el control."""
+    assert tailer_svc.is_running() is False
+    result = tailer_svc.start()
+    assert result["status"] == "blocked"
+    assert "runtime.sensor" in result["reason"]
+    assert tailer_svc.status() == {"running": False, "state": "blocked", "sources": []}
+    assert store_svc.get_events() == []
