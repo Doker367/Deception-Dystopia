@@ -1,0 +1,1634 @@
+{
+  "$schema_note": "Archivo de especificaci\u00f3n de dashboards Dystopia (deception-*). No se ejecuta: es el CONTRATO que consume deploy/kibana-dashboards/tools/build_dashboards.py para producir el NDJSON importable (artifacts/deception-kibana-bundle.ndjson). Versionado y revisable por humano. El bundle can\u00f3nico se import\u00f3 y valid\u00f3 en Kibana 9.3.5; ver artifacts/MANIFEST.json y README.md.",
+  "$version": "1.0.0",
+  "target_kibana": "9.3.5",
+  "data_views": [
+    {
+      "id": "deception-events-dv",
+      "title": "deception-events*",
+      "timeFieldName": "@timestamp",
+      "description": "Eventos normalizados de interacci\u00f3n honeypot (contract mappings config/elasticsearch/templates/deception-events-template.json)"
+    },
+    {
+      "id": "deception-alerts-dv",
+      "title": "deception-alerts*",
+      "timeFieldName": "@timestamp",
+      "description": "Alertas derivadas de eventos (contract deception-alerts-template.json)"
+    }
+  ],
+  "dashboards": [
+    {
+      "id": "deception-overview",
+      "title": "Dystopia - Resumen de eventos honeypot",
+      "description": "Volumen total, evoluci\u00f3n temporal, tipos de evento y principales or\u00edgenes desde deception-events*",
+      "panels": [
+        {
+          "vis_id": "deception-overview-total",
+          "grid": {
+            "x": 0,
+            "y": 0,
+            "w": 8,
+            "h": 13
+          }
+        },
+        {
+          "vis_id": "deception-overview-timeline",
+          "grid": {
+            "x": 8,
+            "y": 0,
+            "w": 56,
+            "h": 13
+          }
+        },
+        {
+          "vis_id": "deception-overview-categories",
+          "grid": {
+            "x": 0,
+            "y": 13,
+            "w": 32,
+            "h": 20
+          }
+        },
+        {
+          "vis_id": "deception-overview-top-ips",
+          "grid": {
+            "x": 32,
+            "y": 13,
+            "w": 32,
+            "h": 20
+          }
+        },
+        {
+          "vis_id": "deception-overview-protocols",
+          "grid": {
+            "x": 0,
+            "y": 33,
+            "w": 16,
+            "h": 15
+          }
+        },
+        {
+          "vis_id": "deception-overview-severity",
+          "grid": {
+            "x": 16,
+            "y": 33,
+            "w": 16,
+            "h": 15
+          }
+        },
+        {
+          "vis_id": "deception-overview-countries",
+          "grid": {
+            "x": 32,
+            "y": 33,
+            "w": 32,
+            "h": 15
+          }
+        }
+      ]
+    },
+    {
+      "id": "deception-geo-map",
+      "title": "Dystopia - Mapa de ataques",
+      "description": "Distribucion por pais y ASN de los origenes (source.geo.*) + panel Maps experimental con geolocalizacion (source.geo.location) generable con --with-map, PENDIENTE de validacion en Kibana real.",
+      "panels": [
+        {
+          "vis_id": "deception-geo-top-countries",
+          "grid": {
+            "x": 0,
+            "y": 0,
+            "w": 24,
+            "h": 22
+          }
+        },
+        {
+          "vis_id": "deception-geo-top-asns",
+          "grid": {
+            "x": 24,
+            "y": 0,
+            "w": 24,
+            "h": 22
+          }
+        },
+        {
+          "vis_id": "deception-geo-top-cities",
+          "grid": {
+            "x": 48,
+            "y": 0,
+            "w": 16,
+            "h": 22
+          }
+        },
+        {
+          "vis_id": "deception-geo-attacks-by-timezone",
+          "grid": {
+            "x": 0,
+            "y": 22,
+            "w": 32,
+            "h": 14
+          }
+        },
+        {
+          "vis_id": "deception-geo-country-ports",
+          "grid": {
+            "x": 32,
+            "y": 22,
+            "w": 32,
+            "h": 14
+          }
+        }
+      ]
+    },
+    {
+      "id": "deception-devices-segments",
+      "title": "Dystopia - Dispositivos y segmentos",
+      "description": "Actividad por device_id, segment_id, instance_id y persona (objetos dystopia del contrato)",
+      "panels": [
+        {
+          "vis_id": "deception-devices-events-per-device",
+          "grid": {
+            "x": 0,
+            "y": 0,
+            "w": 24,
+            "h": 18
+          }
+        },
+        {
+          "vis_id": "deception-devices-per-segment",
+          "grid": {
+            "x": 24,
+            "y": 0,
+            "w": 24,
+            "h": 18
+          }
+        },
+        {
+          "vis_id": "deception-devices-persona",
+          "grid": {
+            "x": 48,
+            "y": 0,
+            "w": 16,
+            "h": 18
+          }
+        },
+        {
+          "vis_id": "deception-devices-per-device-table",
+          "grid": {
+            "x": 0,
+            "y": 18,
+            "w": 48,
+            "h": 18
+          }
+        },
+        {
+          "vis_id": "deception-devices-devices-over-time",
+          "grid": {
+            "x": 0,
+            "y": 36,
+            "w": 48,
+            "h": 14
+          }
+        },
+        {
+          "vis_id": "deception-devices-alerts-by-segment",
+          "grid": {
+            "x": 48,
+            "y": 18,
+            "w": 16,
+            "h": 18
+          }
+        }
+      ]
+    },
+    {
+      "id": "deception-ssh-telnet",
+      "title": "Dystopia - SSH y Telnet",
+      "description": "Sesiones SSH y Telnet, or\u00edgenes y m\u00e9todos de autenticaci\u00f3n (eventos sesionales)",
+      "panels": [
+        {
+          "vis_id": "deception-ssh-telnet-sessions",
+          "grid": {
+            "x": 0,
+            "y": 0,
+            "w": 16,
+            "h": 13
+          }
+        },
+        {
+          "vis_id": "deception-ssh-telnet-timeline",
+          "grid": {
+            "x": 16,
+            "y": 0,
+            "w": 48,
+            "h": 13
+          }
+        },
+        {
+          "vis_id": "deception-ssh-telnet-top-ips",
+          "grid": {
+            "x": 0,
+            "y": 13,
+            "w": 24,
+            "h": 17
+          }
+        },
+        {
+          "vis_id": "deception-ssh-telnet-dest-ports",
+          "grid": {
+            "x": 24,
+            "y": 13,
+            "w": 12,
+            "h": 17
+          }
+        },
+        {
+          "vis_id": "deception-ssh-telnet-auth-outcomes",
+          "grid": {
+            "x": 36,
+            "y": 13,
+            "w": 12,
+            "h": 17
+          }
+        },
+        {
+          "vis_id": "deception-ssh-telnet-top-usernames",
+          "grid": {
+            "x": 48,
+            "y": 13,
+            "w": 16,
+            "h": 17
+          }
+        },
+        {
+          "vis_id": "deception-ssh-telnet-alerts",
+          "grid": {
+            "x": 0,
+            "y": 30,
+            "w": 32,
+            "h": 14
+          }
+        },
+        {
+          "vis_id": "deception-ssh-telnet-protocol-mix",
+          "grid": {
+            "x": 32,
+            "y": 30,
+            "w": 32,
+            "h": 14
+          }
+        }
+      ]
+    },
+    {
+      "id": "deception-decoy-credentials",
+      "title": "Dystopia - Credenciales se\u00f1uelo",
+      "description": "Atraccion y efecto de las credenciales decoy (ids, realm, matches). Nunca credenciales reales, solo identificadores del contrato de mappings.",
+      "panels": [
+        {
+          "vis_id": "deception-decoy-matches-total",
+          "grid": {
+            "x": 0,
+            "y": 0,
+            "w": 16,
+            "h": 13
+          }
+        },
+        {
+          "vis_id": "deception-decoy-top-credential-ids",
+          "grid": {
+            "x": 16,
+            "y": 0,
+            "w": 24,
+            "h": 13
+          }
+        },
+        {
+          "vis_id": "deception-decoy-realms",
+          "grid": {
+            "x": 40,
+            "y": 0,
+            "w": 24,
+            "h": 13
+          }
+        },
+        {
+          "vis_id": "deception-decoy-matches-timeline",
+          "grid": {
+            "x": 0,
+            "y": 13,
+            "w": 32,
+            "h": 16
+          }
+        },
+        {
+          "vis_id": "deception-decoy-per-persona",
+          "grid": {
+            "x": 32,
+            "y": 13,
+            "w": 16,
+            "h": 16
+          }
+        },
+        {
+          "vis_id": "deception-decoy-table-realm-persona",
+          "grid": {
+            "x": 48,
+            "y": 13,
+            "w": 16,
+            "h": 16
+          }
+        }
+      ]
+    },
+    {
+      "id": "deception-dionaea-malware",
+      "title": "Dystopia - Dionaea: malware y exploits",
+      "description": "Panel dionaea: acciones, protocolos (smb/mssql/ftp), payloads hash (NO payloads), y detecci\u00f3n heur\u00edtica",
+      "panels": [
+        {
+          "vis_id": "deception-dionaea-observer-count",
+          "grid": {
+            "x": 0,
+            "y": 0,
+            "w": 16,
+            "h": 13
+          }
+        },
+        {
+          "vis_id": "deception-dionaea-actions",
+          "grid": {
+            "x": 16,
+            "y": 0,
+            "w": 16,
+            "h": 13
+          }
+        },
+        {
+          "vis_id": "deception-dionaea-protocols",
+          "grid": {
+            "x": 32,
+            "y": 0,
+            "w": 16,
+            "h": 13
+          }
+        },
+        {
+          "vis_id": "deception-dionaea-top-ips",
+          "grid": {
+            "x": 48,
+            "y": 0,
+            "w": 16,
+            "h": 13
+          }
+        },
+        {
+          "vis_id": "deception-dionaea-timeline",
+          "grid": {
+            "x": 0,
+            "y": 13,
+            "w": 48,
+            "h": 15
+          }
+        },
+        {
+          "vis_id": "deception-dionaea-db-cbdb-table",
+          "grid": {
+            "x": 48,
+            "y": 13,
+            "w": 16,
+            "h": 15
+          }
+        }
+      ]
+    },
+    {
+      "id": "deception-ingest-health",
+      "title": "Dystopia - Salud de ingesta",
+      "description": "Monitorizacion del pipeline: volumen reciente, procedencia, alertas vs eventos y ultimos timestamps para detectar silencio de ingesta.",
+      "panels": [
+        {
+          "vis_id": "deception-ingest-last-users",
+          "grid": {
+            "x": 0,
+            "y": 0,
+            "w": 16,
+            "h": 13
+          }
+        },
+        {
+          "vis_id": "deception-ingest-senders",
+          "grid": {
+            "x": 16,
+            "y": 0,
+            "w": 16,
+            "h": 13
+          }
+        },
+        {
+          "vis_id": "deception-ingest-last-timestamps",
+          "grid": {
+            "x": 32,
+            "y": 0,
+            "w": 16,
+            "h": 13
+          }
+        },
+        {
+          "vis_id": "deception-ingest-swap-events-alerts",
+          "grid": {
+            "x": 48,
+            "y": 0,
+            "w": 16,
+            "h": 13
+          }
+        },
+        {
+          "vis_id": "deception-ingest-rate-timeline",
+          "grid": {
+            "x": 0,
+            "y": 13,
+            "w": 48,
+            "h": 15
+          }
+        },
+        {
+          "vis_id": "deception-ingest-by-device-lag",
+          "grid": {
+            "x": 48,
+            "y": 13,
+            "w": 16,
+            "h": 15
+          }
+        }
+      ]
+    }
+  ],
+  "visualizations": {
+    "deception-overview-total": {
+      "dashboard": "deception-overview",
+      "data_view": "deception-events-dv",
+      "title": "Eventos totales",
+      "type": "metric",
+      "desc": "count(*) completo en el rango temporal seleccionado",
+      "aggs": [
+        {
+          "id": "1",
+          "type": "count",
+          "schema": "metric"
+        }
+      ],
+      "params": {
+        "style": {
+          "fontSize": "36px"
+        },
+        "labels": {
+          "show": true
+        },
+        "metricTitle": "Eventos honeypot en rango"
+      }
+    },
+    "deception-overview-timeline": {
+      "dashboard": "deception-overview",
+      "data_view": "deception-events-dv",
+      "title": "Timeline de eventos",
+      "type": "line",
+      "aggs": [
+        {
+          "id": "1",
+          "type": "date_histogram",
+          "schema": "segment",
+          "field": "@timestamp"
+        },
+        {
+          "id": "2",
+          "type": "count",
+          "schema": "metric"
+        }
+      ],
+      "params": {
+        "mode": "stacked",
+        "interpolate": "linear"
+      }
+    },
+    "deception-overview-categories": {
+      "dashboard": "deception-overview",
+      "data_view": "deception-events-dv",
+      "title": "Eventos por event.category",
+      "type": "pie",
+      "aggs": [
+        {
+          "id": "1",
+          "type": "terms",
+          "schema": "segment",
+          "field": "event.category",
+          "size": 10
+        },
+        {
+          "id": "2",
+          "type": "count",
+          "schema": "metric"
+        }
+      ],
+      "params": {
+        "isDonut": true,
+        "legendPosition": "right",
+        "addLegend": true
+      }
+    },
+    "deception-overview-top-ips": {
+      "dashboard": "deception-overview",
+      "data_view": "deception-events-dv",
+      "title": "Top or\u00edgenes (source.ip)",
+      "type": "table",
+      "aggs": [
+        {
+          "id": "1",
+          "type": "terms",
+          "schema": "bucket",
+          "field": "source.ip",
+          "size": 10
+        },
+        {
+          "id": "2",
+          "type": "count",
+          "schema": "metric"
+        }
+      ],
+      "params": {
+        "perPage": 10,
+        "showPartialRows": false,
+        "percentageCol": ""
+      }
+    },
+    "deception-overview-protocols": {
+      "dashboard": "deception-overview",
+      "data_view": "deception-events-dv",
+      "title": "Protocolos",
+      "type": "pie",
+      "aggs": [
+        {
+          "id": "1",
+          "type": "terms",
+          "schema": "segment",
+          "field": "network.protocol",
+          "size": 10
+        },
+        {
+          "id": "2",
+          "type": "count",
+          "schema": "metric"
+        }
+      ],
+      "params": {
+        "isDonut": true,
+        "addLegend": true,
+        "legendPosition": "bottom"
+      }
+    },
+    "deception-overview-severity": {
+      "dashboard": "deception-overview",
+      "data_view": "deception-events-dv",
+      "title": "Severidad media (event.severity)",
+      "type": "metric",
+      "aggs": [
+        {
+          "id": "1",
+          "type": "avg",
+          "schema": "metric",
+          "field": "event.severity"
+        }
+      ],
+      "params": {
+        "style": {
+          "fontSize": "24px"
+        },
+        "labels": {
+          "show": true
+        },
+        "metricTitle": "Severidad media en rango"
+      }
+    },
+    "deception-overview-countries": {
+      "dashboard": "deception-overview",
+      "data_view": "deception-events-dv",
+      "title": "Top pa\u00edses origen (source.geo.country_name)",
+      "type": "table",
+      "aggs": [
+        {
+          "id": "1",
+          "type": "terms",
+          "schema": "bucket",
+          "field": "source.geo.country_name",
+          "size": 10
+        },
+        {
+          "id": "2",
+          "type": "count",
+          "schema": "metric"
+        }
+      ],
+      "params": {
+        "perPage": 10,
+        "showPartialRows": false,
+        "percentageCol": ""
+      }
+    },
+    "deception-geo-top-countries": {
+      "dashboard": "deception-geo-map",
+      "data_view": "deception-events-dv",
+      "title": "Top 15 pa\u00edses por origen",
+      "type": "table",
+      "aggs": [
+        {
+          "id": "1",
+          "type": "terms",
+          "schema": "bucket",
+          "field": "source.geo.country_name",
+          "size": 15
+        },
+        {
+          "id": "2",
+          "type": "count",
+          "schema": "metric"
+        }
+      ],
+      "params": {
+        "perPage": 15,
+        "showPartialRows": false,
+        "percentageCol": ""
+      }
+    },
+    "deception-geo-top-asns": {
+      "dashboard": "deception-geo-map",
+      "data_view": "deception-events-dv",
+      "title": "Top 15 ASN origen (source.as.number/organization)",
+      "type": "table",
+      "aggs": [
+        {
+          "id": "1",
+          "type": "terms",
+          "schema": "bucket",
+          "field": "source.as.organization",
+          "size": 15
+        },
+        {
+          "id": "2",
+          "type": "count",
+          "schema": "metric"
+        }
+      ],
+      "params": {
+        "perPage": 15,
+        "showPartialRows": false,
+        "percentageCol": ""
+      }
+    },
+    "deception-geo-top-cities": {
+      "dashboard": "deception-geo-map",
+      "data_view": "deception-events-dv",
+      "title": "Top 10 ciudades origen",
+      "type": "table",
+      "aggs": [
+        {
+          "id": "1",
+          "type": "terms",
+          "schema": "bucket",
+          "field": "source.geo.city_name",
+          "size": 10
+        },
+        {
+          "id": "2",
+          "type": "count",
+          "schema": "metric"
+        }
+      ],
+      "params": {
+        "perPage": 10,
+        "showPartialRows": false,
+        "percentageCol": ""
+      }
+    },
+    "deception-geo-attacks-by-timezone": {
+      "dashboard": "deception-geo-map",
+      "data_view": "deception-events-dv",
+      "title": "Volumen por zona horaria origen",
+      "type": "bar",
+      "aggs": [
+        {
+          "id": "1",
+          "type": "terms",
+          "schema": "segment",
+          "field": "source.geo.timezone",
+          "size": 10
+        },
+        {
+          "id": "2",
+          "type": "count",
+          "schema": "metric"
+        }
+      ],
+      "params": {
+        "mode": "stacked",
+        "addLegend": true,
+        "legendPosition": "right"
+      }
+    },
+    "deception-geo-country-ports": {
+      "dashboard": "deception-geo-map",
+      "data_view": "deception-events-dv",
+      "title": "Destino por puertos (destination.port)",
+      "type": "pie",
+      "aggs": [
+        {
+          "id": "1",
+          "type": "terms",
+          "schema": "segment",
+          "field": "destination.port",
+          "size": 10
+        },
+        {
+          "id": "2",
+          "type": "count",
+          "schema": "metric"
+        }
+      ],
+      "params": {
+        "isDonut": true,
+        "addLegend": true,
+        "legendPosition": "right"
+      }
+    },
+    "deception-devices-events-per-device": {
+      "dashboard": "deception-devices-segments",
+      "data_view": "deception-events-dv",
+      "title": "Eventos por device_id",
+      "type": "bar",
+      "aggs": [
+        {
+          "id": "1",
+          "type": "terms",
+          "schema": "segment",
+          "field": "dystopia.device_id",
+          "size": 10
+        },
+        {
+          "id": "2",
+          "type": "count",
+          "schema": "metric"
+        }
+      ],
+      "params": {
+        "mode": "stacked",
+        "addLegend": true,
+        "legendPosition": "right"
+      }
+    },
+    "deception-devices-per-segment": {
+      "dashboard": "deception-devices-segments",
+      "data_view": "deception-events-dv",
+      "title": "Eventos por segment_id",
+      "type": "pie",
+      "aggs": [
+        {
+          "id": "1",
+          "type": "terms",
+          "schema": "segment",
+          "field": "dystopia.segment_id",
+          "size": 10
+        },
+        {
+          "id": "2",
+          "type": "count",
+          "schema": "metric"
+        }
+      ],
+      "params": {
+        "isDonut": true,
+        "legendPosition": "right",
+        "addLegend": true
+      }
+    },
+    "deception-devices-persona": {
+      "dashboard": "deception-devices-segments",
+      "data_view": "deception-events-dv",
+      "title": "Eventos por persona",
+      "type": "pie",
+      "aggs": [
+        {
+          "id": "1",
+          "type": "terms",
+          "schema": "segment",
+          "field": "dystopia.persona",
+          "size": 10
+        },
+        {
+          "id": "2",
+          "type": "count",
+          "schema": "metric"
+        }
+      ],
+      "params": {
+        "isDonut": true,
+        "legendPosition": "right",
+        "addLegend": true
+      }
+    },
+    "deception-devices-per-device-table": {
+      "dashboard": "deception-devices-segments",
+      "data_view": "deception-events-dv",
+      "title": "Detalle: device_id vs protocolo",
+      "type": "table",
+      "aggs": [
+        {
+          "id": "1",
+          "type": "terms",
+          "schema": "bucket",
+          "field": "dystopia.device_id",
+          "size": 10
+        },
+        {
+          "id": "2",
+          "type": "terms",
+          "schema": "bucket",
+          "field": "network.protocol",
+          "size": 10
+        },
+        {
+          "id": "3",
+          "type": "count",
+          "schema": "metric"
+        }
+      ],
+      "params": {
+        "perPage": 10,
+        "showPartialRows": true,
+        "percentageCol": ""
+      }
+    },
+    "deception-devices-devices-over-time": {
+      "dashboard": "deception-devices-segments",
+      "data_view": "deception-events-dv",
+      "title": "Actividad por device_id a lo largo del tiempo",
+      "type": "line",
+      "aggs": [
+        {
+          "id": "1",
+          "type": "date_histogram",
+          "schema": "segment",
+          "field": "@timestamp"
+        },
+        {
+          "id": "2",
+          "type": "terms",
+          "schema": "split_series",
+          "field": "dystopia.device_id",
+          "size": 10
+        },
+        {
+          "id": "3",
+          "type": "count",
+          "schema": "metric"
+        }
+      ],
+      "params": {
+        "mode": "stacked",
+        "interpolate": "linear",
+        "addLegend": true,
+        "legendPosition": "right"
+      },
+      "notes_pending": "aggregation split_series requiere validacion del nombre de schema exacto ('split_series' para vislib line/bar)"
+    },
+    "deception-devices-alerts-by-segment": {
+      "dashboard": "deception-devices-segments",
+      "data_view": "deception-alerts-dv",
+      "title": "Alertas por segment_id (deception-alerts*)",
+      "type": "bar",
+      "aggs": [
+        {
+          "id": "1",
+          "type": "terms",
+          "schema": "segment",
+          "field": "dystopia.segment_id",
+          "size": 10
+        },
+        {
+          "id": "2",
+          "type": "count",
+          "schema": "metric"
+        }
+      ],
+      "params": {
+        "mode": "stacked",
+        "addLegend": true,
+        "legendPosition": "right"
+      }
+    },
+    "deception-ssh-telnet-protocol-mix": {
+      "dashboard": "deception-ssh-telnet",
+      "data_view": "deception-events-dv",
+      "title": "Sesiones SSH vs Telnet",
+      "type": "pie",
+      "filter": "network.protocol: (\"ssh\" OR \"telnet\")",
+      "aggs": [
+        {
+          "id": "1",
+          "type": "terms",
+          "schema": "segment",
+          "field": "network.protocol",
+          "size": 10
+        },
+        {
+          "id": "2",
+          "type": "count",
+          "schema": "metric"
+        }
+      ],
+      "params": {
+        "isDonut": true,
+        "legendPosition": "right",
+        "addLegend": true
+      }
+    },
+    "deception-ssh-telnet-sessions": {
+      "dashboard": "deception-ssh-telnet",
+      "data_view": "deception-events-dv",
+      "title": "Sesiones totales SSH/Telnet",
+      "type": "metric",
+      "filter": "network.protocol: (\"ssh\" OR \"telnet\")",
+      "aggs": [
+        {
+          "id": "1",
+          "type": "count",
+          "schema": "metric"
+        }
+      ],
+      "params": {
+        "style": {
+          "fontSize": "36px"
+        },
+        "labels": {
+          "show": true
+        },
+        "metricTitle": "Sesiones SSH/Telnet en rango"
+      }
+    },
+    "deception-ssh-telnet-timeline": {
+      "dashboard": "deception-ssh-telnet",
+      "data_view": "deception-events-dv",
+      "title": "Sesiones SSH/Telnet en el tiempo (por protocolo)",
+      "type": "line",
+      "filter": "network.protocol: (\"ssh\" OR \"telnet\")",
+      "aggs": [
+        {
+          "id": "1",
+          "type": "date_histogram",
+          "schema": "segment",
+          "field": "@timestamp"
+        },
+        {
+          "id": "2",
+          "type": "terms",
+          "schema": "split_series",
+          "field": "network.protocol",
+          "size": 5
+        },
+        {
+          "id": "3",
+          "type": "count",
+          "schema": "metric"
+        }
+      ],
+      "params": {
+        "mode": "stacked",
+        "interpolate": "linear",
+        "addLegend": true,
+        "legendPosition": "right"
+      }
+    },
+    "deception-ssh-telnet-top-ips": {
+      "dashboard": "deception-ssh-telnet",
+      "data_view": "deception-events-dv",
+      "title": "Top IPs origen SSH/Telnet",
+      "type": "table",
+      "filter": "network.protocol: (\"ssh\" OR \"telnet\")",
+      "aggs": [
+        {
+          "id": "1",
+          "type": "terms",
+          "schema": "bucket",
+          "field": "source.ip",
+          "size": 10
+        },
+        {
+          "id": "2",
+          "type": "count",
+          "schema": "metric"
+        }
+      ],
+      "params": {
+        "perPage": 10,
+        "showPartialRows": false,
+        "percentageCol": ""
+      }
+    },
+    "deception-ssh-telnet-dest-ports": {
+      "dashboard": "deception-ssh-telnet",
+      "data_view": "deception-events-dv",
+      "title": "Puertos destino (destination.port)",
+      "type": "pie",
+      "filter": "network.protocol: (\"ssh\" OR \"telnet\")",
+      "aggs": [
+        {
+          "id": "1",
+          "type": "terms",
+          "schema": "segment",
+          "field": "destination.port",
+          "size": 10
+        },
+        {
+          "id": "2",
+          "type": "count",
+          "schema": "metric"
+        }
+      ],
+      "params": {
+        "isDonut": true,
+        "addLegend": true,
+        "legendPosition": "right"
+      }
+    },
+    "deception-ssh-telnet-auth-outcomes": {
+      "dashboard": "deception-ssh-telnet",
+      "data_view": "deception-events-dv",
+      "title": "\u200bOutcome de autenticaci\u00f3n (event.outcome)",
+      "type": "pie",
+      "filter": "network.protocol: (\"ssh\" OR \"telnet\")",
+      "aggs": [
+        {
+          "id": "1",
+          "type": "terms",
+          "schema": "segment",
+          "field": "event.outcome",
+          "size": 10
+        },
+        {
+          "id": "2",
+          "type": "count",
+          "schema": "metric"
+        }
+      ],
+      "params": {
+        "isDonut": true,
+        "addLegend": true,
+        "legendPosition": "right"
+      }
+    },
+    "deception-ssh-telnet-top-usernames": {
+      "dashboard": "deception-ssh-telnet",
+      "data_view": "deception-events-dv",
+      "title": "Top usernames (valores se\u00f1uelo, NO reales)",
+      "type": "table",
+      "filter": "network.protocol: (\"ssh\" OR \"telnet\") AND dystopia.decoy_credentials: *",
+      "aggs": [
+        {
+          "id": "1",
+          "type": "terms",
+          "schema": "bucket",
+          "field": "dystopia.decoy_credentials",
+          "size": 10
+        },
+        {
+          "id": "2",
+          "type": "count",
+          "schema": "metric"
+        }
+      ],
+      "params": {
+        "perPage": 10,
+        "showPartialRows": false,
+        "percentageCol": ""
+      },
+      "notes_pending": "dystopia.decoy_credentials contiene IDENTIFICADORES de credencial, no credenciales; si el pipeline crea un campo user.name separado para analisis, ajustar aqui"
+    },
+    "deception-ssh-telnet-alerts": {
+      "dashboard": "deception-ssh-telnet",
+      "data_view": "deception-alerts-dv",
+      "title": "Alertas relacionadas SSH/Telnet (deception-alerts*)",
+      "type": "table",
+      "filter": "network.protocol: (\"ssh\" OR \"telnet\")",
+      "aggs": [
+        {
+          "id": "1",
+          "type": "terms",
+          "schema": "bucket",
+          "field": "dystopia.alert.rule_name",
+          "size": 10
+        },
+        {
+          "id": "2",
+          "type": "count",
+          "schema": "metric"
+        }
+      ],
+      "params": {
+        "perPage": 10,
+        "showPartialRows": false,
+        "percentageCol": ""
+      }
+    },
+    "deception-decoy-matches-total": {
+      "dashboard": "deception-decoy-credentials",
+      "data_view": "deception-events-dv",
+      "title": "Matches totales de credencial se\u00f1uelo",
+      "type": "metric",
+      "filter": "dystopia.decoy_credential_matches: *",
+      "aggs": [
+        {
+          "id": "1",
+          "type": "count",
+          "schema": "metric"
+        }
+      ],
+      "params": {
+        "style": {
+          "fontSize": "36px"
+        },
+        "labels": {
+          "show": true
+        },
+        "metricTitle": "Eventos con credenciales se\u00f1uelo"
+      }
+    },
+    "deception-decoy-top-credential-ids": {
+      "dashboard": "deception-decoy-credentials",
+      "data_view": "deception-events-dv",
+      "title": "Top credenciales se\u00f1uelo por eventos",
+      "type": "table",
+      "filter": "dystopia.decoy_credentials: *",
+      "aggs": [
+        {
+          "id": "1",
+          "type": "terms",
+          "schema": "bucket",
+          "field": "dystopia.decoy_credentials",
+          "size": 10
+        },
+        {
+          "id": "2",
+          "type": "sum",
+          "schema": "metric",
+          "field": "dystopia.decoy_credential_matches"
+        }
+      ],
+      "params": {
+        "perPage": 10,
+        "showPartialRows": false,
+        "percentageCol": ""
+      }
+    },
+    "deception-decoy-realms": {
+      "dashboard": "deception-decoy-credentials",
+      "data_view": "deception-events-dv",
+      "title": "Distribuci\u00f3n por realm",
+      "type": "pie",
+      "filter": "dystopia.decoy_credentials: *",
+      "aggs": [
+        {
+          "id": "1",
+          "type": "terms",
+          "schema": "segment",
+          "field": "dystopia.decoy_credential_realm",
+          "size": 10
+        },
+        {
+          "id": "2",
+          "type": "count",
+          "schema": "metric"
+        }
+      ],
+      "params": {
+        "isDonut": true,
+        "addLegend": true,
+        "legendPosition": "right"
+      }
+    },
+    "deception-decoy-matches-timeline": {
+      "dashboard": "deception-decoy-credentials",
+      "data_view": "deception-events-dv",
+      "title": "Matches se\u00f1uelo en el tiempo",
+      "type": "line",
+      "filter": "dystopia.decoy_credentials: *",
+      "aggs": [
+        {
+          "id": "1",
+          "type": "date_histogram",
+          "schema": "segment",
+          "field": "@timestamp"
+        },
+        {
+          "id": "2",
+          "type": "sum",
+          "schema": "metric",
+          "field": "dystopia.decoy_credential_matches"
+        }
+      ],
+      "params": {
+        "interpolate": "linear",
+        "addLegend": true
+      }
+    },
+    "deception-decoy-per-persona": {
+      "dashboard": "deception-decoy-credentials",
+      "data_view": "deception-events-dv",
+      "title": "Matches por persona",
+      "type": "bar",
+      "filter": "dystopia.decoy_credentials: *",
+      "aggs": [
+        {
+          "id": "1",
+          "type": "terms",
+          "schema": "segment",
+          "field": "dystopia.persona",
+          "size": 10
+        },
+        {
+          "id": "2",
+          "type": "sum",
+          "schema": "metric",
+          "field": "dystopia.decoy_credential_matches"
+        }
+      ],
+      "params": {
+        "mode": "stacked",
+        "addLegend": true,
+        "legendPosition": "right"
+      }
+    },
+    "deception-decoy-table-realm-persona": {
+      "dashboard": "deception-decoy-credentials",
+      "data_view": "deception-events-dv",
+      "title": "Tabla realm/persona",
+      "type": "table",
+      "filter": "dystopia.decoy_credentials: *",
+      "aggs": [
+        {
+          "id": "1",
+          "type": "terms",
+          "schema": "bucket",
+          "field": "dystopia.decoy_credential_realm",
+          "size": 10
+        },
+        {
+          "id": "2",
+          "type": "terms",
+          "schema": "bucket",
+          "field": "dystopia.persona",
+          "size": 10
+        },
+        {
+          "id": "3",
+          "type": "count",
+          "schema": "metric"
+        }
+      ],
+      "params": {
+        "perPage": 10,
+        "showPartialRows": true,
+        "percentageCol": ""
+      }
+    },
+    "deception-dionaea-observer-count": {
+      "dashboard": "deception-dionaea-malware",
+      "data_view": "deception-events-dv",
+      "title": "Eventos dionaea (observer.name)",
+      "type": "metric",
+      "filter": "observer.name: \"dionaea\"",
+      "aggs": [
+        {
+          "id": "1",
+          "type": "count",
+          "schema": "metric"
+        }
+      ],
+      "params": {
+        "style": {
+          "fontSize": "36px"
+        },
+        "labels": {
+          "show": true
+        },
+        "metricTitle": "Eventos dionaea en rango"
+      }
+    },
+    "deception-dionaea-actions": {
+      "dashboard": "deception-dionaea-malware",
+      "data_view": "deception-events-dv",
+      "title": "Eventos dionaea por action",
+      "type": "bar",
+      "filter": "observer.name: \"dionaea\"",
+      "aggs": [
+        {
+          "id": "1",
+          "type": "terms",
+          "schema": "segment",
+          "field": "event.action",
+          "size": 10
+        },
+        {
+          "id": "2",
+          "type": "count",
+          "schema": "metric"
+        }
+      ],
+      "params": {
+        "mode": "stacked",
+        "addLegend": true,
+        "legendPosition": "right"
+      }
+    },
+    "deception-dionaea-protocols": {
+      "dashboard": "deception-dionaea-malware",
+      "data_view": "deception-events-dv",
+      "title": "Dionaea protocolos atacados",
+      "type": "pie",
+      "filter": "observer.name: \"dionaea\"",
+      "aggs": [
+        {
+          "id": "1",
+          "type": "terms",
+          "schema": "segment",
+          "field": "network.protocol",
+          "size": 10
+        },
+        {
+          "id": "2",
+          "type": "count",
+          "schema": "metric"
+        }
+      ],
+      "params": {
+        "isDonut": true,
+        "addLegend": true,
+        "legendPosition": "right"
+      }
+    },
+    "deception-dionaea-top-ips": {
+      "dashboard": "deception-dionaea-malware",
+      "data_view": "deception-events-dv",
+      "title": "Top IPs atacando dionaea",
+      "type": "table",
+      "filter": "observer.name: \"dionaea\"",
+      "aggs": [
+        {
+          "id": "1",
+          "type": "terms",
+          "schema": "bucket",
+          "field": "source.ip",
+          "size": 10
+        },
+        {
+          "id": "2",
+          "type": "count",
+          "schema": "metric"
+        }
+      ],
+      "params": {
+        "perPage": 10,
+        "showPartialRows": false,
+        "percentageCol": ""
+      }
+    },
+    "deception-dionaea-timeline": {
+      "dashboard": "deception-dionaea-malware",
+      "data_view": "deception-events-dv",
+      "title": "Dionaea timeline por protocolo",
+      "type": "line",
+      "filter": "observer.name: \"dionaea\"",
+      "aggs": [
+        {
+          "id": "1",
+          "type": "date_histogram",
+          "schema": "segment",
+          "field": "@timestamp"
+        },
+        {
+          "id": "2",
+          "type": "terms",
+          "schema": "split_series",
+          "field": "network.protocol",
+          "size": 5
+        },
+        {
+          "id": "3",
+          "type": "count",
+          "schema": "metric"
+        }
+      ],
+      "params": {
+        "mode": "stacked",
+        "interpolate": "linear",
+        "addLegend": true,
+        "legendPosition": "right"
+      }
+    },
+    "deception-dionaea-db-cbdb-table": {
+      "dashboard": "deception-dionaea-malware",
+      "data_view": "deception-events-dv",
+      "title": "Dionaea detalle: action vs outcome",
+      "type": "table",
+      "filter": "observer.name: \"dionaea\"",
+      "aggs": [
+        {
+          "id": "1",
+          "type": "terms",
+          "schema": "bucket",
+          "field": "event.action",
+          "size": 10
+        },
+        {
+          "id": "2",
+          "type": "terms",
+          "schema": "bucket",
+          "field": "event.outcome",
+          "size": 10
+        },
+        {
+          "id": "3",
+          "type": "count",
+          "schema": "metric"
+        }
+      ],
+      "params": {
+        "perPage": 10,
+        "showPartialRows": true,
+        "percentageCol": ""
+      },
+      "notes_pending": "los hashes/muestras de payloads NO se exponen como campos agregables (contrato de mappings); panel de hashes requiere campo dedicado con index:false, visible solo en discover"
+    },
+    "deception-ingest-last-users": {
+      "dashboard": "deception-ingest-health",
+      "data_view": "deception-events-dv",
+      "title": "Eventos \u00faltimos 15 min",
+      "type": "metric",
+      "range_filter": {
+        "field": "@timestamp",
+        "gte": "now-15m",
+        "lte": "now"
+      },
+      "aggs": [
+        {
+          "id": "1",
+          "type": "count",
+          "schema": "metric"
+        }
+      ],
+      "params": {
+        "style": {
+          "fontSize": "36px"
+        },
+        "labels": {
+          "show": true
+        },
+        "metricTitle": "Docs \u00faltimos 15 min"
+      },
+      "notes": "filtro de rango DSL @timestamp >= now-15m; validado en Kibana 9.3.5"
+    },
+    "deception-ingest-senders": {
+      "dashboard": "deception-ingest-health",
+      "data_view": "deception-events-dv",
+      "title": "Eventos por dystopia.ingest_source",
+      "type": "pie",
+      "aggs": [
+        {
+          "id": "1",
+          "type": "terms",
+          "schema": "segment",
+          "field": "dystopia.ingest_source",
+          "size": 10
+        },
+        {
+          "id": "2",
+          "type": "count",
+          "schema": "metric"
+        }
+      ],
+      "params": {
+        "isDonut": true,
+        "addLegend": true,
+        "legendPosition": "right"
+      }
+    },
+    "deception-ingest-last-timestamps": {
+      "dashboard": "deception-ingest-health",
+      "data_view": "deception-events-dv",
+      "title": "M\u00e1\u0219ximo @timestamp por ingest_source",
+      "type": "table",
+      "aggs": [
+        {
+          "id": "1",
+          "type": "terms",
+          "schema": "bucket",
+          "field": "dystopia.ingest_source",
+          "size": 10
+        },
+        {
+          "id": "2",
+          "type": "max",
+          "schema": "metric",
+          "field": "@timestamp"
+        }
+      ],
+      "params": {
+        "perPage": 10,
+        "showPartialRows": false,
+        "percentageCol": ""
+      }
+    },
+    "deception-ingest-swap-events-alerts": {
+      "dashboard": "deception-ingest-health",
+      "data_view": "deception-alerts-dv",
+      "title": "Balance eventos vs alertas (deception-alerts*)",
+      "type": "bar",
+      "aggs": [
+        {
+          "id": "1",
+          "type": "terms",
+          "schema": "segment",
+          "field": "event.kind",
+          "size": 10
+        },
+        {
+          "id": "2",
+          "type": "count",
+          "schema": "metric"
+        }
+      ],
+      "params": {
+        "mode": "normal",
+        "addLegend": true,
+        "legendPosition": "right"
+      }
+    },
+    "deception-ingest-rate-timeline": {
+      "dashboard": "deception-ingest-health",
+      "data_view": "deception-events-dv",
+      "title": "Evoluci\u00f3n del ratio de ingesta",
+      "type": "line",
+      "aggs": [
+        {
+          "id": "1",
+          "type": "date_histogram",
+          "schema": "segment",
+          "field": "@timestamp"
+        },
+        {
+          "id": "2",
+          "type": "terms",
+          "schema": "split_series",
+          "field": "dystopia.schema_version",
+          "size": 5
+        },
+        {
+          "id": "3",
+          "type": "count",
+          "schema": "metric"
+        }
+      ],
+      "params": {
+        "interpolate": "linear",
+        "addLegend": true,
+        "legendPosition": "right"
+      },
+      "notes_pending": "schema_version asumido '1.0.0' constante: si aparece otro version, ajustar leyenda"
+    },
+    "deception-ingest-by-device-lag": {
+      "dashboard": "deception-ingest-health",
+      "data_view": "deception-events-dv",
+      "title": "Lag por device_id (max timestamp)",
+      "type": "table",
+      "aggs": [
+        {
+          "id": "1",
+          "type": "terms",
+          "schema": "bucket",
+          "field": "dystopia.device_id",
+          "size": 10
+        },
+        {
+          "id": "2",
+          "type": "max",
+          "schema": "metric",
+          "field": "@timestamp"
+        }
+      ],
+      "params": {
+        "perPage": 10,
+        "showPartialRows": false,
+        "percentageCol": ""
+      }
+    }
+  },
+  "$validation_expected": {
+    "$note": "los campos usados por visuales deben estar en la lista de fields de build_dashboards.py (index_pattern_fields for deception-events-dv or deception-alerts-dv). El generador falla si el campo no fue descrito en la DataView."
+  }
+}
