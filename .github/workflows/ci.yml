@@ -55,7 +55,6 @@ jobs:
 
   typecheck:
     runs-on: ubuntu-latest
-    continue-on-error: true  # informativo: la tipificación completa es incremental
     steps:
       - uses: actions/checkout@v4
 
@@ -66,5 +65,6 @@ jobs:
       - name: Instalar dependencias
         run: pip install -r requirements-dev.txt
 
-      - name: Pyright
-        run: pyright app
+      - name: Pyright (informativo)
+        continue-on-error: true
+        run: pyright app --pythonpath "$(which python)"

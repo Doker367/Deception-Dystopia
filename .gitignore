@@ -72,6 +72,9 @@ config/alertmanager.yml
 # Logs
 *.log
 logs/
+# Fixtures sintéticos usados por los tests de higiene (sin secretos reales)
+!tests/integration_unified/fixtures/logs/
+!tests/integration_unified/fixtures/logs/**
 
 # Temp files
 /tmp/
