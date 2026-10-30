@@ -1,7 +1,7 @@
-# Despliegue
+# Despliegue soportado
 
-Servidor Linux dedicado. Crear entorno sin descargar durante validación, instalar dependencias desde artefactos aprobados, crear `.env` local y mantener servicios opt-in. Laya se despliega localmente con `docker-compose.ai.yml` o un `laya-serve` equivalente; la aplicación conserva fallback cuando no está disponible. No usar `privileged` ni `network_mode: host`.
+Ubuntu Server 24.04 LTS, KVM/libvirt. Consulte la [guía de instalación y operación](<docs/HARDENING-OPERATIONS.md>), [ejemplo sintético](<deploy/install.example.json>) y [unidades systemd](<deploy/systemd/dystopia-control.service>).
 
-## Operación aislada
+El instalador empieza en plan, no descarga paquetes ni modifica redes. Apply necesita root local, confirmación explícita, interfaces/redes indicadas, recuperación, bundle offline con lock/hash completos y release/venv revisados. Arranca únicamente gestión en loopback después del alta local del primer administrador.
 
-La API de control y la red señuelo usan interfaces/VLAN distintas. Mantenga listeners en loopback o red aislada; documente puertos antes de habilitarlos. Packet mode requiere revisión especial; QEMU/VNC nunca debe enlazar gestión ni Internet. Cowrie/OpenCanary permanecen en red interna. Use únicamente topología y datos sintéticos. Dystopia arranca y opera sin NOC; la integración futura es opt-in.
+Sensores, adaptadores heredados y activación de VMs no se habilitan automáticamente. No hay contención real verificada ni bundle final certificado en esta entrega. [Pruebas y bloqueos](<docs/HARDENING-TESTS.md>).
