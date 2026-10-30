@@ -9,6 +9,8 @@ IMPORTANTE: todas las credenciales son de mentira. Nunca deben coincidir
 con credenciales reales del entorno.
 """
 
+from typing import Optional
+
 from app.models.deception import DeceptionRole
 
 # Credenciales débiles por defecto típicas de cada tipo de dispositivo.
@@ -94,7 +96,8 @@ def response_for(command: str) -> str:
 
 # ── Respuestas contextuales por familia de dispositivo ───────
 
-_FAMILY_COMMANDS: dict[str, dict[str, str]] = {
+# None marca comandos conocidos sin salida simulada (ver shell_response).
+_FAMILY_COMMANDS: dict[str, dict[str, Optional[str]]] = {
     "linux": {
         "id": "uid=0(root) gid=0(root) groups=0(root)",
         "whoami": "root",
@@ -179,8 +182,9 @@ def shell_response(role, vendor, command: str) -> str:
         return ""
     fam = family(role, vendor)
     table = _FAMILY_COMMANDS.get(fam, {})
-    if cmd in table and table[cmd] is not None:
-        return table[cmd]
+    response = table.get(cmd)
+    if response is not None:
+        return response
     # Coincidencias por prefijo (comandos con argumentos)
     if fam == "linux":
         if cmd.startswith("cat "):

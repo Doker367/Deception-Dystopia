@@ -67,8 +67,10 @@ class UdpListener:
         try:
             device = topology_svc.get_device(self.device_id) or {}
             persona = device.get("persona") or {}
+            hostname = persona.get("hostname")
             identity = personas.snmp_identity(
-                self.role, persona.get("vendor"), persona.get("hostname")
+                self.role, persona.get("vendor"),
+                hostname if isinstance(hostname, str) else "",
             )
             response = snmp_agent.handle_datagram(data, identity)
             if response and self._transport is not None:

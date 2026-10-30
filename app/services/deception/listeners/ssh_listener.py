@@ -86,8 +86,8 @@ class SshListener:
         listener = self
 
         class _Handler(socketserver.BaseRequestHandler):
-            def handle(inner_self):  # noqa: N805
-                listener._handle_ssh(inner_self.request, inner_self.client_address)
+            def handle(self):
+                listener._handle_ssh(self.request, self.client_address)
 
         class _Server(socketserver.ThreadingTCPServer):
             allow_reuse_address = True
@@ -145,14 +145,14 @@ class SshListener:
 
         prompt = personas.prompt_for(self.role)
         try:
-            chan.send(f"\r\n{prompt}")
+            chan.send(f"\r\n{prompt}".encode())
             for _ in range(self.MAX_COMMANDS):
                 data = chan.recv(1024)
                 if not data:
                     break
                 command = data.decode("utf-8", errors="replace").strip()
                 if not command:
-                    chan.send(prompt)
+                    chan.send(prompt.encode())
                     continue
                 telemetry_svc.emit_sync(
                     self.device_id, src_ip, "ssh", "command",
@@ -160,11 +160,11 @@ class SshListener:
                     detail={"service": "ssh", "command": command},
                 )
                 if command in ("exit", "quit", "logout"):
-                    chan.send("Connection to host closed.\r\n")
+                    chan.send(b"Connection to host closed.\r\n")
                     break
                 response = personas.shell_response(self.role, self.vendor, command)
                 out = f"{response}\r\n{prompt}" if response else prompt
-                chan.send(out)
+                chan.send(out.encode())
         except Exception:  # noqa: BLE001
             pass
         finally:
@@ -202,7 +202,8 @@ class _SSHServer:
                         username=username, success=True, src_port=self.src_port,
                         detail={"service": "ssh", "password": password, "weak": weak},
                     )
-                    return paramiko.AUTH_SUCCESSFUL
+                    # paramiko expone estas constantes en runtime; su stub no las declara.
+                    return paramiko.AUTH_SUCCESSFUL  # pyright: ignore[reportAttributeAccessIssue]
                 # Primeros intentos: rechazar (como un equipo real).
                 self.failed_attempts += 1
                 telemetry_svc.emit_sync(
@@ -210,16 +211,16 @@ class _SSHServer:
                     username=username, success=False, src_port=self.src_port,
                     detail={"service": "ssh", "password": password},
                 )
-                return paramiko.AUTH_FAILED
+                return paramiko.AUTH_FAILED  # pyright: ignore[reportAttributeAccessIssue]
 
             def check_auth_publickey(self, username, key):  # noqa: N802
-                return paramiko.AUTH_FAILED
+                return paramiko.AUTH_FAILED  # pyright: ignore[reportAttributeAccessIssue]
 
             def get_allowed_auths(self, username):  # noqa: N802
                 return "password"
 
             def check_channel_request(self, kind, chanid):  # noqa: N802
-                return paramiko.OPEN_SUCCEEDED
+                return paramiko.OPEN_SUCCEEDED  # pyright: ignore[reportAttributeAccessIssue]
 
             def check_channel_shell_request(self, channel):  # noqa: N802
                 return True

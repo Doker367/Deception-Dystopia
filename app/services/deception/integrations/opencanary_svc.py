@@ -119,7 +119,8 @@ def normalize(
     protocol = _protocol(raw, dst_port)
     etype, outcome = _event_type(raw, protocol)
     device = default_device or raw.get("device_id") or raw.get("node_id") or ""
-    logdata = raw.get("logdata") if isinstance(raw.get("logdata"), dict) else {}
+    raw_logdata = raw.get("logdata")
+    logdata: dict = raw_logdata if isinstance(raw_logdata, dict) else {}
     username = raw.get("username") or raw.get("user") or logdata.get("USERNAME")
     password = raw.get("password") or logdata.get("PASSWORD")
     captured: dict[str, Any] = {}

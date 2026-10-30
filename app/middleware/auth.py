@@ -24,9 +24,9 @@ class JWTBearer(HTTPBearer):
 
     async def __call__(self, request: Request) -> HTTPAuthorizationCredentials:
         """Extrae y valida el token, devuelve credenciales o lanza 401."""
-        credentials: HTTPAuthorizationCredentials = await super().__call__(request)
+        credentials: HTTPAuthorizationCredentials | None = await super().__call__(request)
 
-        if not credentials:
+        if credentials is None:
             raise HTTPException(
                 status_code=401,
                 detail="Token de autorización requerido",
@@ -69,7 +69,10 @@ class JWTBearer(HTTPBearer):
 
         import hashlib
         from app.routers.auth import _get_users
-        user = _get_users().get(payload.get("sub"))
+        subject = payload.get("sub")
+        if not isinstance(subject, str):
+            raise HTTPException(401, "Token inválido o expirado")
+        user = _get_users().get(subject)
         if (not user or payload.get("role") != user["role"] or
                 payload.get("ver") != hashlib.sha256(user["password_hash"].encode()).hexdigest()):
             raise HTTPException(401, "User changed or token revoked")

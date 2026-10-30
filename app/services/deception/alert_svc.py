@@ -79,7 +79,7 @@ def evaluate(record: dict) -> list[dict]:
     etype = record.get("type")
     alerts: list[dict] = []
 
-    rule_info = _EVENT_RULES.get(etype)
+    rule_info = _EVENT_RULES.get(etype) if isinstance(etype, str) else None
     if rule_info:
         alerts.append(_make_alert(record, *rule_info))
     elif etype == "login_attempt" and _brute_force(record):
