@@ -2,9 +2,11 @@
 
 Se redirige el YAML y la base SQLite a rutas temporales y se usan tokens
 generados directamente (sin pasar por /login) para no agotar el rate
-limiter, siguiendo el patrón de tests/test_inventory_api.py.
+limiter. Los tokens incluyen el claim `ver` (sha256 del password_hash) que
+exige app/middleware/auth.py para invalidar credenciales revocadas.
 """
 
+import hashlib
 import sys
 from pathlib import Path
 
@@ -18,11 +20,41 @@ from fastapi.testclient import TestClient
 from app.core.security import create_access_token
 from app.main import app
 from app.models.deception import DeceptionEventIn, DeceptionEventType
-from app.routers import deception as deception_router
 from app.services.deception import store_svc, topology_svc
 
-ADMIN = {"Authorization": "Bearer " + create_access_token({"sub": "superadmin", "role": "admin"})}
-VIEWER = {"Authorization": "Bearer " + create_access_token({"sub": "viewer", "role": "viewer"})}
+# Usuarios sintéticos: reflejan el contrato de /api/auth/login, donde el JWT
+# incluye `ver` = sha256(password_hash) para invalidar tokens tras un cambio
+# de contraseña. El middleware rechaza cualquier token sin ese claim.
+SYNTHETIC_USERS = {
+    "admin": {"role": "admin", "password_hash": "synthetic-deception-admin-hash"},
+    "viewer": {"role": "viewer", "password_hash": "synthetic-deception-viewer-hash"},
+}
+
+
+def _auth_header(username: str) -> dict:
+    user = SYNTHETIC_USERS[username]
+    token = create_access_token({
+        "sub": username,
+        "role": user["role"],
+        "ver": hashlib.sha256(user["password_hash"].encode()).hexdigest(),
+    })
+    return {"Authorization": "Bearer " + token}
+
+
+@pytest.fixture()
+def auth(tmp_path, monkeypatch):
+    """Usuarios en config temporal + headers JWT válidos con claim `ver`."""
+    from app.routers import auth as auth_router
+
+    users_file = tmp_path / "users.yaml"
+    users_file.write_text(yaml.safe_dump({"users": [
+        {"username": name, "role": data["role"], "password_hash": data["password_hash"]}
+        for name, data in SYNTHETIC_USERS.items()
+    ]}))
+    users_file.chmod(0o600)
+    monkeypatch.setattr(auth_router, "USERS_FILE", users_file)
+    return {"admin": _auth_header("admin"), "viewer": _auth_header("viewer")}
+
 
 SAMPLE_NETWORK = {
     "segments": [
@@ -135,84 +167,86 @@ def test_store_filtros(db_path):
 # ── API ──────────────────────────────────────────────────────
 
 
-def test_api_network_y_status(network_file, client):
-    r = client.get("/api/deception/network", headers=VIEWER)
+def test_api_network_y_status(network_file, auth, client):
+    r = client.get("/api/deception/network", headers=auth["viewer"])
     assert r.status_code == 200, r.text
     assert len(r.json()["devices"]) == 1
 
-    s = client.get("/api/deception/status", headers=VIEWER)
+    s = client.get("/api/deception/status", headers=auth["viewer"])
     assert s.status_code == 200
     assert s.json()["devices"] == 1
 
 
-def test_api_crud_device(network_file, client):
+def test_api_crud_device(network_file, auth, client):
     payload = {
         "id": "cam-01", "role": "camera", "segment": "vlan-oficina",
         "ip": "10.10.0.40", "services": [{"port": 554, "proto": "rtsp"}],
     }
-    r = client.post("/api/deception/devices", json=payload, headers=ADMIN)
+    r = client.post("/api/deception/devices", json=payload, headers=auth["admin"])
     assert r.status_code == 201, r.text
 
-    r = client.get("/api/deception/devices/cam-01", headers=VIEWER)
+    r = client.get("/api/deception/devices/cam-01", headers=auth["viewer"])
     assert r.status_code == 200
 
-    r = client.delete("/api/deception/devices/cam-01", headers=ADMIN)
+    r = client.delete("/api/deception/devices/cam-01", headers=auth["admin"])
     assert r.status_code == 204
 
 
-def test_api_viewer_no_puede_crear(network_file, client):
+def test_api_viewer_no_puede_crear(network_file, auth, client):
     r = client.post(
         "/api/deception/devices",
         json={"id": "x", "role": "pc", "segment": "vlan-oficina", "ip": "10.10.0.50"},
-        headers=VIEWER,
+        headers=auth["viewer"],
     )
     assert r.status_code == 403
 
 
-def test_api_ingest_con_token(db_path, monkeypatch, client):
-    monkeypatch.setattr(deception_router, "DECEPTION_INGEST_TOKEN", "s3cret")
+def test_api_ingest_heredado_retirado(db_path, client):
+    """El ingest local se retiró: usa el servicio TLS independiente /v1/events."""
     body = {
         "device_id": "pc-01", "src_ip": "203.0.113.9", "proto": "ssh",
         "type": "login_success", "username": "root", "success": True,
     }
     r = client.post("/api/deception/ingest", json=body,
                     headers={"X-Deception-Token": "s3cret"})
-    assert r.status_code == 202, r.text
-
-    events = client.get("/api/deception/events", headers=VIEWER).json()
-    assert events[0]["device_id"] == "pc-01"
-    assert events[0]["success"] is True
+    assert r.status_code == 410, r.text
+    assert "/v1/events" in r.json()["detail"]
+    assert store_svc.get_events() == []
 
 
-def test_api_ingest_token_incorrecto(db_path, monkeypatch, client):
-    monkeypatch.setattr(deception_router, "DECEPTION_INGEST_TOKEN", "s3cret")
-    r = client.post(
-        "/api/deception/ingest",
-        json={"device_id": "pc-01", "src_ip": "1.2.3.4"},
-        headers={"X-Deception-Token": "malo"},
-    )
-    assert r.status_code in (401, 403)
+def test_api_ingest_sin_fallback_admin(db_path, auth, client):
+    """Ni el token compartido ni un JWT admin reactivan el ingest heredado."""
+    for headers in (
+        {"X-Deception-Token": "malo"},
+        auth["admin"],
+    ):
+        r = client.post(
+            "/api/deception/ingest",
+            json={"device_id": "pc-01", "src_ip": "1.2.3.4"},
+            headers=headers,
+        )
+        assert r.status_code == 410, r.text
+    assert store_svc.get_events() == []
 
 
-def test_api_timeline_y_csv(db_path, client):
+def test_api_timeline_y_csv(db_path, auth, client):
     store_svc.log_event(DeceptionEventIn(
         device_id="pc-01", src_ip="203.0.113.9", proto="ssh",
         type=DeceptionEventType.LOGIN_ATTEMPT, username="admin",
     ))
-    tl = client.get("/api/deception/timeline?minutes=30", headers=VIEWER)
+    tl = client.get("/api/deception/timeline?minutes=30", headers=auth["viewer"])
     assert tl.status_code == 200
     assert isinstance(tl.json(), list)
 
-    csv = client.get("/api/deception/events.csv", headers=VIEWER)
+    csv = client.get("/api/deception/events.csv", headers=auth["viewer"])
     assert csv.status_code == 200
     assert "device_id" in csv.text
     assert "pc-01" in csv.text
 
 
-def test_api_simulate(network_file, db_path, client):
-    r = client.post("/api/deception/simulate?count=3", headers=ADMIN)
-    assert r.status_code == 200, r.text
-    body = r.json()
-    assert body["events"] >= 4
-    events = client.get("/api/deception/events?limit=50", headers=VIEWER).json()
-    assert len(events) >= 4
+def test_api_simulate_ejecucion_heredada_deshabilitada(network_file, db_path, auth, client):
+    """La ejecución heredada está bloqueada hasta migrar al servicio aislado."""
+    r = client.post("/api/deception/simulate?count=3", headers=auth["admin"])
+    assert r.status_code == 409, r.text
+    assert "Legacy execution disabled" in r.json()["detail"]
+    assert store_svc.get_events() == []
