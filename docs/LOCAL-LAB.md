@@ -23,6 +23,21 @@ KVM, nftables ni la red señuelo real.
 
 No necesitas KVM/libvirt ni nftables para ver los dashboards.
 
+## Mapa rápido del repositorio
+
+| Ruta | Qué contiene |
+|---|---|
+| `app/` | API de control, modelos, middleware y consola |
+| `runtime/` | Servicios de control, sensor, ingesta, procesador y consulta |
+| `config/elasticsearch/` | Plantillas ECS, ILM y configuración de Elasticsearch |
+| `config/kibana/` | Configuración del panel analítico |
+| `deploy/elastic/` | Compose, roles, certificados y bootstrap |
+| `deploy/kibana-dashboards/` | Spec, generador y bundle de dashboards |
+| `deploy/honeypots/` | Inventario, perfiles y adaptadores |
+| `docker/deception/` | Dockerfiles y configuración de los honeypots |
+| `tests/` | Contratos, integración, hardening, UI y fixtures |
+| `docs/` | Arquitectura, operación, validación, roadmap y capturas |
+
 ## Arquitectura local
 
 ```mermaid
