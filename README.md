@@ -234,6 +234,7 @@ No se comparten contraseñas, API keys ni secretos entre entornos.
 
 - [Referencia técnica completa](docs/REFERENCE.md)
 - [Handoff al servidor Linux](docs/LINUX-HANDOFF.md)
+- [Validación de builds de honeypots](docs/HONEYPOT-BUILDS.md)
 - [Compatibilidad con T-Pot](docs/TPOT-COMPATIBILITY.md)
 - [Laboratorio de evaluación](docs/EVALUATION-LAB.md)
 - [Arquitectura y diagnóstico](docs/HARDENING.md)

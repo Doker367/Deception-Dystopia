@@ -772,6 +772,7 @@ lsof -nP -iTCP:5601 -sTCP:LISTEN
 - [Validación del sistema unificado](UNIFIED-VALIDATION.md)
 - [Laboratorio de evaluación](EVALUATION-LAB.md)
 - [Handoff al servidor Linux](LINUX-HANDOFF.md)
+- [Validación de builds de honeypots](HONEYPOT-BUILDS.md)
 - [Compatibilidad con T-Pot](TPOT-COMPATIBILITY.md)
 - [Seguridad y operaciones](SEGURIDAD-Y-OPS.md)
 - [Procedencia de dependencias](DEPENDENCY-PROVENANCE.md)
