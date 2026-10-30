@@ -4,7 +4,7 @@
 
 Consulta de metadatos públicos de PyPI: **2026-10-16**, fecha de la sesión (America/Mexico_City).
 
-Se prepararon únicamente [requirements-control.in](</Users/doker/Dystopia/deploy/requirements-control.in>), este documento y el archivo opcional separado [requirements-test.in](</Users/doker/Dystopia/deploy/requirements-test.in>). Son **entradas candidatas**, no autorización para instalar ni desplegar. No se modificó el archivo raíz de dependencias ni otros archivos existentes.
+Se prepararon únicamente [requirements-control.in](<../deploy/requirements-control.in>), este documento y el archivo opcional separado [requirements-test.in](<../deploy/requirements-test.in>). Son **entradas candidatas**, no autorización para instalar ni desplegar. No se modificó el archivo raíz de dependencias ni otros archivos existentes.
 
 No se ejecutaron comandos, Python, gestores de paquetes, resolutores ni tests. No se descargaron wheels ni sdists y no se instalaron paquetes. Las consultas HTTP obtuvieron solamente JSON de metadatos; que esos JSON enumeren artefactos y digests no implica haber descargado o verificado los artefactos.
 
@@ -44,7 +44,7 @@ No se hizo una auditoría de vulnerabilidades ni se revisó el cierre transitivo
 
 ### Revisión posterior de la ruta JWT
 
-La lectura estática de [security.py](</Users/doker/Dystopia/app/core/security.py>) confirma `jwt.decode(..., algorithms=["HS256"])` y ausencia de clave por defecto; el instalador genera una clave simétrica aleatoria independiente. Por ello no se ha demostrado la precondición del aviso (selección de algoritmos no restringida) en esta ruta. Esto no constituye una prueba dinámica ni una aprobación de la librería/cierre transitivo: mantener la revisión de suministro pendiente antes del despliegue.
+La lectura estática de [security.py](<../app/core/security.py>) confirma `jwt.decode(..., algorithms=["HS256"])` y ausencia de clave por defecto; el instalador genera una clave simétrica aleatoria independiente. Por ello no se ha demostrado la precondición del aviso (selección de algoritmos no restringida) en esta ruta. Esto no constituye una prueba dinámica ni una aprobación de la librería/cierre transitivo: mantener la revisión de suministro pendiente antes del despliegue.
 
 ## Qué NO está validado
 

@@ -99,6 +99,7 @@ config/deception/vms.json
 # y debe versionarse. El estado generado vive en /var/lib/dystopia.
 data/
 deploy/elastic/api-keys/
+deploy/elastic/certs/
 *.db
 *.db-wal
 *.db-shm
