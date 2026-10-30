@@ -8,14 +8,15 @@ CI esté rojo y no mezclar cambios no certificados con el camino canónico.**
 
 - Rama de trabajo: `feature/unified-deception`
 - Base: `origin/main` en `1278db4`
-- Commits locales: 13
+- Commits locales: 14
 - Árbol de trabajo: limpio
 - Suite completa: **297 passed, 3 skipped, 175 subtests passed**
 - Ruff: **verde**
 - Python 3.12 y 3.14: **verde**
 - Suites relevantes de la integración: verdes
-- Rama remota: todavía no publicada
-- PR: todavía no abierto
+- Rama remota: `origin/feature/unified-deception`
+- PR: [#1](https://github.com/Doker367/Deception-Dystopia/pull/1)
+- CI de GitHub Actions: **verde**
 
 ## Definición de “primer PR listo”
 
@@ -28,8 +29,8 @@ El primer PR puede abrirse cuando se cumplan todos estos puntos:
 5. No hay secretos, certificados, claves, estado local ni artefactos
    experimentales en el diff. ✅
 6. La documentación de operación y validación está enlazada desde `README.md`. ✅
-7. El PR explica qué se validó en macOS y qué sigue pendiente en Linux. ⏳
-8. CI de GitHub Actions queda verde en la rama. ⏳
+7. El PR explica qué se validó en macOS y qué sigue pendiente en Linux. ✅
+8. CI de GitHub Actions queda verde en la rama. ✅
 
 ## Hitos
 
@@ -38,7 +39,7 @@ El primer PR puede abrirse cuando se cumplan todos estos puntos:
 | M0 | Base y preservación de cambios | Rama y commits locales |
 | M1 | Reconciliar pruebas heredadas | Suite completa verde |
 | M2 | Calidad estática y CI | Ruff/pytest verdes en Actions |
-| M3 | Primer push y PR | PR abierto con CI verde |
+| M3 | Primer push y PR | PR abierto con CI verde ✅ |
 | M4 | Laboratorio Linux | Instalación, red, honeypots y E2E validados |
 | M5 | Producción | TLS, backups, observabilidad y runbooks probados |
 
@@ -131,7 +132,7 @@ macOS y Linux. No cambiar el transporte Unix ni debilitar permisos.
 
 **Criterio de salida:** `ruff` y `pytest` verdes en local y en GitHub Actions.
 
-### Ola 5 — Primer push y PR
+### Ola 5 — Primer push y PR (completada)
 
 1. Push de `feature/unified-deception`.
 2. Abrir PR contra `main`.
@@ -184,8 +185,8 @@ macOS y Linux. No cambiar el transporte Unix ni debilitar permisos.
 - [x] Probar la suite con Python 3.12.
 - [x] Añadir o ajustar el workflow de CI.
 - [x] Revisar el diff completo y secretos.
-- [ ] Push de la rama.
-- [ ] Abrir PR y esperar CI verde.
+- [x] Push de la rama.
+- [x] Abrir PR y esperar CI verde.
 
 ## Comandos de referencia
 
