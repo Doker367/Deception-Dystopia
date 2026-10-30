@@ -1,8 +1,9 @@
-# Laboratorio local en macOS — qué se puede probar antes del servidor Linux
+# Laboratorio de evaluación opcional — Docker en macOS/Linux
 
-Esta guía permite levantar el plano analítico de Dystopia en tu Mac, importar
-los dashboards, enviar eventos sintéticos y verificar la integración sin tocar
-KVM, nftables ni la red señuelo real.
+Esta guía permite levantar el plano analítico de Dystopia en un host de
+evaluación, importar los dashboards, enviar eventos sintéticos y verificar la
+integración sin tocar KVM, nftables ni la red señuelo real. Está pensada para
+quien quiera conocer el panel antes de disponer de un servidor Linux.
 
 > **Alcance:** laboratorio local. No certifica contención, segmentación,
 > firewall, systemd ni honeypots reales. Eso se valida después en Ubuntu Server
@@ -101,8 +102,8 @@ export ELASTIC_CERTS_DIR="$LAB/certs"
 ./deploy/elastic/scripts/generate-certs.sh
 ```
 
-En macOS/Colima normalmente no hace falta cambiar el propietario de los
-certificados. En Linux se ajusta al UID del contenedor:
+En Docker Desktop/Colima normalmente no hace falta cambiar el propietario de
+los certificados. En Linux se ajusta al UID del contenedor:
 
 ```bash
 sudo chown -R 1000:1000 "$LAB/certs" "$LAB/data"
@@ -310,7 +311,7 @@ rm -rf "$LAB/data" "$LAB/certs" "$LAB/api-keys"
 
 ![Discover con el data view deception-events*](images/discover.png)
 
-## Qué no se puede cerrar en macOS
+## Límites del host de evaluación
 
 - KVM/libvirt y arranque real de celdas.
 - nftables, routing, NAT y aislamiento por segmento.
@@ -319,6 +320,6 @@ rm -rf "$LAB/data" "$LAB/certs" "$LAB/api-keys"
 - TLS de Kibana tras reverse proxy y exposición de gestión.
 - Snapshots/restore y operación de producción.
 
-Cuando llegue el servidor Linux, el siguiente paso es
+Cuando haya un servidor Linux, el siguiente paso es
 [`docs/HARDENING-OPERATIONS.md`](HARDENING-OPERATIONS.md) y el
 [`docs/ROADMAP.md`](ROADMAP.md).
