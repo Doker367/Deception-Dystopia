@@ -5,9 +5,9 @@ un evento señuelo es **benigno** (escáner autorizado, health-check, backup,
 monitorización, prueba interna) o una **intrusión real**, y enriquece la
 alerta con severidad, táctica MITRE y sugerencia de bloqueo.
 
-Es *advisory + gating*: solo actúa (suprime/enriquece) si la confianza
-alcanza ``DECEPTION_AI_FP_MIN_CONFIDENCE``; si la IA está apagada o falla,
-devuelve un veredicto ``unknown`` y el flujo por reglas continúa (fail-open).
+Advisory only: never suppresses alerts or changes isolation. Captured commands,
+URLs and usernames are not sent to the model. If unavailable, deterministic
+rules continue. The new v1 processing plane does not invoke this legacy module.
 """
 
 import ipaddress
@@ -17,7 +17,6 @@ from typing import Optional
 from app.core.settings import (
     DECEPTION_AI_FP_ENABLED,
     DECEPTION_AI_FP_MIN_CONFIDENCE,
-    DECEPTION_AI_FP_SUPPRESS,
 )
 from app.services import ai
 from app.services.deception import (
@@ -112,7 +111,7 @@ def classify(record: dict, alert: Optional[dict] = None) -> dict:
     else:
         verdict, confidence = "unknown", None
 
-    suppress = verdict == "benign" and bool(DECEPTION_AI_FP_SUPPRESS)
+    suppress = False  # Advisory only, even if a legacy environment flag is set.
     ai_block = {
         "verdict": verdict,
         "is_false_positive": verdict == "benign",
@@ -157,10 +156,9 @@ def _build_state(record: dict) -> dict:
         "proto": record.get("proto"),
         "src_port": record.get("src_port"),
         "type": record.get("type"),
-        "username": record.get("username"),
         "success": record.get("success"),
-        "command": ai.decision_svc.redact(detail.get("command", "")),
-        "url": ai.decision_svc.redact(detail.get("url", "")),
+        "has_command": bool(detail.get("command")),
+        "has_url": bool(detail.get("url")),
     }
     source = {
         "ip": src_ip,

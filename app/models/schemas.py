@@ -7,7 +7,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Optional
 
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 
 
 # ── Device Inventory ────────────────────────────────────────
@@ -644,7 +644,7 @@ class UserCreate(BaseModel):
         json_schema_extra={
             "example": {
                 "username": "nuevo_user",
-                "password": "Pass123!",
+                "password": "example-long-password-01",
                 "role": "viewer",
                 "name": "Nuevo Usuario",
             }
@@ -654,14 +654,16 @@ class UserCreate(BaseModel):
         ...,
         min_length=3,
         max_length=64,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{2,63}$",
         description="Nombre de usuario único",
         examples=["nuevo_user"],
     )
     password: str = Field(
         ...,
-        min_length=6,
-        description="Contraseña del usuario (se almacena hasheada)",
-        examples=["Pass123!"],
+        min_length=16,
+        max_length=72,
+        description="Contraseña del usuario (mínimo 16 caracteres, se almacena hasheada)",
+        examples=["example-long-password-01"],
     )
     role: UserRole = Field(
         default=UserRole.VIEWER,
@@ -676,13 +678,20 @@ class UserCreate(BaseModel):
         examples=["Nuevo Usuario"],
     )
 
+    @field_validator("password")
+    @classmethod
+    def password_utf8_limit(cls, value):
+        if len(value.encode("utf-8")) > 72:
+            raise ValueError("bcrypt password exceeds 72 UTF-8 bytes")
+        return value
+
 
 class UserUpdate(BaseModel):
     """Campos actualizables de un usuario (todos opcionales)."""
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
-                "password": "NuevaPass456!",
+                "password": "another-long-password-01",
                 "role": "operator",
                 "name": "Nombre Actualizado",
             }
@@ -690,9 +699,10 @@ class UserUpdate(BaseModel):
     )
     password: Optional[str] = Field(
         None,
-        min_length=6,
-        description="Nueva contraseña (opcional)",
-        examples=["NuevaPass456!"],
+        min_length=16,
+        max_length=72,
+        description="Nueva contraseña (opcional; mínimo 16 caracteres)",
+        examples=["another-long-password-01"],
     )
     role: Optional[UserRole] = Field(
         None,
@@ -706,6 +716,13 @@ class UserUpdate(BaseModel):
         description="Nuevo nombre descriptivo (opcional)",
         examples=["Nombre Actualizado"],
     )
+
+    @field_validator("password")
+    @classmethod
+    def password_utf8_limit(cls, value):
+        if value is not None and len(value.encode("utf-8")) > 72:
+            raise ValueError("bcrypt password exceeds 72 UTF-8 bytes")
+        return value
 
 
 class UserResponse(BaseModel):

@@ -67,6 +67,11 @@ class JWTBearer(HTTPBearer):
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
-        # Guardar payload en request.state para uso posterior
+        import hashlib
+        from app.routers.auth import _get_users
+        user = _get_users().get(payload.get("sub"))
+        if (not user or payload.get("role") != user["role"] or
+                payload.get("ver") != hashlib.sha256(user["password_hash"].encode()).hexdigest()):
+            raise HTTPException(401, "User changed or token revoked")
         request.state.user = payload
         return credentials

@@ -7,7 +7,7 @@ Ver `app/services/deception/vm_svc.py`. Requiere QEMU en el host.
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, Request
 from pydantic import BaseModel, Field
 
 from app.middleware.auth import JWTBearer
@@ -15,7 +15,13 @@ from app.middleware.rbac import requires_role
 from app.services.deception import vm_svc
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/vms", tags=["VMs (deception)"])
+async def read_only_registry(request: Request):
+    if request.method not in {"GET", "HEAD", "OPTIONS"}:
+        raise HTTPException(409, "VM lifecycle belongs to the local isolation helper")
+
+
+router = APIRouter(prefix="/api/vms", tags=["VMs (deception)"],
+                   dependencies=[Depends(read_only_registry)])
 
 AUTH = [Depends(JWTBearer()), Depends(requires_role("viewer"))]
 ADMIN = [Depends(JWTBearer()), Depends(requires_role("admin"))]

@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "cell": 1,
+  "bridge": "dybr1",
+  "gateway_mac": "02:aa:bb:cc:dd:01",
+  "services": [
+    {"address": "198.51.100.10", "protocol": "tcp", "port": 2222},
+    {"address": "fd42:d570:10::10", "protocol": "tcp", "port": 2222}
+  ],
+  "telemetry": null,
+  "memory_mib": 512,
+  "vcpus": 1
+}

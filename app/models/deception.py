@@ -6,10 +6,11 @@ la representación validada de ``config/deception/network.yaml`` y del
 contrato JSON que usa el data plane (motor nativo o engine en Go).
 """
 
+import re
 from enum import Enum
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class DeceptionRole(str, Enum):
@@ -30,7 +31,27 @@ class DeceptionEngine(str, Enum):
     COWRIE = "cowrie"          # honeypot SSH/Telnet (medium-interaction)
     OPENCANARY = "opencanary"  # honeypot multi-protocolo ligero
     DIONAEA = "dionaea"        # captura de malware (SMB/HTTP/FTP)
+    HERALDING = "heralding"    # honeypot de credenciales (SSH/FTP/Telnet/SMB/MySQL)
+    REDISHONEYPOT = "redishoneypot"  # honeypot del protocolo Redis
+    ENDLESSH = "endlessh"      # honeypot de SSH (tarpit, banner infinito)
     GO = "go"                  # data plane en Go (deception-engine)
+
+
+# Motores de honeypot externos (catalogados en T-Pot) que exigen binding
+# explícito por `instance`. Los internos (native/go) no lo necesitan.
+EXTERNAL_ENGINES: frozenset[DeceptionEngine] = frozenset({
+    DeceptionEngine.COWRIE,
+    DeceptionEngine.OPENCANARY,
+    DeceptionEngine.DIONAEA,
+    DeceptionEngine.HERALDING,
+    DeceptionEngine.REDISHONEYPOT,
+    DeceptionEngine.ENDLESSH,
+})
+
+# Formato del identificador de instancia de honeypot (compatible con
+# nombres de contenedor/servicio: kebab/snake, minúsculas, inicia y
+# termina en alfanumérico, máx. 64). Ej.: ``cowrie-dmz-01``.
+INSTANCE_ID_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9_-]{0,62}[a-z0-9])?$")
 
 
 class DeceptionEventType(str, Enum):
@@ -52,15 +73,39 @@ class DeceptionService(BaseModel):
     """Servicio expuesto por un dispositivo señuelo."""
 
     port: int = Field(..., ge=1, le=65535, description="Puerto TCP/UDP", examples=[22])
-    proto: str = Field(..., description="Protocolo (ssh, telnet, http, snmp, rtsp, smb)",
+    proto: str = Field(..., description="Protocolo (ssh, telnet, http, snmp, rtsp, smb, redis)",
                        examples=["ssh"])
     engine: DeceptionEngine = Field(
         default=DeceptionEngine.NATIVE,
         description="Backend que atiende el servicio",
     )
+    instance: Optional[str] = Field(
+        default=None,
+        description="Instancia de honeypot externo que atiende el servicio "
+                    "(p.ej. 'cowrie-dmz-01'). Los motores externos "
+                    "(cowrie/opencanary/dionaea/heralding/redishoneypot/endlessh) "
+                    "deben declararla para que el binding sea consumible por "
+                    "adaptadores: es obligatoria al crear dispositivos nuevos y "
+                    "warning (servicio sin binding) en los heredados; los "
+                    "internos (native/go) no la usan.",
+        examples=["cowrie-dmz-01"],
+    )
     banner: Optional[str] = Field(
         default=None, description="Banner/personalidad devuelta al cliente"
     )
+
+    @field_validator("instance")
+    @classmethod
+    def _valid_instance_id(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        if not isinstance(v, str) or not INSTANCE_ID_PATTERN.fullmatch(v.strip()):
+            raise ValueError(
+                "El identificador de instancia debe ser kebab/snake, minúsculas "
+                "[a-z0-9][a-z0-9_-]*, iniciar y terminar en alfanumérico (máx. 64): "
+                f"{v!r}"
+            )
+        return v.strip()
 
 
 class DeceptionPersona(BaseModel):

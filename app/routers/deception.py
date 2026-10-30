@@ -3,13 +3,11 @@
 API de la red señuelo: topología de dispositivos simulados, telemetría
 de eventos de atacantes, sesiones agregadas y estadísticas.
 
-El endpoint ``/ingest`` es el contrato que usan los motores (listeners
-nativos, engine en Go, Cowrie/OpenCanary) para reportar interacciones.
-Se autentica con ``X-Deception-Token`` (si está configurado) o, en su
-defecto, con JWT de administrador.
+Legacy ingest/execution routes are retained only to return explicit retirement
+errors. Event ingestion belongs exclusively to the independent runtime.ingest
+service; no shared token or administrative JWT fallback is accepted.
 """
 
-import hmac
 import logging
 import random
 from typing import Optional
@@ -17,7 +15,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import PlainTextResponse
 
-from app.core.settings import DECEPTION_ENABLED, DECEPTION_INGEST_TOKEN
+from app.core.settings import DECEPTION_ENABLED
 from app.middleware.auth import JWTBearer
 from app.middleware.rbac import requires_role
 from app.models.deception import (
@@ -28,21 +26,27 @@ from app.models.deception import (
 from app.services.deception import engine_svc, store_svc, topology_svc
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/deception", tags=["Deception"])
+async def control_boundary(request: Request):
+    """Fail closed for legacy ingestion/execution, before reading request bodies."""
+    path = request.url.path
+    if path.rstrip("/") == "/api/deception/ingest":
+        raise HTTPException(410, "Use the separate TLS ingest service /v1/events")
+    if request.method not in {"GET", "HEAD", "OPTIONS"}:
+        config_routes = ("/api/deception/devices", "/api/deception/segments")
+        if not any(path == p or path.startswith(p + "/") for p in config_routes):
+            raise HTTPException(409, "Legacy execution disabled; isolated service migration required")
+
+
+router = APIRouter(prefix="/api/deception", tags=["Deception"],
+                   dependencies=[Depends(control_boundary)])
 
 AUTH = [Depends(JWTBearer()), Depends(requires_role("viewer"))]
 ADMIN = [Depends(JWTBearer()), Depends(requires_role("admin"))]
 
 
 async def ingest_auth(request: Request) -> dict:
-    """Autoriza el ingest por token del data plane o por JWT admin."""
-    supplied = request.headers.get("X-Deception-Token", "")
-    if DECEPTION_INGEST_TOKEN and hmac.compare_digest(supplied, DECEPTION_INGEST_TOKEN):
-        return {"sub": "deception-engine", "role": "admin"}
-    bearer = JWTBearer()
-    await bearer(request)
-    checker = requires_role("admin")
-    return await checker(request)
+    """No shared-token or administrative-credential fallback."""
+    raise HTTPException(410, "Legacy ingestion retired; provision an individual sensor identity")
 
 
 # ── Estado / Topología ───────────────────────────────────────
@@ -52,7 +56,8 @@ async def ingest_auth(request: Request) -> dict:
 def status():
     """Estado del subsistema de deception y resumen de la red señuelo."""
     summary = topology_svc.summary()
-    return {"enabled": DECEPTION_ENABLED, **summary}
+    return {**summary, "enabled": False, "legacy_requested": DECEPTION_ENABLED,
+            "state": "blocked", "reason": "sensor activation requires independent containment validation"}
 
 
 @router.get("/network", dependencies=AUTH)
@@ -131,10 +136,45 @@ def delete_segment(segment_id: str):
         raise HTTPException(404, "Segmento no encontrado")
 
 
+# ── Binding de honeypots externos (solo lectura, declarativo) ─
+
+
+@router.get("/bindings", dependencies=AUTH)
+def list_bindings():
+    """Vista de configuración para adaptadores de honeypots externos.
+
+    Exposición declarativa vía campos ``engine``/``instance``: no expone
+    credenciales, no inicia servicios ni reactiva motores heredados. Los
+    adaptadores (T-Pot: cowrie, opencanary, dionaea, heralding,
+    redishoneypot, endlessh...) consumen esta vista para conocer el
+    device/segment/persona de cada instancia y correlacionar sus eventos;
+    ``validation`` lista conflictos de la topología actual.
+    """
+    bindings = topology_svc.external_bindings()
+    status = topology_svc.binding_status()
+    return {
+        "bindings": bindings,
+        "by_engine": status["by_engine"],
+        "instances": status["instances"],
+        "unbound": status["unbound"],
+        "validation": topology_svc.validate_topology(),
+        "note": "declarative bindings only; adapters own their runtime and lifecycle",
+    }
+
+
+@router.get("/bindings/resolve/{instance_id}", dependencies=AUTH)
+def resolve_binding(instance_id: str, engine: Optional[str] = None):
+    """Resuelve device/segment/persona para una instancia de honeypot."""
+    resolved = topology_svc.resolve_instance(instance_id, engine=engine)
+    if not resolved:
+        raise HTTPException(404, "Instancia no declarada en la topología señuelo")
+    return resolved
+
+
 # ── Telemetría ───────────────────────────────────────────────
 
 
-@router.post("/ingest", status_code=202)
+@router.post("/ingest", status_code=410, include_in_schema=False)
 async def ingest(event: DeceptionEventIn, _user: dict = Depends(ingest_auth)):
     """Recibe un evento normalizado de un motor de deception."""
     from app.services.deception import telemetry_svc
@@ -344,7 +384,8 @@ def sync_netbox():
 def list_allowlist():
     """Lista los orígenes confiables (no generan alertas)."""
     from app.services.deception import allowlist_svc
-    return allowlist_svc.list_allowed()
+    return {"enabled": False, "legacy_entries": allowlist_svc.list_allowed(),
+            "reason": "unscoped exceptions are not applied; owner, scope, reason and expiry required"}
 
 
 @router.post("/allowlist", status_code=201, dependencies=ADMIN)

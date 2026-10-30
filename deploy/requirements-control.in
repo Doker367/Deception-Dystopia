@@ -1,0 +1,15 @@
+# Candidate direct pins for the minimal control surface, targeting Python 3.12.
+# Verified release metadata only; NOT a resolved lock or production approval.
+# See docs/DEPENDENCY-PROVENANCE.md, including the python-jose advisory.
+# Installer must use an approved offline bundle + requirements.lock with real
+# hashes for every direct/transitive wheel, never install from this input.
+fastapi==0.115.12
+uvicorn==0.34.3
+pydantic==2.11.7
+slowapi==0.1.9
+# Approval blocked pending review of the advisory recorded in provenance.
+python-jose[cryptography]==3.5.0
+bcrypt==4.3.0
+PyYAML==6.0.2
+prometheus-client==0.22.1
+python-multipart==0.0.31

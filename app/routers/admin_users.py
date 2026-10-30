@@ -9,7 +9,8 @@ Endpoints (todos requieren rol admin):
 """
 
 import yaml
-from pathlib import Path
+from runtime.localfiles import read_private, replace_private
+from app.core.settings import CONFIG_DIR
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
@@ -26,7 +27,7 @@ router = APIRouter(
 
 # ── Ruta al archivo de usuarios ───────────────────────────────
 
-USERS_FILE = Path(__file__).resolve().parent.parent.parent / "config" / "users.yaml"
+USERS_FILE = CONFIG_DIR / "users.yaml"
 
 
 # ── Utilidades ────────────────────────────────────────────────
@@ -36,22 +37,15 @@ def _load_users_raw() -> list[dict]:
     """Carga la lista de usuarios desde config/users.yaml."""
     if not USERS_FILE.exists():
         return []
-    with open(USERS_FILE, "r", encoding="utf-8") as f:
-        data = yaml.safe_load(f) or {}
+    data = yaml.safe_load(read_private(USERS_FILE)) or {}
     return data.get("users", [])
 
 
 def _save_users(users: list[dict]) -> None:
     """Guarda la lista de usuarios en config/users.yaml."""
     USERS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(USERS_FILE, "w", encoding="utf-8") as f:
-        yaml.dump(
-            {"users": users},
-            f,
-            default_flow_style=False,
-            allow_unicode=True,
-            sort_keys=False,
-        )
+    replace_private(USERS_FILE, yaml.safe_dump(
+        {"users": users}, allow_unicode=True, sort_keys=False).encode())
 
 
 def _user_to_response(user: dict) -> UserResponse:

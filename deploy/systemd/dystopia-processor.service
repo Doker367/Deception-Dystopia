@@ -1,0 +1,51 @@
+[Unit]
+Description=Dystopia outbox monitoring (notification delivery requires explicit configuration)
+After=dystopia-ingest.service
+ConditionPathExists=/var/lib/dystopia/ingest/events.db
+
+[Service]
+Type=simple
+# Ingress and outbox are one processing trust domain, separate processes.
+User=dystopia-ingest
+Group=dystopia-ingest
+WorkingDirectory=/opt/dystopia/current
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=DYSTOPIA_QUERY_GROUP=dystopia-query
+ExecStart=/opt/dystopia/venv/bin/python -m runtime.processor --events /var/lib/dystopia/ingest/events.db
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectProc=invisible
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+RestrictNamespaces=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@mount @raw-io @reboot @swap @privileged
+ReadWritePaths=/var/lib/dystopia/ingest
+InaccessiblePaths=-/var/lib/dystopia/control -/var/lib/dystopia/sensor -/var/lib/dystopia/cells -/var/lib/dystopia/ingest/sensors.db -/var/lib/dystopia/ingest/server.key -/run/libvirt -/run/docker.sock
+IPAddressDeny=any
+SocketBindDeny=any
+TasksMax=16
+MemoryMax=128M
+CPUQuota=50%
+LimitNOFILE=128
+LimitCORE=0
+LimitFSIZE=536870912
+
+[Install]
+WantedBy=multi-user.target

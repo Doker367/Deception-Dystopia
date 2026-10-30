@@ -17,18 +17,13 @@ from jose import JWTError, jwt
 
 # Clave secreta para firmar JWTs.
 # En producción DEBE definirse NETPULSE_JWT_SECRET como variable de entorno.
-JWT_SECRET = os.getenv("NETPULSE_JWT_SECRET", "netpulse-dev-secret-change-me")
+JWT_SECRET = os.getenv("NETPULSE_JWT_SECRET", "")
 JWT_ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE = int(os.getenv("NETPULSE_TOKEN_EXPIRE", "30"))  # minutos
 
-# Si estamos en modo producción (NETPULSE_ENV=production) y el secret es
-# el default, fallar en lugar de arriesgar tokens predecibles.
-_IS_PRODUCTION = os.getenv("NETPULSE_ENV", "development").lower() == "production"
-if _IS_PRODUCTION and JWT_SECRET == "netpulse-dev-secret-change-me":
-    raise RuntimeError(
-        "NETPULSE_ENV=production requiere NETPULSE_JWT_SECRET configurado. "
-        "Genera uno con: python -c \"import secrets; print(secrets.token_hex(32))\""
-    )
+# Every deployment must provision a unique secret; no development fallback.
+if len(JWT_SECRET.encode("utf-8")) < 32 or JWT_SECRET == "netpulse-dev-secret-change-me":
+    raise RuntimeError("Provision a unique JWT secret (at least 32 bytes) using the local installer")
 
 # bcrypt solo usa los primeros 72 bytes; imitar el truncado histórico de passlib
 _BCRYPT_MAX_BYTES = 72

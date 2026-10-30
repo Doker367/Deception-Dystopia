@@ -1,10 +1,9 @@
 """NetPulse — Immutable Audit Logging Service.
 
-Desde Fase 2 el log de auditoría se guarda en SQLite (WAL) en vez de un
-JSONL append-only: consultas filtradas/paginadas en O(log n), sin tener
-que leer todo el archivo por request. Los eventos se insertan (nunca se
-actualizan/borran) y cada escritura es síncrona pero muy ligera; en el
-middleware se delegan a un executor para no bloquear el event loop.
+The administrative log uses a private bounded SQLite database (64 MiB, DELETE
+journal, synchronous commits). The middleware bounds pending work and exposes
+rejection/storage-error counters. Existing legacy data requires deliberate
+permission/size migration; no permissive fallback is used.
 
 Compatible con la API anterior (log_event / get_events / get_audit_stats).
 """
@@ -17,14 +16,15 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from app.core.settings import BASE_DIR
+from app.core.settings import STATE_DIR
+from runtime.storage import database
 from app.services.metrics_svc import netpulse_audit_events_total
 
 logger = logging.getLogger(__name__)
 
 # ── Paths ────────────────────────────────────────────────────
 
-AUDIT_DIR = BASE_DIR / "audit"
+AUDIT_DIR = STATE_DIR / "audit"
 AUDIT_DB = AUDIT_DIR / "audit.db"
 
 # Lock para SQLite (un solo writer a la vez en el proceso)
@@ -50,10 +50,8 @@ CREATE TABLE IF NOT EXISTS audit (
 
 def _ensure_db() -> None:
     """Crea el directorio/BD si no existen y aplica el esquema."""
-    AUDIT_DIR.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(str(AUDIT_DB)) as conn:
-        conn.execute("PRAGMA journal_mode=WAL;")
-        conn.execute("PRAGMA synchronous=NORMAL;")
+    AUDIT_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+    with database(AUDIT_DB, 64*1024*1024) as conn:
         conn.execute(_SCHEMA)
 
 
@@ -98,8 +96,7 @@ def log_event(
 
     try:
         _ensure_db()
-        with _write_lock, sqlite3.connect(str(AUDIT_DB), timeout=10) as conn:
-            conn.execute("PRAGMA journal_mode=WAL;")
+        with _write_lock, database(AUDIT_DB, 64*1024*1024) as conn:
             conn.execute(
                 """INSERT INTO audit
                    (ts, action, device_id, username, details, ip_address,
@@ -112,8 +109,10 @@ def log_event(
                     response_status,
                 ),
             )
+            event["id"] = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
     except Exception as e:
-        logger.error("[audit] fallo al escribir evento (%s): %s", action, e)
+        event.pop("id", None)
+        logger.error("[audit] persistence failed: %s", type(e).__name__)
         return event
 
     netpulse_audit_events_total.inc()

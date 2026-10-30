@@ -76,7 +76,7 @@ async def emit(
         success, src_port, ts,
     )
     etype = record["type"]
-    message = f"{etype} {username or ''} {detail or ''}".strip()
+    message = etype  # Captured credentials/commands never go to Loki.
     try:
         await asyncio.to_thread(_push_loki, device_id, src_ip, proto, etype, message)
     except Exception as exc:  # noqa: BLE001
@@ -105,7 +105,7 @@ def emit_sync(
         success, src_port, ts,
     )
     etype = record["type"]
-    message = f"{etype} {username or ''} {detail or ''}".strip()
+    message = etype  # Captured credentials/commands never go to Loki.
     _push_loki(device_id, src_ip, proto, etype, message)
     return record
 

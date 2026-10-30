@@ -1,0 +1,55 @@
+[Unit]
+Description=Dystopia read-only metadata query process (no sensor/admin credentials)
+Requires=dystopia-query.socket
+PartOf=dystopia-query.socket
+After=dystopia-query.socket
+ConditionPathExists=/var/lib/dystopia/ingest/events.db
+
+[Service]
+Type=simple
+User=dystopia-query
+Group=dystopia-query
+WorkingDirectory=/opt/dystopia/current
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/dystopia/venv/bin/python -m runtime.cli query --events /var/lib/dystopia/ingest/events.db
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectProc=invisible
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+RestrictNamespaces=yes
+RestrictAddressFamilies=AF_UNIX
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@mount @raw-io @reboot @swap @privileged
+ReadOnlyPaths=/var/lib/dystopia/ingest/events.db
+InaccessiblePaths=-/var/lib/dystopia/control -/var/lib/dystopia/sensor -/var/lib/dystopia/cells -/var/lib/dystopia/ingest/sensors.db -/var/lib/dystopia/ingest/server.key -/run/libvirt -/run/docker.sock
+IPAddressDeny=any
+SocketBindDeny=any
+TasksMax=12
+MemoryMax=128M
+CPUQuota=50%
+LimitNOFILE=128
+LimitCORE=0
+LimitFSIZE=0
+StandardOutput=journal
+StandardError=journal
+LogRateLimitIntervalSec=30s
+LogRateLimitBurst=40
+
+[Install]
+# Deliberately not enabled directly: enable only the socket after ACL checks.
