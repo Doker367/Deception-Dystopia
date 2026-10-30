@@ -1,0 +1,10 @@
+[
+  {"name":"management-v4","ip":"198.51.100.20","port":8443,"expect":"deny"},
+  {"name":"production-v4","ip":"203.0.113.20","port":8443,"expect":"deny"},
+  {"name":"internet-synthetic-v4","ip":"203.0.113.30","port":8443,"expect":"deny"},
+  {"name":"other-cell-v4","ip":"192.0.2.2","port":2222,"expect":"deny"},
+  {"name":"management-v6","ip":"fd42:d570:100::20","port":8443,"expect":"deny"},
+  {"name":"production-v6","ip":"fd42:d570:200::20","port":8443,"expect":"deny"},
+  {"name":"internet-synthetic-v6","ip":"fd42:d570:300::30","port":8443,"expect":"deny"},
+  {"name":"other-cell-v6","ip":"fd42:d570::2","port":2222,"expect":"deny"}
+]

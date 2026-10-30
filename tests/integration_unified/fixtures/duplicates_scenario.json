@@ -1,0 +1,35 @@
+{
+  "description": "At-least-once delivery scenario. The publisher may replay batches after an acknowledgement loss or a restart; Elasticsearch document identity must stay stable.",
+  "observer_name": "cowrie-lab-01",
+  "document_key": "event.id",
+  "batches": [
+    {
+      "name": "first-delivery",
+      "source": "events_cowrie.jsonl",
+      "subset_event_ids": null
+    },
+    {
+      "name": "retry-after-ack-loss",
+      "source": "events_cowrie.jsonl",
+      "subset_event_ids": [
+        "2f17dece-9a7b-4bfc-89a1-d8c64242d4e8",
+        "5784e998-b79e-480e-862d-4f10512b7893"
+      ]
+    },
+    {
+      "name": "restart-replay",
+      "source": "events_cowrie.jsonl",
+      "subset_event_ids": null
+    }
+  ],
+  "expected": {
+    "unique_documents": 5,
+    "duplicate_deliveries": 7
+  },
+  "conflict_case": {
+    "base_event_id": "5784e998-b79e-480e-862d-4f10512b7893",
+    "mutated_field": "src_ip",
+    "mutated_value": "198.51.100.77",
+    "expected": "reject with an event-ID conflict; never overwrite the first document"
+  }
+}
