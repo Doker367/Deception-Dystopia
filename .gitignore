@@ -81,6 +81,9 @@ logs/
 *.tmp
 *.bak
 
+# Resultados de la validación CI del import de Kibana (solo resumen, sin secretos)
+ci-artifacts/
+
 # API tokens (NEVER COMMIT)
 config/.netbox_token
 config/.netbox_token.*

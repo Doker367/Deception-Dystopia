@@ -33,7 +33,7 @@ _BOOT_TIME = psutil.boot_time()
 psutil.cpu_percent(interval=0.1)
 
 
-def _get_process() -> psutil.Process:
+def _get_process() -> Optional[psutil.Process]:
     """Devuelve el objeto psutil.Process de la API (cacheado)."""
     global _PROCESS
     if _PROCESS is None:

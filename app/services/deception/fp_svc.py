@@ -112,6 +112,7 @@ def classify(record: dict, alert: Optional[dict] = None) -> dict:
         verdict, confidence = "unknown", None
 
     suppress = False  # Advisory only, even if a legacy environment flag is set.
+    should_block = decision.get("should_block")
     ai_block = {
         "verdict": verdict,
         "is_false_positive": verdict == "benign",
@@ -120,7 +121,7 @@ def classify(record: dict, alert: Optional[dict] = None) -> dict:
         "p_intrusion": round(p_real, 4) if p_real is not None else None,
         "severity": decision.choice_of("severity"),
         "mitre_tactic": decision.choice_of("mitre_tactic"),
-        "should_block": (decision.get("should_block").noul if decision.get("should_block") else None),
+        "should_block": should_block.noul if should_block is not None else None,
         "model": decision.model,
         "cached": decision.cached,
     }

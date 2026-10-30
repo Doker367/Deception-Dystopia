@@ -1,5 +1,6 @@
 """Dystopia control plane. Never owns sensor or hypervisor lifecycles."""
 from contextlib import asynccontextmanager
+from typing import Any, cast
 
 from fastapi import FastAPI
 from fastapi.responses import FileResponse
@@ -23,7 +24,12 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title=API_TITLE, version=API_VERSION, lifespan=lifespan)
 app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+# slowapi declares the handler as taking RateLimitExceeded; Starlette's
+# ExceptionHandler protocol widens the exc parameter to Exception, so the
+# callable is not structurally assignable even though it is the documented API.
+app.add_exception_handler(
+    RateLimitExceeded, cast(Any, _rate_limit_exceeded_handler)
+)
 app.add_middleware(SlowAPIMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(AuditMiddleware)

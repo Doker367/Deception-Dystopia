@@ -375,6 +375,8 @@ class CredentialReference(str):
     document and every log line) contains only a non-secret identifier.
     """
 
+    _values: dict[str, str]
+
     def __new__(cls, identifier: str, values: Optional[Mapping[str, str]] = None):
         instance = super().__new__(cls, identifier)
         instance._values = dict(values or {})

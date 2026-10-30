@@ -65,6 +65,5 @@ jobs:
       - name: Instalar dependencias
         run: pip install -r requirements-dev.txt
 
-      - name: Pyright (informativo)
-        continue-on-error: true
+      - name: Pyright
         run: pyright app --pythonpath "$(which python)"

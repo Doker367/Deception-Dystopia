@@ -106,6 +106,8 @@ def _export_sftp(files: list[Path], uploaded: list[str], errors: list[str]) -> N
             transport.connect(username=settings.OFFSITE_SFTP_USER,
                               password=settings.OFFSITE_SFTP_PASSWORD)
         sftp = paramiko.SFTPClient.from_transport(transport)
+        if sftp is None:
+            raise RuntimeError("no se pudo abrir el canal SFTP")
         remote_dir = settings.OFFSITE_SFTP_DIR
         _sftp_makedirs(sftp, remote_dir)
         for f in files:

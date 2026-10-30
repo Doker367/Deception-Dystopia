@@ -11,7 +11,7 @@ Los equipos reales suelen responder a SNMPv2c con community
 import logging
 import shutil
 import subprocess
-from typing import Optional
+from typing import Any, Optional
 
 import yaml
 
@@ -50,10 +50,12 @@ SNMP_DRIVERS = [
     "snmp", "generic", "ros", "mikrotik", "linux", "huawei", "alcatel_aos",
 ]
 
-# pysnmp es opcional — si no está instalado se usa `snmpget`
+# pysnmp es opcional — si no está instalado se usa `snmpget`.
+# Se importa como módulo (en vez de star-import) para que los nombres queden
+# resueltos; pysnmp no publica stubs, de ahí la supresión puntual del import.
+_pysnmp: Any = None
 try:
-    from pysnmp.hlapi import *  # type: ignore  # noqa: F401,F403
-
+    import pysnmp.hlapi as _pysnmp  # type: ignore[import-not-found]
     PYSNMP_AVAILABLE = True
 except ImportError:
     PYSNMP_AVAILABLE = False
@@ -86,12 +88,14 @@ def _poll_with_pysnmp(host: str, oids: dict, community: str, timeout: int) -> di
     for name, oid in oids.items():
         try:
             error_indication, error_status, _, var_binds = next(
-                getCmd(
-                    SnmpEngine(),
-                    CommunityData(community, mpModel=1),  # 1 = SNMPv2c
-                    UdpTransportTarget((host, SNMP_PORT), timeout=timeout, retries=0),
-                    ContextData(),
-                    ObjectType(ObjectIdentity(oid)),
+                _pysnmp.getCmd(
+                    _pysnmp.SnmpEngine(),
+                    _pysnmp.CommunityData(community, mpModel=1),  # 1 = SNMPv2c
+                    _pysnmp.UdpTransportTarget(
+                        (host, SNMP_PORT), timeout=timeout, retries=0
+                    ),
+                    _pysnmp.ContextData(),
+                    _pysnmp.ObjectType(_pysnmp.ObjectIdentity(oid)),
                 )
             )
         except Exception as exc:
