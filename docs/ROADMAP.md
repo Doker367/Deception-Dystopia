@@ -8,7 +8,7 @@ CI esté rojo y no mezclar cambios no certificados con el camino canónico.**
 
 - Rama de trabajo: `feature/unified-deception`
 - Base: `origin/main` en `1278db4`
-- Commits locales: 14
+- Commits locales: rama `feature/unified-deception` (ver `git log --oneline main..HEAD`)
 - Árbol de trabajo: limpio
 - Suite completa: **297 passed, 3 skipped, 175 subtests passed**
 - Ruff: **verde**
