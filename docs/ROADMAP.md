@@ -8,9 +8,11 @@ CI esté rojo y no mezclar cambios no certificados con el camino canónico.**
 
 - Rama de trabajo: `feature/unified-deception`
 - Base: `origin/main` en `1278db4`
-- Commits locales: 7
+- Commits locales: 13
 - Árbol de trabajo: limpio
-- Suite completa: **21 fallos + 4 errores**
+- Suite completa: **297 passed, 3 skipped, 175 subtests passed**
+- Ruff: **verde**
+- Python 3.12 y 3.14: **verde**
 - Suites relevantes de la integración: verdes
 - Rama remota: todavía no publicada
 - PR: todavía no abierto
@@ -19,15 +21,15 @@ CI esté rojo y no mezclar cambios no certificados con el camino canónico.**
 
 El primer PR puede abrirse cuando se cumplan todos estos puntos:
 
-1. `python3.12 -m pytest -q` termina con exit `0`.
-2. `ruff check app tests` termina con exit `0`.
-3. `tests/integration_unified` pasa.
-4. El generador de Kibana produce el mismo bundle y hash.
+1. `python3.12 -m pytest -q` termina con exit `0`. ✅
+2. `ruff check app tests` termina con exit `0`. ✅
+3. `tests/integration_unified` pasa. ✅
+4. El generador de Kibana produce el mismo bundle y hash. ✅
 5. No hay secretos, certificados, claves, estado local ni artefactos
-   experimentales en el diff.
-6. La documentación de operación y validación está enlazada desde `README.md`.
-7. El PR explica qué se validó en macOS y qué sigue pendiente en Linux.
-8. CI de GitHub Actions queda verde en la rama.
+   experimentales en el diff. ✅
+6. La documentación de operación y validación está enlazada desde `README.md`. ✅
+7. El PR explica qué se validó en macOS y qué sigue pendiente en Linux. ⏳
+8. CI de GitHub Actions queda verde en la rama. ⏳
 
 ## Hitos
 
@@ -49,7 +51,7 @@ El primer PR puede abrirse cuando se cumplan todos estos puntos:
 - Documentar alcance, evidencias y pendientes.
 - Excluir artefactos experimentales de Maps.
 
-### Ola 1 — Contratos de autenticación y API
+### Ola 1 — Contratos de autenticación y API (completada)
 
 **Problema:** las pruebas generan JWT sin el campo `ver` que exige la
 invalidación por cambio de usuario. También esperan tokens de ingesta y
@@ -75,7 +77,7 @@ simulación heredados.
 **Criterio de salida:** pruebas de API de deception verdes sin desactivar RBAC ni
 la invalidación de tokens.
 
-### Ola 2 — Retirar o reescribir pruebas de funciones eliminadas
+### Ola 2 — Retirar o reescribir pruebas de funciones eliminadas (completada)
 
 **Problema:** varias pruebas todavía importan constantes o endpoints de la
 arquitectura anterior.
@@ -96,7 +98,7 @@ explique qué la sustituye. No usar `skip` permanente para ocultar fallos.
 la cobertura nueva vive en `tests/hardening`, `tests/integration_unified` y
 `tests/ui`.
 
-### Ola 3 — Portabilidad del puente de consulta
+### Ola 3 — Portabilidad del puente de consulta (completada)
 
 **Problema:** `tests/integration/test_query_bridge.py` falla en macOS con
 `OSError: AF_UNIX path too long`.
@@ -113,7 +115,7 @@ macOS y Linux. No cambiar el transporte Unix ni debilitar permisos.
 
 **Criterio de salida:** los tres tests del puente pasan en macOS y en CI Linux.
 
-### Ola 4 — Lint, tipos y CI
+### Ola 4 — Lint, tipos y CI (completada en local)
 
 **Trabajo:**
 
@@ -174,14 +176,14 @@ macOS y Linux. No cambiar el transporte Unix ni debilitar permisos.
 
 ## Qué falta exactamente para el primer push
 
-- [ ] Resolver los 21 fallos y 4 errores.
-- [ ] Confirmar que no hay regresión real en autenticación.
-- [ ] Corregir el socket Unix del puente de consulta.
-- [ ] Retirar/reescribir pruebas de features eliminadas.
-- [ ] Instalar y pasar `ruff`.
-- [ ] Probar la suite con Python 3.12.
-- [ ] Añadir o ajustar el workflow de CI.
-- [ ] Revisar el diff completo y secretos.
+- [x] Resolver los 21 fallos y 4 errores.
+- [x] Confirmar que no hay regresión real en autenticación.
+- [x] Corregir el socket Unix del puente de consulta.
+- [x] Retirar/reescribir pruebas de features eliminadas.
+- [x] Instalar y pasar `ruff`.
+- [x] Probar la suite con Python 3.12.
+- [x] Añadir o ajustar el workflow de CI.
+- [x] Revisar el diff completo y secretos.
 - [ ] Push de la rama.
 - [ ] Abrir PR y esperar CI verde.
 

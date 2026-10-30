@@ -111,13 +111,20 @@ Suites relevantes que pasan:
 tests/integration_unified
 tests/deception/test_elastic_export.py
 tests/deception/test_elasticsearch_publisher.py
+tests/deception/test_external_adapters.py
+tests/deception/test_topology_bindings.py
+tests/ui
 ```
 
-La suite completa **no está verde**: quedan fallos y errores en pruebas
-heredadas de monitoring, firewall, engine, tokens antiguos y el puente de
-consulta. No se han ocultado ni marcado como skip. Antes de publicar en `main`
-hay que actualizar o retirar esas pruebas con justificación, o moverlas a un
-seguimiento explícito.
+La suite completa quedó verde tras reconciliar las pruebas heredadas de
+monitoring, firewall, engine, tokens antiguos y el puente de consulta:
+
+```text
+297 passed, 3 skipped, 175 subtests passed
+```
+
+Verificado en Python 3.14 y Python 3.12. `ruff check app tests` pasa sin
+errores. Los 3 tests omitidos son opt-in de laboratorio, no fallos ocultos.
 
 ## 7. Pendientes antes de producción
 
@@ -133,28 +140,23 @@ seguimiento explícito.
 6. **Backup/restore:** registrar repositorio de snapshots y probar restauración.
 7. **Observabilidad:** healthchecks, métricas, logs, alertas de caída y
    retención.
-8. **CI:** corregir la suite completa, ejecutar `ruff` y `pytest`, y añadir una
-   prueba de import del bundle en un Kibana efímero si el entorno lo permite.
+8. **CI:** la suite, `ruff` y el job de artefactos ya están configurados; falta
+   validar el workflow en GitHub Actions y, opcionalmente, importar el bundle en
+   un Kibana efímero.
 9. **Operación:** runbook de incidentes, rotación de API keys, upgrade,
    rollback y respuesta a fuga de datos.
 
 ## 8. Plan de publicación recomendado
 
-No publicar todo el árbol de trabajo como un único commit. Hay cambios de varias
-áreas y archivos generados. Orden propuesto:
+El trabajo ya está separado en commits lógicos sobre
+`feature/unified-deception`. El árbol está limpio y las pruebas heredadas fueron
+reconciliadas. Para el primer push:
 
-1. `feat(runtime): planos de control, sensor, ingesta, proceso y consulta`
-2. `feat(honeypots): adaptadores, imágenes y perfiles de los seis honeypots`
-3. `feat(elastic): plantillas, ILM, roles, certificados y bootstrap`
-4. `feat(kibana): spec, generador, bundle canónico y guía de import`
-5. `test(docs): contratos de integración, validación y runbooks`
-
-Antes del push:
-
-- excluir `.venv`, cachés, `.taste-skill`, certificados, claves y estado local;
-- revisar que no haya secretos ni rutas del laboratorio;
-- decidir qué hacer con las pruebas heredadas que fallan;
-- hacer el push a una rama y abrir PR, no directo a `main`.
+- revisar el diff completo una última vez;
+- confirmar que no hay secretos ni estado local;
+- hacer push de la rama;
+- abrir PR contra `main`, no push directo a `main`;
+- esperar CI verde antes del merge.
 
 ## 9. Conclusión
 
