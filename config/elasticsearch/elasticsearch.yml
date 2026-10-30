@@ -1,0 +1,109 @@
+# ============================================================================
+# Dystopia - Elasticsearch 9.3.5 (stack version identical to tpotce 24.04.x)
+# ============================================================================
+# Single-node cluster for the analytical panel of normalized honeypot events.
+#
+# SECURITY POLICY (differs from tpotce, whose ES uses security off):
+#  * xpack.security ENABLED: authentication required.
+#  * TLS enabled on HTTP and transport. Certificates are generated once by
+#    deploy/elastic/scripts/generate-certs.sh (CA + node cert, PEM).
+#  * Secrets NEVER live in this file: passwords/binaries are in the ES
+#    keystore (deploy/elastic/scripts/bootstrap-security.sh) and in the
+#    .env of the deployment, which is excluded from version control.
+#
+# BINDING: only managed via the local port publish of the Compose (127.0.0.1),
+# never reachable from the deception segments (decoy networks of deception
+# do not route to the Elasticsearch container).
+# ============================================================================
+
+cluster:
+  name: dystopia-deception
+
+node:
+  name: dystopia-deception-node-01
+  # Single node: master + data + ingest + ml disabled.
+  roles:
+    - master
+    - data_hot
+    - data_content
+    - ingest
+
+# Single-node bootstrap (DO NOT grow into a multi-node cluster without
+# removing this line and provisioning real discovery).
+discovery.type: single-node
+
+path:
+  data: /usr/share/elasticsearch/data
+  logs: /usr/share/elasticsearch/logs
+
+# ----------------------------------------------------------------------------
+# Network. Inside the container we listen on the container interface;
+# exposure to the host is limited in deploy/elastic/docker-compose.elastic.yml
+# to 127.0.0.1 (or the dedicated management interface via ELASTIC_BIND_IP).
+# ----------------------------------------------------------------------------
+network:
+  host: 0.0.0.0
+  publish_host: 0.0.0.0
+
+http:
+  port: 9200
+  max_content_length: 100mb
+  compression: true
+
+# --- Security: authentication ---
+xpack.security.enabled: true
+xpack.security.authc:
+  # The normalized-event publisher authenticates with a least-privilege API key.
+  # Keys are created by bootstrap-security.sh and stored outside this tree.
+  api_key.enabled: true
+  token.enabled: false
+
+# --- Security: TLS on HTTP (PEM generated in /certs by generate-certs.sh) ---
+# The server private keys are passwordless (the script enforces 0600 and umask 077 in ELASTIC_CERTS_DIR), and are NOT in version control.
+xpack.security.http.ssl:
+  enabled: true
+  certificate: certs/elasticsearch.crt
+  key: certs/elasticsearch.key
+  certificate_authorities:
+    - certs/ca.crt
+  client_authentication: optional
+
+# --- Security: TLS on transport (validating its own certificate) ---
+xpack.security.transport.ssl:
+  enabled: true
+  verification_mode: certificate
+  certificate: certs/elasticsearch.crt
+  key: certs/elasticsearch.key
+  certificate_authorities:
+    - certs/ca.crt
+
+# --- Feature limits: we don't need ML (honeypot analytics rule-based) ---
+xpack.ml.enabled: false
+xpack.watcher.enabled: false
+xpack.license.self_generated.type: basic
+
+# Performance telemetry to zero (no ESS/EPM calls).
+xpack.monitoring.collection.enabled: false
+
+# ----------------------------------------------------------------------------
+# Retention / lifecycle (ILM). The policy itself is in
+# config/elasticsearch/ilm/*.json and the number of days is configured
+# by ILM_DECEPTION_EVENTS_DAYS / ILM_DECEPTION_ALERTS_DAYS in .env.
+# ----------------------------------------------------------------------------
+indices.lifecycle:
+  poll_interval: 5m
+
+# Disk watermarks: single-node with dedicated volume; Phase "delete" must
+# be able to free space without leaving the cluster read-only.
+cluster.routing.allocation:
+  disk:
+    watermark:
+      low: 85%
+      high: 90%
+      flood_stage: 95%
+
+# Analysis limits without external plugins.
+indices.query.bool.max_clause_count: 2000
+script.max_compilations_rate: 75/5m
+
+# Logs: local (not shipped to external ELK of another agent).
