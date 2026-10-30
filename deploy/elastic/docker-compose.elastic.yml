@@ -20,10 +20,9 @@
 
 name: dystopia-elastic
 
-# NOTA (pendiente de prueba real): los healthchecks usan `curl`; antes del
-# primer despliegue validar que la imagen oficial 9.3.5 lo trae (o sustituir).
-# No se arrancó ninguna instancia para probar Compose/Elastic por política de
-# este agente (sin containers/servicios).
+# Validado en macOS/Colima con las imágenes oficiales 9.3.5: el healthcheck
+# `curl` existe y el stack arranca con TLS, roles y data streams. En el
+# servidor Linux queda validar límites de kernel, disco y systemd.
 
 services:
   elasticsearch:
