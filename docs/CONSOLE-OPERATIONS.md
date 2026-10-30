@@ -56,4 +56,17 @@ El panel distingue carga, vacío confirmado, 401, 403, 503, desconexión, datos 
 
 ## Pruebas visuales y operativas
 
-La suite ASGI `tests/ui` y `tests/hardening` se ejecutó en la iteración anterior, **no tras introducir el puente**: en esta iteración `sandbox-exec` falló con `sandbox_apply: Operation not permitted`. Las nuevas pruebas dinámicas quedan pendientes de sandbox OS y de Ubuntu 24.04 con UID distintos; no se iniciaron servicios ni VMs. Un navegador autorizado en laboratorio debe comprobar 1440, 1024 y 390 px, teclado, foco, contraste, scroll y capturas; el sandbox de esta sesión denegó el arranque de Chrome (`sandbox initialization failed: Operation not permitted`). Por ello **no hay capturas verificadas** ni afirmación de conformidad WCAG AA visual. El entorno usado para pruebas Python es macOS con intérprete prestado, no Ubuntu 24.04/Python 3.12/pins aprobados.
+La suite ASGI `tests/ui` pasa. En el laboratorio de evaluación se arrancó el
+control con un estado temporal y se capturaron login, resumen, celdas y detalle
+de celda a 1600×1000 con Chrome headless. El servicio de consulta no estaba
+arrancado, por lo que las capturas muestran “datos no disponibles” en lugar de
+inventar eventos.
+
+En esa prueba se detectó y corrigió un fallo real del login: el manejador
+asíncrono usaba `event.currentTarget` después de un `await`, cuando ya era
+`null`, y lanzaba `Cannot read properties of null (reading 'reset')`. Ahora
+captura el formulario antes del `await` y hay una prueba de regresión.
+
+Siguen pendientes las comprobaciones de 1440, 1024 y 390 px, teclado, foco,
+contraste, scroll y WCAG AA visual, además de repetir la prueba en Ubuntu 24.04
+con UID distintos. Las capturas están en `docs/images/console-*.png`.

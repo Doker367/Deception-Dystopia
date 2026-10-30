@@ -311,6 +311,25 @@ rm -rf "$LAB/data" "$LAB/certs" "$LAB/api-keys"
 
 ![Discover con el data view deception-events*](images/discover.png)
 
+### Consola: acceso
+
+![Acceso a la consola operativa](images/console-login.png)
+
+### Consola: resumen
+
+![Resumen operativo de la consola](images/console-overview.png)
+
+La captura se tomó con un estado temporal y sin el servicio de consulta
+arrancado, por eso muestra datos no disponibles en lugar de inventar ceros.
+
+### Consola: celdas
+
+![Registro de celdas y borrador de laboratorio](images/console-cells.png)
+
+### Consola: detalle de celda
+
+![Detalle de una celda en estado borrador](images/console-cell-detail.png)
+
 ## Límites del host de evaluación
 
 - KVM/libvirt y arranque real de celdas.
