@@ -3,6 +3,9 @@
 Adds security headers and removes Server header from responses.
 """
 
+import logging
+import secrets
+
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
@@ -37,8 +40,15 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         # Permissions policy
         headers.setdefault("Permissions-Policy", "geolocation=(), camera=(), microphone=()")
 
-        # Content-Security-Policy (allow inline styles/scripts for dashboard)
-        if request.url.path.startswith("/api/"):
+        # Console has external same-origin JS/CSS only; no inline execution.
+        if request.url.path == "/" or request.url.path.startswith("/static/console."):
+            headers.setdefault(
+                "Content-Security-Policy",
+                "default-src 'self'; script-src 'self'; style-src 'self'; "
+                "connect-src 'self'; img-src 'self' data:; font-src 'self'; "
+                "object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
+            )
+        elif request.url.path.startswith("/api/"):
             headers.setdefault(
                 "Content-Security-Policy",
                 "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' https://fonts.gstatic.com https://fonts.googleapis.com; connect-src 'self'",
@@ -48,6 +58,17 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 "Content-Security-Policy",
                 "default-src 'self'; script-src 'self' 'unsafe-inline' https://fonts.googleapis.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data:; font-src 'self' https://fonts.gstatic.com https://fonts.googleapis.com; connect-src 'self'; frame-src 'self' http://localhost:3000 http://127.0.0.1:3000",
             )
+
+        # Even FastAPI's own 422/401 validation failures get a safe diagnostic ID.
+        # Never log a request path/query: sensor identifiers are untrusted.
+        path = request.url.path
+        if (path in {"/api/console/events", "/api/console/events.csv", "/api/console/activity"}
+                or path.startswith("/api/console/events/")) and response.status_code >= 400:
+            if "X-Query-Error-ID" not in headers:
+                error_id = secrets.token_hex(8)
+                headers["X-Query-Error-ID"] = error_id
+                logging.getLogger(__name__).warning("console_query_rejected id=%s status=%d",
+                                                    error_id, response.status_code)
 
         # Remove Server header (uvicorn adds it)
         if "server" in headers:

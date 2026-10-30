@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "management_interface": "mgmt0",
+  "management_network": "198.51.100.0/24",
+  "deception_interface": "decoy0",
+  "deception_network": "192.0.2.0/24",
+  "protected_networks": ["198.51.100.0/24", "203.0.113.0/24", "fd42:d570:100::/64"],
+  "control_bind": "127.0.0.1",
+  "recovery": "EJEMPLO: sustituir por consola fuera de banda probada, responsable y procedimiento"
+}

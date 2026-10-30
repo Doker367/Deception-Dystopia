@@ -2,8 +2,15 @@ name: CI
 
 on:
   push:
-    branches: [master, main]
+    branches:
+      - main
+      - master
+      - "feature/**"
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   lint-and-test:
@@ -26,9 +33,28 @@ jobs:
       - name: Tests
         run: pytest tests
 
+  artifact-contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Contratos de integración y UI
+        run: pytest -q tests/integration_unified tests/ui
+
+      - name: Regenerar bundle canónico
+        run: python deploy/kibana-dashboards/tools/build_dashboards.py
+
   typecheck:
     runs-on: ubuntu-latest
-    continue-on-error: true  # informativo: la tipificación completa es incremental
     steps:
       - uses: actions/checkout@v4
 
@@ -39,5 +65,6 @@ jobs:
       - name: Instalar dependencias
         run: pip install -r requirements-dev.txt
 
-      - name: Pyright
-        run: pyright app
+      - name: Pyright (informativo)
+        continue-on-error: true
+        run: pyright app --pythonpath "$(which python)"

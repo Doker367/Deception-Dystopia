@@ -1,1 +1,38 @@
-<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Dystopia</title><link rel="icon" href="/favicon.svg"><style>body{font:16px system-ui;background:#100d18;color:#f5f3ff;margin:0}main{max-width:900px;margin:8vh auto;padding:2rem}a{color:#c4b5fd}code{background:#241b35;padding:.2rem .4rem}</style></head><body><main><h1>Dystopia</h1><p>Plataforma independiente de deception. Listeners, VMs, syslog y Laya están deshabilitados por defecto. Configure una red aislada antes de activarlos.</p><p><a href="/docs">API de control</a> · <a href="/api/health">Estado</a> · <code>/api/deception/status</code></p></main></body></html>
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#10161c"><title>Dystopia · Consola operativa</title>
+  <link rel="icon" href="/favicon.svg"><link rel="stylesheet" href="/static/console.css">
+  <script src="/static/console.js" defer></script>
+</head>
+<body>
+  <svg class="svg-defs" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></symbol><symbol id="i-cell" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 8h8v8H8z"/></symbol><symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3 2 21h20L12 3Z"/><path d="M12 9v5m0 3h.01"/></symbol><symbol id="i-list" viewBox="0 0 24 24"><path d="M8 5h13M8 12h13M8 19h13M3 5h.01M3 12h.01M3 19h.01"/></symbol><symbol id="i-radio" viewBox="0 0 24 24"><circle cx="12" cy="12" r="2"/><path d="M5.6 5.6a9 9 0 0 0 0 12.8m12.8-12.8a9 9 0 0 1 0 12.8M8.5 8.5a5 5 0 0 0 0 7m7-7a5 5 0 0 1 0 7"/></symbol><symbol id="i-server" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="8" rx="2"/><rect x="3" y="13" width="18" height="8" rx="2"/><path d="M7 7h.01M7 17h.01"/></symbol><symbol id="i-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l-1.8 1.8a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6h-2.6a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-1.8-1.8A1.7 1.7 0 0 0 8 15a1.7 1.7 0 0 0-1.6-1H4v-2.6a1.7 1.7 0 0 0 1.6-1A1.7 1.7 0 0 0 5.3 8.5l1.8-1.8A1.7 1.7 0 0 0 9 7a1.7 1.7 0 0 0 1-1.6V3h2.6a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l1.8 1.8A1.7 1.7 0 0 0 17 8a1.7 1.7 0 0 0 1.6 1H21v2.6a1.7 1.7 0 0 0-1.6 1Z"/></symbol><symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M5.5 9a7.5 7.5 0 0 1 13-2L20 12M4 12l1.5 5a7.5 7.5 0 0 0 13-2"/></symbol></svg>
+  <section class="signin" id="signin" aria-labelledby="signin-heading">
+    <div class="signin-panel"><div class="brand"><span class="brand-mark" aria-hidden="true"></span><span>DYSTOPIA <small>Consola operativa</small></span></div>
+      <h1 id="signin-heading">Acceso al control plane</h1><p>Inicia sesión con un usuario local. Nunca uses una credencial de sensor aquí.</p>
+      <form id="login-form"><label for="login-name">Usuario</label><input id="login-name" name="username" autocomplete="username" required maxlength="64"><label for="login-password">Contraseña</label><input id="login-password" name="password" type="password" autocomplete="current-password" required><p class="form-error" id="login-error" role="alert"></p><button type="submit" class="button primary">Entrar</button></form>
+      <p class="caption">El acceso se limita a las capacidades autorizadas por el servidor.</p>
+    </div>
+  </section>
+  <div class="shell" id="shell" hidden>
+    <aside class="sidebar" aria-label="Navegación"><div class="brand"><span class="brand-mark" aria-hidden="true"></span><span>DYSTOPIA <small>Operaciones · control plane</small></span></div>
+      <nav id="navigation" aria-label="Secciones">
+        <a href="#overview" data-page="overview"><svg><use href="#i-grid"/></svg>Resumen</a>
+        <a href="#cells" data-page="cells"><svg><use href="#i-cell"/></svg>Celdas</a>
+        <a href="#incidents" data-page="incidents"><svg><use href="#i-alert"/></svg>Incidentes</a>
+        <a href="#events" data-page="events"><svg><use href="#i-list"/></svg>Eventos</a>
+        <a href="#sensors" data-page="sensors"><svg><use href="#i-radio"/></svg>Sensores</a>
+        <a href="#infrastructure" data-page="infrastructure"><svg><use href="#i-server"/></svg>Infraestructura</a>
+        <a href="#administration" data-page="administration"><svg><use href="#i-settings"/></svg>Administración</a>
+      </nav><div class="sidebar-note"><strong>Protección activa</strong><span>Sin arranque de invitados ni cambios de red desde esta consola.</span></div>
+    </aside>
+    <main id="main"><header class="topbar"><div class="top-meta"><strong id="environment">Entorno sin configurar</strong><span class="separator" aria-hidden="true"></span><span id="connection" class="connection">Conectando…</span><span class="separator" aria-hidden="true"></span><time id="updated">Sin actualizar</time></div><div class="top-user"><span id="notification-count" aria-label="Avisos operativos">Avisos pendientes</span><span id="identity">Usuario</span><button type="button" class="button quiet" id="logout">Salir</button></div></header>
+      <div class="content" id="content"><div class="loading" role="status">Consultando el control plane…</div></div>
+    </main>
+  </div>
+  <dialog id="event-detail" class="event-detail" aria-labelledby="event-detail-title"><div class="panel-head"><h2 id="event-detail-title">Detalle de evento</h2><button class="button" type="button" id="close-event-detail">Cerrar</button></div><div id="event-detail-body" role="status">Cargando datos…</div></dialog>
+  <dialog id="confirmation" aria-labelledby="confirm-title" aria-describedby="confirm-description"><form method="dialog"><h2 id="confirm-title">Confirmar acción</h2><p id="confirm-description"></p><div class="dialog-actions"><button value="cancel" class="button">Cancelar</button><button value="confirm" class="button danger" id="confirm-accept">Confirmar</button></div></form></dialog>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>

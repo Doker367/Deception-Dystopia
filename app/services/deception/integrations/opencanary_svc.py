@@ -1,11 +1,14 @@
 """Parser de eventos de OpenCanary (honeypot multi-protocolo ligero).
 
 OpenCanary emite líneas JSON con ``dst_port``, ``src_host``, ``msg`` y
-``logtype``. Se mapea por puerto de destino para deducir el protocolo y
-el tipo de evento.
+``logtype``. El parser heredado ``parse`` se mantiene; ``normalize`` añade el
+contrato ECS/Dystopia y conserva eventos cuyo dispositivo no está en la
+topología.
 """
 
-from typing import Optional
+from typing import Any, Optional
+
+from .ecs import build_event, protocol_for_port
 
 # Puerto destino → protocolo
 _PORT_PROTO = {
@@ -14,6 +17,15 @@ _PORT_PROTO = {
     1433: "mssql", 3306: "mysql", 3389: "rdp", 5432: "postgresql",
     5900: "vnc", 6379: "redis", 8080: "http",
 }
+
+# OpenCanary logtype (miles) → protocolo.
+_LOGTYPE_PROTO = {
+    1: "ftp", 2: "ssh", 3: "http", 4: "telnet", 5: "http", 6: "mysql",
+    7: "mssql", 8: "snmp", 9: "redis", 10: "tcp", 11: "smb", 12: "rdp",
+}
+
+OBSERVER = "opencanary"
+PRODUCT = "OpenCanary"
 
 
 def parse(raw: dict, default_device: str = "") -> Optional[dict]:
@@ -55,3 +67,85 @@ def parse(raw: dict, default_device: str = "") -> Optional[dict]:
         "success": False,
         "ts": raw.get("utc_time") or raw.get("local_time"),
     }
+
+
+def _protocol(raw: dict, dst_port: Optional[int]) -> str:
+    explicit = raw.get("protocol") or raw.get("proto")
+    if explicit:
+        return str(explicit).lower()
+    try:
+        logtype = int(raw.get("logtype", 0) or 0)
+    except (TypeError, ValueError):
+        logtype = 0
+    if logtype:
+        mapped = _LOGTYPE_PROTO.get(logtype // 1000)
+        if mapped:
+            return mapped
+    return protocol_for_port(dst_port, "tcp")
+
+
+def _event_type(raw: dict, protocol: str) -> tuple[str, Optional[str]]:
+    msg = str(raw.get("msg", "")).lower()
+    if any(token in msg for token in ("login", "password", "credential", "auth")):
+        return "login_attempt", "failure"
+    if protocol == "snmp":
+        return "snmp_query", None
+    if protocol in {"http", "https"}:
+        return "http_request", None
+    if protocol == "redis" and any(
+        token in msg for token in ("command", "config", "get ", "set ", "keys")
+    ):
+        return "command", None
+    return "connect", None
+
+
+def normalize(
+    raw: Any,
+    *,
+    resolver=None,
+    instance_id: str = "unassigned",
+    default_device: str = "",
+    fallback_timestamp: Any = None,
+    raw_reference: Any = None,
+) -> Optional[dict]:
+    """Normalize one OpenCanary JSON record; missing source is not fatal."""
+    if not isinstance(raw, dict):
+        return None
+    try:
+        dst_port = int(raw.get("dst_port", 0) or 0)
+    except (TypeError, ValueError):
+        dst_port = 0
+    dst_port = dst_port if 0 <= dst_port <= 65535 else None
+    protocol = _protocol(raw, dst_port)
+    etype, outcome = _event_type(raw, protocol)
+    device = default_device or raw.get("device_id") or raw.get("node_id") or ""
+    logdata = raw.get("logdata") if isinstance(raw.get("logdata"), dict) else {}
+    username = raw.get("username") or raw.get("user") or logdata.get("USERNAME")
+    password = raw.get("password") or logdata.get("PASSWORD")
+    captured: dict[str, Any] = {}
+    if raw.get("msg"):
+        captured["message"] = raw["msg"]
+    if raw.get("url"):
+        captured["url"] = raw["url"]
+    return build_event(
+        observer_name=OBSERVER,
+        observer_product=PRODUCT,
+        event_type=etype,
+        timestamp=raw.get("utc_time") or raw.get("local_time") or raw.get("timestamp"),
+        src_ip=raw.get("src_host") or raw.get("src_ip"),
+        src_port=raw.get("src_port"),
+        dst_ip=raw.get("dst_host") or raw.get("dst_ip"),
+        dst_port=dst_port,
+        protocol=protocol,
+        username=username,
+        password=password,
+        payload=captured,
+        outcome=outcome,
+        native_id=raw.get("id"),
+        raw=raw,
+        raw_reference=raw_reference,
+        resolver=resolver,
+        device_id=device,
+        instance_id=instance_id,
+        fallback_timestamp=fallback_timestamp,
+    )

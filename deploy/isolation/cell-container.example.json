@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "cell": 21,
+  "workload": "container",
+  "bridge": "dybr21",
+  "gateway_mac": "02:aa:bb:cc:dd:21",
+  "profile": {
+    "name": "cowrie",
+    "image": null,
+    "services": [
+      {"address": "198.18.1.10", "protocol": "tcp", "port": 2222}
+    ]
+  },
+  "ingest": {"address": "198.18.255.10", "protocol": "tcp", "port": 8443},
+  "mgmt_networks": ["198.51.100.0/24"],
+  "memory_mib": 512,
+  "vcpus": 1,
+  "pids": 128,
+  "run_as_uid": 1000,
+  "writable_mib": 256,
+  "log_mib": 64,
+  "tmpfs_mib": 32,
+  "read_only_root": true,
+  "no_new_privileges": true,
+  "drop_all_capabilities": true,
+  "docker_socket": false
+}

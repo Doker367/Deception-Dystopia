@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: CC0-1.0
+# Adapted from upstream dionaea conf/services/mysql.yaml.
+- name: mysql
+  config:
+    databases:
+      information_schema:
+        path: ":memory:"

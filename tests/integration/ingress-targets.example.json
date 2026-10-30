@@ -1,0 +1,4 @@
+[
+  {"name":"authorized-decoy-v4","ip":"192.0.2.1","port":2222,"expect":"allow"},
+  {"name":"authorized-decoy-v6","ip":"fd42:d570::1","port":2222,"expect":"allow"}
+]

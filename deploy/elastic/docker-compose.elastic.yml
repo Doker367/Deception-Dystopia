@@ -1,0 +1,102 @@
+# ============================================================================
+# Dystopia - Elasticsearch + Kibana (agente-cuarto área exclusiva)
+# ============================================================================
+# NO autoejecutable: el fichero es parte de los artefactos versionados y se
+# levanta SOLO de forma explícita por el operador:
+#     docker compose -f deploy/elastic/docker-compose.elastic.yml \
+#                    --profile deception-elastic up -d
+# (se añade un profile para que un `docker compose up` genérico pueda añadirlo
+#  sin querer; el operador debe elegir `--profile deception-elastic`).
+#
+# Constraints:
+#   * - Versiones FIJADAS (9.3.5, mismas de tpotce 24.04.1). NUNCA latest.
+#   * Sólo gestión: puertos publicados en 127.0.0.1 (override con
+#     ELASTIC_BIND_IP/KIBANA_BIND_IP para interface dedicada).
+#   * TLS obligatorio (certs via deploy/elastic/scripts/generate-certs.sh).
+#   * Recursos limitados y sin capacidades fuera de lo mínimo.
+#   * NO transporta honeypots: la ingesta normalizada entra vía el ingest
+#     de Dystopia ya autenticado (rol deception-ingest-writer).
+# ============================================================================
+
+name: dystopia-elastic
+
+# NOTA (pendiente de prueba real): los healthchecks usan `curl`; antes del
+# primer despliegue validar que la imagen oficial 9.3.5 lo trae (o sustituir).
+# No se arrancó ninguna instancia para probar Compose/Elastic por política de
+# este agente (sin containers/servicios).
+
+services:
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:${ELASTIC_VERSION:?set ELASTIC_VERSION}
+    container_name: dystopia-elasticsearch
+    profiles:
+      - deception-elastic
+    mem_limit: ${ELASTIC_MEMORY_LIMIT:-3g}
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    environment:
+      - ES_JAVA_OPTS=${ELASTIC_JAVA_OPTS:--Xms2048m -Xmx2048m}
+      - ES_TMPDIR=/tmp
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD:?set ELASTIC_PASSWORD}
+      - bootstrap.memory_lock=true
+      - path.repo=/usr/share/elasticsearch/snapshots
+    cap_add:
+      - IPC_LOCK
+    volumes:
+      - ${ELASTIC_DATA_DIR:?set ELASTIC_DATA_DIR}:/usr/share/elasticsearch/data
+      - ../../config/elasticsearch/elasticsearch.yml:/usr/share/elasticsearch/config/elasticsearch.yml:ro
+      - ${ELASTIC_CERTS_DIR:?set ELASTIC_CERTS_DIR}:/usr/share/elasticsearch/config/certs:ro
+    ports:
+      - "${ELASTIC_BIND_IP:-127.0.0.1}:${ELASTIC_HTTP_PORT:-9200}:9200"
+    # La seguridad (auth+TLS+roles) proviene de config/elasticsearch/elasticsearch.yml;
+    # NO se anula con variables de entorno xpack en este compose.
+    networks:
+      - elastic-mgmt
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS --cacert config/certs/ca.crt -u \"elastic:${ELASTIC_PASSWORD:?}\" https://localhost:9200/_cluster/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+    restart: unless-stopped
+  kibana:
+    image: docker.elastic.co/kibana/kibana:${ELASTIC_VERSION:?set ELASTIC_VERSION}
+    container_name: dystopia-kibana
+    profiles:
+      - deception-elastic
+    restart: unless-stopped
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    mem_limit: ${KIBANA_MEMORY_LIMIT:-1536m}
+    environment:
+      # config/kibana/kibana.yml se monta como fichero y Kibana resuelve
+      # ${...} contra el entorno del proceso: hay que inyectarlas aquí.
+      - KIBANA_SYSTEM_PASSWORD=${KIBANA_SYSTEM_PASSWORD:?set KIBANA_SYSTEM_PASSWORD}
+      - KIBANA_SAVED_OBJECTS_ENCRYPTION_KEY=${KIBANA_SAVED_OBJECTS_ENCRYPTION_KEY:?set KIBANA_SAVED_OBJECTS_ENCRYPTION_KEY}
+      - KIBANA_SECURE_SAVED_OBJECTS_ENCRYPTION_KEY=${KIBANA_SECURE_SAVED_OBJECTS_ENCRYPTION_KEY:?set KIBANA_SECURE_SAVED_OBJECTS_ENCRYPTION_KEY}
+      - KIBANA_PUBLIC_BASE_URL=${KIBANA_PUBLIC_BASE_URL:-http://127.0.0.1:5601}
+      - KIBANA_REPORTING_ENABLED=${KIBANA_REPORTING_ENABLED:-false}
+      - ELASTIC_VERSION=${ELASTIC_VERSION:?set ELASTIC_VERSION}
+    volumes:
+      - ${KIBANA_DATA_DIR:?set KIBANA_DATA_DIR}:/usr/share/kibana/data
+      - ../../config/kibana/kibana.yml:/usr/share/kibana/config/kibana.yml:ro
+      - ${ELASTIC_CERTS_DIR:?set ELASTIC_CERTS_DIR}:/usr/share/kibana/config/certs:ro
+    ports:
+      - "${KIBANA_BIND_IP:-127.0.0.1}:${KIBANA_HTTP_PORT:-5601}:5601"
+    networks:
+      - elastic-mgmt
+
+networks:
+  # Red interna aislada: el stack de Kibana/Elastic NO accede a la red de
+  # deception ni a Prometheus/Loki/Grafana. La salud del stack la sigue
+  # Prometheus (que scrapea el healthy endpoint vía puertos localhost).
+  # La ingesta local de Dystopia llega por el port-forward 127.0.0.1:9200,
+  # autenticada con el usuario del rol deception-ingest-writer.
+  elastic-mgmt:
+    driver: bridge

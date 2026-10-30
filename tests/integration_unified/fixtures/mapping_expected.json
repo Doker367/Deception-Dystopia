@@ -1,0 +1,101 @@
+{
+  "description": "Expected Elasticsearch mapping contract for the unified Dystopia + T-Pot event document. Test-owned reference; production templates are compared when they appear. T-Pot logstash-* is accepted only as a coexistence pattern; the unified document index is deception-events-*.",
+  "index_pattern": "deception-events-*",
+  "properties": {
+    "@timestamp": {
+      "type": "date"
+    },
+    "event": {
+      "properties": {
+        "id": {
+          "type": "keyword"
+        },
+        "action": {
+          "type": "keyword"
+        },
+        "dataset": {
+          "type": "keyword"
+        },
+        "outcome": {
+          "type": "keyword"
+        },
+        "category": {
+          "type": "keyword"
+        }
+      }
+    },
+    "source": {
+      "properties": {
+        "ip": {
+          "type": "ip"
+        },
+        "port": {
+          "type": "long"
+        }
+      }
+    },
+    "destination": {
+      "properties": {
+        "ip": {
+          "type": "ip"
+        },
+        "port": {
+          "type": "long"
+        }
+      }
+    },
+    "network": {
+      "properties": {
+        "transport": {
+          "type": "keyword"
+        },
+        "protocol": {
+          "type": "keyword"
+        }
+      }
+    },
+    "observer": {
+      "properties": {
+        "name": {
+          "type": "keyword"
+        },
+        "product": {
+          "type": "keyword"
+        }
+      }
+    },
+    "session": {
+      "properties": {
+        "id": {
+          "type": "keyword"
+        }
+      }
+    },
+    "dystopia": {
+      "properties": {
+        "schema_version": {
+          "type": "keyword"
+        },
+        "device_id": {
+          "type": "keyword"
+        },
+        "segment_id": {
+          "type": "keyword"
+        },
+        "instance_id": {
+          "type": "keyword"
+        },
+        "persona": {
+          "type": "keyword"
+        }
+      }
+    }
+  },
+  "accepted_index_patterns": [
+    "deception-events-*",
+    "deception-events*",
+    "deception-alerts-*",
+    "deception-alerts*",
+    "logstash-*"
+  ]
+}

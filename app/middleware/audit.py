@@ -1,142 +1,73 @@
-"""NetPulse — Audit Middleware (raw ASGI).
+"""Bounded administrative request audit; never logs credentials or query strings."""
+import asyncio
+import logging
+import threading
+from functools import partial
 
-Auto-logs every API request (method, path, query params, status code, client IP).
-Uses raw ASGI middleware instead of BaseHTTPMiddleware for maximum reliability
-with streaming responses, background tasks, and other middleware interactions.
-
-Skips /api/health and /docs paths.
-"""
-
-import uuid
-
-SKIP_PREFIXES = (
-    "/api/health",
-    "/docs",
-    "/redoc",
-    "/openapi.json",
-)
+logger = logging.getLogger(__name__)
+_slots = threading.BoundedSemaphore(128)
+_stats = {"rejected": 0, "storage_errors": 0}
 
 
 class AuditMiddleware:
-    """Raw ASGI middleware that logs every HTTP request as an immutable audit event.
-
-    Added as the outermost middleware so it captures ALL incoming requests
-    and outgoing responses regardless of what other middleware does.
-    """
-
     def __init__(self, app):
         self.app = app
 
     async def __call__(self, scope, receive, send):
-        # Only intercept HTTP requests (skip WebSocket, lifespan, etc.)
-        if scope["type"] != "http":
+        if scope["type"] != "http" or scope.get("path") == "/api/health":
             return await self.app(scope, receive, send)
-
-        # ── Parse request from ASGI scope ──────────────────────
-        path = scope.get("path", "/")
-        method = scope.get("method", "GET")
-        query_string = scope.get("query_string", b"").decode("utf-8", errors="replace")
-
-        # Skip health / docs endpoints
-        for prefix in SKIP_PREFIXES:
-            if path.startswith(prefix):
-                return await self.app(scope, receive, send)
-
-        session_id = str(uuid.uuid4())
-        status_code = 500
-
-        # ── Wrap send() to capture the response status ─────────
-        async def send_wrapper(message):
-            nonlocal status_code
+        code = 500
+        async def wrapped(message):
+            nonlocal code
             if message["type"] == "http.response.start":
-                status_code = message["status"]
+                code = message["status"]
             await send(message)
-
         try:
-            await self.app(scope, receive, send_wrapper)
-            success = 200 <= status_code < 400
-        except Exception:
-            status_code = 500
-            success = False
-            raise
+            await self.app(scope, receive, wrapped)
         finally:
-            # ── Extract client IP ───────────────────────────
-            client_ip = _get_client_ip(scope)
-
-            details = f"{method} {path}"
-            if query_string:
-                details += f"?{query_string}"
-
-            # Escribir fuera del event loop (SQLite en executor, sin bloquear)
-            _log_async(
-                action=f"api_{method.lower()}",
-                username=_get_username(scope),
-                details=details,
-                ip_address=client_ip,
-                success=success,
-                session_id=session_id,
-                path=path,
-                method=method,
-                response_status=status_code,
-            )
+            # Template instead of raw path, never query/body/Authorization.
+            route = getattr(scope.get("route"), "path", "<unmatched>")
+            method = scope.get("method", "unknown")[:16]
+            _log_async(action="api_" + method.lower(), username=_get_username(scope),
+                       details=f"{method} {route}", ip_address=_get_client_ip(scope),
+                       success=200 <= code < 400, path=route, method=method,
+                       response_status=code)
 
 
-def _log_async(**kwargs) -> None:
-    """Delega log_event a un executor (fire-and-forget, sin bloquear)."""
+def health():
+    return {**_stats, "queue_capacity": 128}
+
+
+def _log_async(**kwargs):
+    if not _slots.acquire(blocking=False):
+        _stats["rejected"] += 1
+        logger.error("control_audit_queue_full rejected=%d", _stats["rejected"])
+        return
     try:
-        import asyncio
-        from functools import partial
-
-        loop = asyncio.get_event_loop()
-        loop.run_in_executor(None, partial(_safe_log, **kwargs))
+        future = asyncio.get_running_loop().run_in_executor(None, partial(_safe_log, **kwargs))
+        future.add_done_callback(lambda _: _slots.release())
     except Exception:
-        pass
+        _slots.release()
+        _stats["rejected"] += 1
+        logger.error("control_audit_schedule_failed")
 
 
-def _safe_log(**kwargs) -> None:
+def _safe_log(**kwargs):
     try:
         from app.services.audit_svc import log_event
-        log_event(**kwargs)
+        result = log_event(**kwargs)
+        if not result.get("id"):
+            raise RuntimeError("audit persistence did not return an ID")
     except Exception:
-        pass
+        _stats["storage_errors"] += 1
+        logger.error("control_audit_storage_unavailable count=%d", _stats["storage_errors"])
 
 
-def _get_username(scope: dict) -> str:
-    """Usuario autenticado del request (o 'anonymous').
-
-    ``JWTBearer`` guarda el payload en ``request.state.user``, que Starlette
-    respalda en ``scope["state"]``; como este middleware envuelve al app,
-    tras la petición el scope ya contiene el usuario real.
-    """
-    state = scope.get("state") or {}
-    user = state.get("user") if isinstance(state, dict) else None
-    if isinstance(user, dict):
-        sub = user.get("sub")
-        if sub:
-            return str(sub)
-    return "anonymous"
+def _get_username(scope):
+    user = (scope.get("state") or {}).get("user")
+    return str(user.get("sub", "anonymous"))[:64] if isinstance(user, dict) else "anonymous"
 
 
-def _get_client_ip(scope: dict) -> str:
-    """Extract client IP from ASGI scope, respecting proxy headers."""
-    # Parse headers from scope (they are tuples of (b"name", b"value"))
-    headers = {}
-    for key, value in scope.get("headers", []):
-        headers[key.decode("latin-1").lower()] = value.decode("latin-1")
-
-    # X-Forwarded-For (behind reverse proxy)
-    forwarded = headers.get("x-forwarded-for")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-
-    # X-Real-IP
-    real_ip = headers.get("x-real-ip")
-    if real_ip:
-        return real_ip.strip()
-
-    # Direct client from scope
+def _get_client_ip(scope):
     client = scope.get("client")
-    if client:
-        return client[0]
-
-    return "unknown"
+    return client[0] if client else "unknown"  # No untrusted proxy-header override.

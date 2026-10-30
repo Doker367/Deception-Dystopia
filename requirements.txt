@@ -1,3 +1,7 @@
+# LEGACY DEVELOPMENT INPUT — not a reproducible or approved deployment lock.
+# Hardened deployment requires reviewed deploy/requirements-control.in candidates,
+# a complete offline requirements.lock with real hashes, and approved artifacts.
+# See docs/DEPENDENCY-PROVENANCE.md; the installer never installs this file.
 fastapi
 uvicorn[standard]
 slowapi

@@ -1,6 +1,9 @@
 # Fernet encryption key — NEVER COMMIT
 config/.fernet_key
 
+# Herramientas locales de diseño (no forman parte del producto)
+.taste-skill/
+
 # Python
 __pycache__/
 *.py[cod]
@@ -69,6 +72,9 @@ config/alertmanager.yml
 # Logs
 *.log
 logs/
+# Fixtures sintéticos usados por los tests de higiene (sin secretos reales)
+!tests/integration_unified/fixtures/logs/
+!tests/integration_unified/fixtures/logs/**
 
 # Temp files
 /tmp/
@@ -88,9 +94,11 @@ config/deception/keys/
 config/deception/isos/
 config/deception/vms.json
 
-# Dystopia runtime and private material
+# Dystopia private material and generated state.
+# IMPORTANTE: runtime/ es CÓDIGO FUENTE (planos control/sensor/ingestión/aislamiento)
+# y debe versionarse. El estado generado vive en /var/lib/dystopia.
 data/
-runtime/
+deploy/elastic/api-keys/
 *.db
 *.db-wal
 *.db-shm
@@ -109,3 +117,6 @@ secrets/
 
 # Runtime metrics history (host/device state, not source)
 config/metrics_history.json
+
+# Variantes experimentales de dashboards no certificadas
+deploy/kibana-dashboards/artifacts/*EXPERIMENTAL*

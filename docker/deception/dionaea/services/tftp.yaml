@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: CC0-1.0
+# Adapted from upstream dionaea conf/services/tftp.yaml.in.
+- name: tftp
+  config:
+    root: /opt/dionaea/var/dionaea/roots/tftp

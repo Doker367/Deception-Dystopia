@@ -1,0 +1,29 @@
+{
+  "_doc": "Role of the Dystopia ingestion agent (Agente de ingesta). WRITES only in the deception-* indices (data streams deception-events and deception-alerts) and can create them. NO Kibana, NO read privileges other than the ones below, NO destructive ops.",
+  "cluster": [
+    "manage_index_templates",
+    "monitor"
+  ],
+  "indices": [
+    {
+      "names": [
+        "deception-events*",
+        "deception-alerts*"
+      ],
+      "privileges": [
+        "create_doc",
+        "create_index",
+        "view_index_metadata"
+      ],
+      "allow_restricted_indices": false
+    }
+  ],
+  "run_as": [],
+  "metadata": {
+    "dystopia": {
+      "version": "1.0.0",
+      "managed_by": "deploy/elastic/scripts/bootstrap-security.sh",
+      "note": "manage_index_templates only affects deception-*/deception-alerts* by name; if generating broader templates, restore to monitor"
+    }
+  }
+}

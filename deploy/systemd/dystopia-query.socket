@@ -1,0 +1,16 @@
+[Unit]
+Description=Dystopia read-only event query Unix socket (control UID only)
+
+[Socket]
+ListenStream=/run/dystopia-query/query.sock
+Service=dystopia-query.service
+SocketUser=dystopia-control
+SocketGroup=dystopia-control
+SocketMode=0600
+DirectoryMode=0755
+Backlog=16
+RemoveOnStop=yes
+Accept=no
+
+[Install]
+WantedBy=sockets.target

@@ -1,0 +1,3 @@
+2026-10-29T10:06:00Z INFO publisher spool=42 indexed=5 duplicates=7 index=logstash-2026.10.29
+2026-10-29T10:06:01Z INFO publisher event_id=2f17dece-9a7b-4bfc-89a1-d8c64242d4e8 observer=cowrie-lab-01 status=indexed
+2026-10-29T10:06:02Z WARN publisher retry event_id=5784e998-b79e-480e-862d-4f10512b7893 attempt=2 reason=ack_timeout

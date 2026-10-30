@@ -1,0 +1,15 @@
+{
+  "bundle": "deception-kibana-bundle.ndjson",
+  "generated_at": "2026-10-30T02:03:46.147751+00:00",
+  "spec_version": "1.0.0",
+  "target_kibana": "9.3.5",
+  "counts": {
+    "index-pattern": 2,
+    "visualization": 44,
+    "dashboard": 7
+  },
+  "total_objects": 53,
+  "sha256": "47477017d8737bd61c782c7611eee0855026d395ed1edde09c5dc45e70e586aa",
+  "status": "VALIDATED AGAINST KIBANA 9.3.5 (macOS lab): 53/53 objects imported, 7 dashboards and 44 visualizations verified with synthetic data",
+  "with_map": false
+}

@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "installer_example": "../install.example.json",
+  "planes": {
+    "management": {
+      "interface": "mgmt0",
+      "network": "198.51.100.0/24",
+      "components": ["dystopia-control", "kibana", "elasticsearch", "operator-ssh"],
+      "exposure": "management only; never routed from deception, telemetry or attack simulation"
+    },
+    "deception": {
+      "interface": "decoy0",
+      "network": "192.0.2.0/24",
+      "cell_bridges": "dybr1..dybr254; one exclusive cell per bridge",
+      "workloads": ["kvm", "container"],
+      "exposure": "only exact inbound service flows and exact per-cell ingest egress"
+    },
+    "telemetry": {
+      "interface": "telemetry0",
+      "network": "198.18.255.0/24",
+      "ingest_endpoint": "198.18.255.10:8443/tcp",
+      "exposure": "reachable from deception only at the exact ingest endpoint; writes to management Elasticsearch with an independent ingest identity"
+    },
+    "attack_simulation": {
+      "network": "198.18.1.0/24",
+      "exposure": "authorized laboratory clients only; exact source addresses are listed in each cell policy"
+    }
+  },
+  "protected_networks": ["198.51.100.0/24", "203.0.113.0/24", "fd42:d570:100::/64"],
+  "denied_by_design": [
+    "honeypot to management control, Kibana, Elasticsearch or SSH",
+    "honeypot to Internet, DNS, metadata, host or another cell",
+    "management to honeypot",
+    "honeypot directly to Elasticsearch",
+    "any workload to a container runtime socket"
+  ],
+  "credentials": {
+    "honeypot": "per-sensor ingest bearer token, provisioned out of band",
+    "ingest_to_elasticsearch": "dedicated write-only ingest identity, independent from Kibana and administrator credentials",
+    "repository": "no credentials or secrets"
+  },
+  "evidence_limit": "Design example only; not a firewall, topology or containment verification."
+}

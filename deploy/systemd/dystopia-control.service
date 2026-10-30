@@ -1,0 +1,53 @@
+[Unit]
+Description=Dystopia administrative control plane (no sensors)
+After=network.target
+ConditionPathExists=/etc/dystopia/control.env
+ConditionPathExists=/var/lib/dystopia/control/config/users.yaml
+
+[Service]
+Type=simple
+User=dystopia-control
+Group=dystopia-control
+WorkingDirectory=/opt/dystopia/current
+EnvironmentFile=/etc/dystopia/control.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=DYSTOPIA_QUERY_SOCKET=/run/dystopia-query/query.sock
+ExecStart=/opt/dystopia/venv/bin/python -m runtime.cli control --host 127.0.0.1 --port 8082
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+RestrictNamespaces=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@mount @raw-io @reboot @swap @privileged
+ReadWritePaths=/var/lib/dystopia/control
+InaccessiblePaths=-/var/lib/dystopia/ingest -/var/lib/dystopia/sensor -/var/lib/dystopia/cells -/run/libvirt -/run/docker.sock
+IPAddressDeny=any
+IPAddressAllow=localhost
+SocketBindDeny=any
+SocketBindAllow=ipv4:tcp:8082
+TasksMax=64
+MemoryMax=512M
+CPUQuota=100%
+LimitNOFILE=1024
+LimitCORE=0
+LimitFSIZE=268435456
+
+[Install]
+WantedBy=multi-user.target

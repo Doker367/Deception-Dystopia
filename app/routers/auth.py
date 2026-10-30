@@ -5,8 +5,10 @@ Endpoints:
 - GET  /api/auth/me     — info del usuario autenticado
 """
 
+import hashlib
 import yaml
-from pathlib import Path
+from runtime.localfiles import read_private
+from app.core.settings import CONFIG_DIR
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
@@ -14,7 +16,6 @@ from app.core.limiter import limiter
 
 from app.core.security import (
     create_access_token,
-    hash_password,
     verify_password,
 )
 from app.models.schemas import LoginRequest, TokenResponse, UserInfo, UserRole
@@ -26,7 +27,7 @@ router = APIRouter(prefix="/api/auth", tags=["Auth"])
 
 # ── Carga de usuarios ─────────────────────────────────────────
 
-USERS_FILE = Path(__file__).resolve().parent.parent.parent / "config" / "users.yaml"
+USERS_FILE = CONFIG_DIR / "users.yaml"
 _users_cache: dict[str, dict] = {}
 
 
@@ -36,15 +37,14 @@ def _load_users() -> dict[str, dict]:
     if not USERS_FILE.exists():
         return users
 
-    with open(USERS_FILE, "r", encoding="utf-8") as f:
-        data = yaml.safe_load(f) or {}
+    data = yaml.safe_load(read_private(USERS_FILE)) or {}
 
     for u in data.get("users", []):
         username = u.get("username", "")
         if not username:
             continue
         # Si no hay hash almacenado, generarlo desde plain_password
-        pwd_hash = u.get("password_hash") or hash_password(u.get("plain_password", ""))
+        pwd_hash = u.get("password_hash") or ""  # No plaintext-password migration at login.
         users[username] = {
             "username": username,
             "role": u.get("role", "viewer"),
@@ -57,8 +57,7 @@ def _load_users() -> dict[str, dict]:
 def _get_users() -> dict[str, dict]:
     """Devuelve el caché de usuarios, cargándolo si es necesario."""
     global _users_cache
-    if not _users_cache:
-        _users_cache = _load_users()
+    _users_cache = _load_users()  # Reflect revocation across workers immediately.
     return _users_cache
 
 
@@ -88,6 +87,7 @@ def login(request: Request, body: LoginRequest):
         data={
             "sub": user["username"],
             "role": user["role"],
+            "ver": hashlib.sha256(user["password_hash"].encode()).hexdigest(),
         }
     )
 

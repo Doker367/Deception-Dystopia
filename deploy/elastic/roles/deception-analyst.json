@@ -1,0 +1,36 @@
+{
+  "_doc": "Role únicamente-lectura del analista SOC para el panel analítico de Dystopia (Kibana). Read en deception-events* y deception-alerts* + uso de Kibana (minimal_all = consultar, ver dashboards, crear búsquedas temporales NO persistentes; NO creación de objetos ni discover persistente sin aprobación). NO manage sobre índices restringidos.",
+  "cluster": [],
+  "indices": [
+    {
+      "names": [
+        "deception-events*",
+        "deception-alerts*"
+      ],
+      "privileges": [
+        "read",
+        "view_index_metadata"
+      ],
+      "allow_restricted_indices": false
+    }
+  ],
+  "applications": [
+    {
+      "application": "kibana-.kibana",
+      "privileges": [
+        "minimal_read"
+      ],
+      "resources": [
+        "space:default"
+      ]
+    }
+  ],
+  "run_as": [],
+  "metadata": {
+    "dystopia": {
+      "version": "1.0.0",
+      "managed_by": "deploy/elastic/scripts/bootstrap-security.sh",
+      "note": "minimal_read NO exige share_saved_objects; ajustar con la versión real instalada (no obstante, ES valida nombres en bootstrap). Alternativa con uso completo de explore: sustituir minimal_read por minimal_all SOLO si se aprueba exploración libre."
+    }
+  }
+}

@@ -43,7 +43,6 @@ def _ai_on(monkeypatch):
     decision_svc.set_backend(StubBackend())
     decision_svc._cache.clear()
     monkeypatch.setattr(fp_svc, "DECEPTION_AI_FP_ENABLED", True)
-    monkeypatch.setattr(fp_svc, "DECEPTION_AI_FP_SUPPRESS", True)
     monkeypatch.setattr(fp_svc, "DECEPTION_AI_FP_MIN_CONFIDENCE", 0.90)
     monkeypatch.setattr(alert_svc, "DECEPTION_ALERTS_ENABLED", True)
     monkeypatch.setattr(alert_svc, "DECEPTION_ALERT_COOLDOWN", 0)
@@ -64,17 +63,20 @@ def _record(event_type, **kw):
     ))
 
 
-def test_evento_benigno_se_suprime(db_path, audit_tmp, captured):
+def test_evento_benigno_es_advisory_no_suprime(db_path, audit_tmp, captured):
+    """La IA puede marcar benigno, pero nunca suprime la alerta."""
     record = _record(
         DeceptionEventType.LOGIN_SUCCESS,
         username="svc",
         detail={"command": "nmap inventory health check monitor"},
     )
     fired = alert_svc.evaluate(record)
-    assert fired == []
-    assert captured == []  # no se notifica
-    suppressed = alert_svc.recent_suppressed()
-    assert any(a["action"] == "deception_alert_suppressed" for a in suppressed)
+    assert len(fired) == 1
+    assert fired[0]["rule"] == "login_success"
+    # La clasificación IA se adjunta como contexto, pero no decide el envío.
+    assert fired[0]["ai"]["verdict"] in {"benign", "malicious", "unknown"}
+    assert captured and captured[0][0] == "deception_alert"
+    assert alert_svc.recent_suppressed() == []
 
 
 def test_intrusion_real_dispara_con_bloque_ai(db_path, audit_tmp, captured):

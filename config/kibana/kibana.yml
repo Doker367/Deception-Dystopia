@@ -1,0 +1,72 @@
+# ============================================================================
+# Dystopia - Kibana 9.3.5 (panel analítico honeypot, solo gestión)
+# ============================================================================
+# Companion de config/elasticsearch/elasticsearch.yml. NO se expone
+# públicamente: Docker Compose publica solo 127.0.0.1:5601 (o la interface
+# de gestión vía KIBANA_BIND_IP). Las variables ${...} se resuelven del
+# .env del despliegue (deploy/elastic/.env, excluido del repo;
+# plantilla: deploy/elastic/.env.example). SIN valores por defecto
+# compartidos: KIBANA_SYSTEM_PASSWORD y las claves de cifrado son
+# OBLIGATORIAS y únicas por instancia.
+# ============================================================================
+
+server:
+  # Dentro del contenedor escucha en todas las interfaces del contenedor;
+  # la restricción real de acceso es el binding del host en
+  # deploy/elastic/docker-compose.elastic.yml.
+  host: "0.0.0.0"
+  name: "dystopia-kibana"
+  port: 5601
+  publicBaseUrl: ${KIBANA_PUBLIC_BASE_URL}
+  # Para exponer vía HTTPS en un reverse proxy de gestión, descomentar y
+  # apuntar a pem generados por deploy/elastic/scripts/generate-certs.sh:
+  # ssl:
+  #   enabled: true
+  #   certificate: /usr/share/kibana/config/certs/kibana.crt
+  #   key: /usr/share/kibana/config/certs/kibana.key
+  #   certificateAuthorities: ["/usr/share/kibana/config/certs/ca.crt"]
+
+# --- Conexión a Elasticsearch: SIEMPRE TLS + usuario de servicio ---
+elasticsearch:
+  hosts:
+    - "https://elasticsearch:9200"
+  username: "kibana_system"
+  password: "${KIBANA_SYSTEM_PASSWORD}"
+  ssl:
+    verificationMode: "full"
+    certificateAuthorities: ["/usr/share/kibana/config/certs/ca.crt"]
+  requestTimeout: 60000
+  shardTimeout: 60000
+
+# --- Cifrado de saved objects y sesiones (claves ÚNICAS, 64+ hex chars) ---
+xpack:
+  encryptedSavedObjects:
+    encryptionKey: "${KIBANA_SAVED_OBJECTS_ENCRYPTION_KEY}"
+  security:
+    encryptionKey: "${KIBANA_SECURE_SAVED_OBJECTS_ENCRYPTION_KEY}"
+  reporting:
+    enabled: ${KIBANA_REPORTING_ENABLED}
+  fleet:
+    enabled: false
+
+# --- Auditoría local de acciones del panel (opcional, recomendado) ---
+# Kibana audit requiere licencia adecuada; por defecto desvinculado para
+# no depender de suscripciones. Se revisa al integrar con enterprise.
+# xpack.security.audit.enabled: true
+# xpack.security.audit.appender:
+#   type: console
+#   layout:
+#     type: pattern
+#     pattern: "[%date{ISO8601}][%level][%logger]%message"
+
+# --- Telemetría fuera (no filtrar huella operativa) ---
+telemetry:
+  enabled: false
+  allowChangingOptInStatus: false
+
+newsfeed:
+  enabled: false
+uiSettings:
+  overrides:
+    "telemetry:optIn": false
+    "defaultIndex": "deception-events-dv"

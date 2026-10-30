@@ -10,7 +10,6 @@ El envío de notificaciones es bloqueante, por lo que ``submit`` lo
 despacha en un executor para no frenar a los listeners.
 """
 
-import ipaddress
 import json
 import logging
 import threading
@@ -22,20 +21,18 @@ from typing import Optional
 from app.core.settings import (
     DECEPTION_ALERTS_ENABLED,
     DECEPTION_ALERT_COOLDOWN,
-    DECEPTION_ALERT_IGNORE_LOOPBACK,
-    DECEPTION_ALERT_IGNORE_PRIVATE,
-    DECEPTION_ALERT_IGNORE_SIMULATED,
-    DECEPTION_AUTOBLOCK_CRITICAL,
     DECEPTION_BRUTE_FORCE_THRESHOLD,
     DECEPTION_BRUTE_FORCE_WINDOW,
 )
 from app.services import audit_svc, metrics_svc, notifications_svc
-from app.services.deception import allowlist_svc, blocklist_svc, store_svc
+from app.services.deception import store_svc
 
 logger = logging.getLogger(__name__)
 
 _executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="dcn-alert")
 _lock = threading.Lock()
+_slots = threading.BoundedSemaphore(128)
+_queue_rejected = 0
 _last_fired: dict[tuple, float] = {}
 
 # tipo de evento → (regla, severidad, título)
@@ -50,10 +47,21 @@ def submit(record: dict) -> None:
     """Programa la evaluación de un evento sin bloquear al llamante."""
     if not DECEPTION_ALERTS_ENABLED:
         return
+    global _queue_rejected
+    if not _slots.acquire(blocking=False):
+        _queue_rejected += 1
+        logger.error("legacy_alert_queue_full rejected=%d; event remains persisted", _queue_rejected)
+        raise RuntimeError("legacy alert queue full; use durable processing outbox")
+    def work():
+        try:
+            return evaluate(record)
+        finally:
+            _slots.release()
     try:
-        _executor.submit(evaluate, record)
-    except Exception as exc:  # noqa: BLE001
-        logger.debug("[deception] no se pudo programar alerta: %s", exc)
+        _executor.submit(work)
+    except Exception:
+        _slots.release()
+        raise
 
 
 def evaluate(record: dict) -> list[dict]:
@@ -86,9 +94,7 @@ def evaluate(record: dict) -> list[dict]:
             continue
         # Filtro de falsos positivos con IA (advisory + gating, fail-open).
         triage = _ai_triage(record, alert)
-        if triage.get("suppress"):
-            _dispatch_suppressed(alert, triage)
-            continue
+        # AI is advisory only; a model response cannot suppress a rule.
         if triage.get("ai"):
             alert["ai"] = triage["ai"]
         fired.append(alert)
@@ -146,34 +152,15 @@ def _dispatch_suppressed(alert: dict, triage: dict) -> None:
 
 def _is_noise(record: dict) -> bool:
     """Filtra eventos que no deben generar alertas (anti falsos positivos)."""
-    detail = record.get("detail") or {}
-    if DECEPTION_ALERT_IGNORE_SIMULATED and detail.get("simulated"):
-        return True
-
-    src_ip = record.get("src_ip") or ""
-    if src_ip and allowlist_svc.is_allowed(src_ip):
-        return True
-
-    try:
-        addr = ipaddress.ip_address(src_ip)
-    except ValueError:
-        return False
-
-    if DECEPTION_ALERT_IGNORE_LOOPBACK and addr.is_loopback:
-        return True
-    if DECEPTION_ALERT_IGNORE_PRIVATE and addr.is_private and not addr.is_loopback:
-        return True
+    # Legacy unscoped allowlists and sensor-provided simulation flags are not
+    # authority. No suppression until owner/scope/reason/expiry are supported.
     return False
 
 
 def _make_alert(record: dict, rule: str, severity: str, title: str) -> dict:
-    username = record.get("username")
-    detail = record.get("detail") or {}
+    username = None
+    detail = {}  # Sensitive hostile payload stays only in event storage.
     extra = ""
-    if detail.get("command"):
-        extra = f" comando='{detail['command']}'"
-    elif detail.get("url"):
-        extra = f" url='{detail['url']}'"
     message = (
         f"[{severity.upper()}] {title}: {record.get('device_id')} "
         f"desde {record.get('src_ip')} ({record.get('proto')})"
@@ -231,6 +218,9 @@ def _cooldown_ok(alert: dict) -> bool:
         last = _last_fired.get(key, 0.0)
         if now - last < DECEPTION_ALERT_COOLDOWN:
             return False
+        if len(_last_fired) >= 8192:
+            # Eviction only removes cooldown, never suppresses a detection.
+            _last_fired.pop(next(iter(_last_fired)))
         _last_fired[key] = now
     return True
 
@@ -258,11 +248,7 @@ def _dispatch(alert: dict) -> None:
 
     logger.warning("[deception] ALERTA %s — %s", alert["severity"], alert["message"])
 
-    if DECEPTION_AUTOBLOCK_CRITICAL and alert.get("severity") == "critical":
-        try:
-            blocklist_svc.auto_block(alert)
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("[deception] autoblock falló: %s", exc)
+    # Neither rules nor AI can mutate production firewall/isolation here.
 
     try:
         notifications_svc.notify_event("deception_alert", alert)

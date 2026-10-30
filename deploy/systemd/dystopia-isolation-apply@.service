@@ -1,0 +1,45 @@
+[Unit]
+Description=Dystopia per-cell isolation apply template (explicit start only, never autostart)
+Documentation=file:///opt/dystopia/current/deploy/isolation/OPERATIONS.md
+ConditionPathExists=/etc/dystopia/isolation/cell-%i.json
+After=local-fs.target
+# Deliberately no [Install] section: this template must never be enabled at boot.
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+WorkingDirectory=/opt/dystopia/current
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/dystopia/venv/bin/python -m runtime.isolation apply --cell %i --confirm CELL-%i-APPLY
+TimeoutStartSec=30
+TimeoutStopSec=5
+UMask=0077
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+RestrictNamespaces=yes
+RestrictAddressFamilies=AF_UNIX AF_NETLINK
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@mount @raw-io @reboot @swap @privileged
+MemoryMax=64M
+TasksMax=8
+CPUQuota=25%
+LimitNOFILE=64
+LimitCORE=0
+LimitFSIZE=0
+StandardOutput=journal
+StandardError=journal

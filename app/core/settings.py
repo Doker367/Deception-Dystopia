@@ -4,9 +4,9 @@ import os
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
-CONFIG_DIR = BASE_DIR / "config"
-BACKUP_DIR = BASE_DIR / "backups"
-BACKUP_DIR.mkdir(exist_ok=True)
+STATE_DIR = Path(os.getenv("DYSTOPIA_CONTROL_STATE", str(BASE_DIR)))
+CONFIG_DIR = Path(os.getenv("DYSTOPIA_CONTROL_CONFIG", str(BASE_DIR / "config")))
+BACKUP_DIR = STATE_DIR / "backups"
 
 
 def _load_dotenv() -> None:
@@ -29,7 +29,7 @@ def _load_dotenv() -> None:
             os.environ.setdefault(key, value)
 
 
-_load_dotenv()
+# Environment is supplied explicitly by the launcher; .env is not loaded.
 
 
 DEVICES_FILE = CONFIG_DIR / "devices.yaml"
@@ -43,9 +43,8 @@ DECEPTION_NETWORK_FILE = Path(
     os.getenv("NETPULSE_DECEPTION_NETWORK_FILE", str(DECEPTION_DIR / "network.yaml"))
 )
 DECEPTION_DATA_DIR = Path(
-    os.getenv("NETPULSE_DECEPTION_DATA_DIR", str(BASE_DIR / "deception"))
+    os.getenv("NETPULSE_DECEPTION_DATA_DIR", str(STATE_DIR / "deception"))
 )
-DECEPTION_DATA_DIR.mkdir(exist_ok=True)
 DECEPTION_DB = DECEPTION_DATA_DIR / "deception.db"
 # Claves persistentes del motor (host keys SSH estables entre reinicios).
 DECEPTION_KEYS_DIR = DECEPTION_DIR / "keys"
@@ -153,13 +152,11 @@ AI_JEV_STRICT = os.getenv("NETPULSE_AI_JEV_STRICT", "true").lower() == "true"
 # ── Falsos positivos de deception con IA (Fase 2) ─────────────
 # Enriquecer/decidir alertas de deception con el modelo.
 DECEPTION_AI_FP_ENABLED = os.getenv(
-    "NETPULSE_DECEPTION_AI_FP_ENABLED", "true"
+    "NETPULSE_DECEPTION_AI_FP_ENABLED", "false"
 ).lower() == "true"
 # Permitir que la IA silencie (no notifique) una alerta cuando la clasifica
 # como benigna con confianza >= DECEPTION_AI_FP_MIN_CONFIDENCE.
-DECEPTION_AI_FP_SUPPRESS = os.getenv(
-    "NETPULSE_DECEPTION_AI_FP_SUPPRESS", "true"
-).lower() == "true"
+DECEPTION_AI_FP_SUPPRESS = False  # Legacy suppression flag intentionally ignored.
 DECEPTION_AI_FP_MIN_CONFIDENCE = float(
     os.getenv("NETPULSE_DECEPTION_AI_FP_MIN_CONFIDENCE", str(AI_CONFIDENCE_FLOOR))
 )
@@ -262,5 +259,4 @@ SMTP_TO = os.getenv("NETPULSE_SMTP_TO", "")
 
 # ── Reportes ─────────────────────────────────────────────────
 
-REPORT_DIR = BASE_DIR / "reports"
-REPORT_DIR.mkdir(exist_ok=True)
+REPORT_DIR = STATE_DIR / "reports"

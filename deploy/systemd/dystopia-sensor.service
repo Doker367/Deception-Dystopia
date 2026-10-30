@@ -1,0 +1,53 @@
+[Unit]
+Description=Dystopia isolated sensor spool transport (no listeners)
+After=network.target
+ConditionPathExists=/etc/dystopia/sensor.env
+ConditionPathExists=/var/lib/dystopia/sensor/token
+ConditionPathExists=/var/lib/dystopia/sensor/ca.crt
+
+[Service]
+Type=simple
+User=dystopia-sensor
+Group=dystopia-sensor
+WorkingDirectory=/opt/dystopia/current
+EnvironmentFile=/etc/dystopia/sensor.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/dystopia/venv/bin/python -m runtime.cli sensor-drain --spool /var/lib/dystopia/sensor/spool.db --endpoint ${DYSTOPIA_INGEST_ENDPOINT} --ca /var/lib/dystopia/sensor/ca.crt --token /var/lib/dystopia/sensor/token
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectProc=invisible
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+RestrictNamespaces=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@mount @raw-io @reboot @swap @privileged
+ReadWritePaths=/var/lib/dystopia/sensor
+InaccessiblePaths=-/opt/dystopia/current/app -/var/lib/dystopia/control -/var/lib/dystopia/ingest -/var/lib/dystopia/cells -/run/libvirt -/run/docker.sock
+# Fail closed until an operator adds ONLY the exact validated ingestion endpoint.
+IPAddressDeny=any
+SocketBindDeny=any
+TasksMax=16
+MemoryMax=128M
+CPUQuota=50%
+LimitNOFILE=128
+LimitCORE=0
+LimitFSIZE=134217728
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,56 @@
+[Unit]
+Description=Dystopia TLS event ingestion (no administration)
+After=network.target
+ConditionPathExists=/etc/dystopia/ingest.env
+ConditionPathExists=/var/lib/dystopia/ingest/server.crt
+ConditionPathExists=/var/lib/dystopia/ingest/server.key
+
+[Service]
+Type=simple
+User=dystopia-ingest
+Group=dystopia-ingest
+WorkingDirectory=/opt/dystopia/current
+EnvironmentFile=/etc/dystopia/ingest.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=DYSTOPIA_QUERY_GROUP=dystopia-query
+ExecStart=/opt/dystopia/venv/bin/python -m runtime.cli ingest --host ${DYSTOPIA_INGEST_BIND} --cert /var/lib/dystopia/ingest/server.crt --key /var/lib/dystopia/ingest/server.key --registry /var/lib/dystopia/ingest/sensors.db --events /var/lib/dystopia/ingest/events.db
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+RestrictNamespaces=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@mount @raw-io @reboot @swap @privileged
+ReadWritePaths=/var/lib/dystopia/ingest
+InaccessiblePaths=-/var/lib/dystopia/control -/var/lib/dystopia/sensor -/var/lib/dystopia/cells -/run/libvirt -/run/docker.sock
+# Administrator must add exact sensor-network allow entries after lab validation.
+IPAddressDeny=any
+IPAddressAllow=localhost
+SocketBindDeny=any
+SocketBindAllow=ipv4:tcp:8443
+SocketBindAllow=ipv6:tcp:8443
+TasksMax=32
+MemoryMax=256M
+CPUQuota=100%
+LimitNOFILE=512
+LimitCORE=0
+LimitFSIZE=536870912
+
+[Install]
+WantedBy=multi-user.target

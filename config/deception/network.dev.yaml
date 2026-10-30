@@ -6,6 +6,13 @@
 #   NETPULSE_DECEPTION_NETWORK_FILE=config/deception/network.dev.yaml
 #   NETPULSE_DECEPTION_BIND_HOST=127.0.0.1
 # ============================================================
+# Binding a honeypots externos (declarativo): cada servicio con motor
+# externo (cowrie/opencanary/dionaea/heralding/redishoneypot/endlessh)
+# declara `instance` (rango [a-z0-9][a-z0-9_-]*). Los adaptadores
+# consumen la vista GET /api/deception/bindings para correlacionar
+# eventos hacia {device_id, segment_id, instance_id, persona}. Nada se
+# levanta ni se reactiva desde aquí: sin credenciales ni despliegue.
+# ============================================================
 
 segments:
   - id: vlan-dev
@@ -23,6 +30,7 @@ devices:
     services:
       - { port: 2201, proto: ssh, engine: native, banner: "OpenSSH_8.9" }
       - { port: 8001, proto: http, engine: native, banner: "Microsoft-IIS/10.0" }
+      - { port: 2222, proto: ssh, engine: endlessh, instance: endlessh-dev-01 }
 
   - id: srv-dev-01
     role: server
@@ -31,6 +39,8 @@ devices:
     persona: { vendor: linux, os: ubuntu, hostname: devsrv }
     services:
       - { port: 2202, proto: ssh, engine: native, banner: "OpenSSH_8.2p1 Ubuntu" }
+      - { port: 2622, proto: ssh, engine: cowrie, instance: cowrie-dev-01 }
+      - { port: 2623, proto: telnet, engine: heralding, instance: heralding-dev-01 }
 
   - id: cam-dev-01
     role: camera
@@ -52,6 +62,7 @@ devices:
       - { port: 1232, proto: telnet, engine: native }
       - { port: 8003, proto: http, engine: native, banner: "Cisco IOS Web UI" }
       - { port: 1161, proto: snmp, engine: native }
+      - { port: 6381, proto: redis, engine: redishoneypot, instance: redis-dev-01 }
 
   - id: fw-dev-01
     role: firewall

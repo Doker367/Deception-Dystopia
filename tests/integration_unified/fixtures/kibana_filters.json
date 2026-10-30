@@ -1,0 +1,80 @@
+{
+  "description": "Kibana data view and filters expected for the unified deception-events* data view. Values are synthetic and match the offline fixtures.",
+  "data_view": {
+    "id": "dystopia-events-lab",
+    "title": "deception-events*",
+    "time_field": "@timestamp"
+  },
+  "filters": [
+    {
+      "label": "device srv-files-01",
+      "field": "dystopia.device_id",
+      "op": "eq",
+      "value": "srv-files-01",
+      "expected_event_ids": [
+        "4ad51b88-cc79-4e1f-8431-3cdb1d3f86f4",
+        "cb117021-2f6c-45a0-86cc-360ebe2a88e0",
+        "639c61c2-9c6b-4a20-8b20-1fade65b3c5b",
+        "2f17dece-9a7b-4bfc-89a1-d8c64242d4e8",
+        "5784e998-b79e-480e-862d-4f10512b7893",
+        "849e379a-864b-42f7-87ff-28520b297419",
+        "a81c4b92-4fa7-4fd2-8c0d-c50c1c35fc60",
+        "69ec9059-d2f1-4cd9-84f5-4c4dfab524b4"
+      ]
+    },
+    {
+      "label": "segment seg-lab-edge",
+      "field": "dystopia.segment_id",
+      "op": "eq",
+      "value": "seg-lab-edge",
+      "expected_event_ids": [
+        "4ad51b88-cc79-4e1f-8431-3cdb1d3f86f4",
+        "cb117021-2f6c-45a0-86cc-360ebe2a88e0",
+        "639c61c2-9c6b-4a20-8b20-1fade65b3c5b",
+        "2f17dece-9a7b-4bfc-89a1-d8c64242d4e8",
+        "5784e998-b79e-480e-862d-4f10512b7893",
+        "849e379a-864b-42f7-87ff-28520b297419",
+        "a81c4b92-4fa7-4fd2-8c0d-c50c1c35fc60",
+        "69ec9059-d2f1-4cd9-84f5-4c4dfab524b4"
+      ]
+    },
+    {
+      "label": "external source 203.0.113.9",
+      "field": "source.ip",
+      "op": "eq",
+      "value": "203.0.113.9",
+      "expected_event_ids": [
+        "4ad51b88-cc79-4e1f-8431-3cdb1d3f86f4",
+        "cb117021-2f6c-45a0-86cc-360ebe2a88e0",
+        "2f17dece-9a7b-4bfc-89a1-d8c64242d4e8",
+        "5784e998-b79e-480e-862d-4f10512b7893",
+        "849e379a-864b-42f7-87ff-28520b297419",
+        "a81c4b92-4fa7-4fd2-8c0d-c50c1c35fc60",
+        "69ec9059-d2f1-4cd9-84f5-4c4dfab524b4"
+      ]
+    },
+    {
+      "label": "cowrie failed logins",
+      "field": "event.action",
+      "op": "eq",
+      "value": "cowrie.login.failed",
+      "expected_event_ids": [
+        "5784e998-b79e-480e-862d-4f10512b7893"
+      ]
+    },
+    {
+      "label": "cowrie window",
+      "field": "@timestamp",
+      "op": "gte_lte",
+      "value": "2026-10-29T10:05:00Z",
+      "upper": "2026-10-29T10:06:00Z",
+      "expected_event_ids": [
+        "2f17dece-9a7b-4bfc-89a1-d8c64242d4e8",
+        "5784e998-b79e-480e-862d-4f10512b7893",
+        "849e379a-864b-42f7-87ff-28520b297419",
+        "a81c4b92-4fa7-4fd2-8c0d-c50c1c35fc60",
+        "69ec9059-d2f1-4cd9-84f5-4c4dfab524b4"
+      ]
+    }
+  ]
+}
