@@ -3,6 +3,7 @@ import csv
 import io
 import json
 import sqlite3
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -245,6 +246,13 @@ def test_csv_formula_prefixes_and_console_escapes_hostile_metadata():
     js = (Path(__file__).resolve().parents[2] / 'app/static/console.js').read_text()
     assert "const esc = value =>" in js
     assert "'&':'&amp;'" in js and "'<':'&lt;'" in js
+
+
+def test_login_handler_captures_form_before_async_reset():
+    js = (Path(__file__).resolve().parents[2] / 'app/static/console.js').read_text()
+    assert "const form=event.currentTarget" in js
+    assert "new FormData(form)" in js
+    assert "form.reset()" in js
 
 
 def test_login_budget_ignores_untrusted_forwarded_headers():
