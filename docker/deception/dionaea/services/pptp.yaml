@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: CC0-1.0
+# Adapted from upstream dionaea conf/services/pptp.yaml.
+- name: pptp
+  config:
+    firmware: 1
+    hostname: files01
+    vendor_name: linux

@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: CC0-1.0
+# Adapted from upstream dionaea conf/services/smb.yaml.
+- name: smb
+  config:
+    # Linux/Samba persona to match the surrounding file-server decoy.
+    os_type: 5
+    primary_domain: DYSTOPIA
+    oem_domain_name: DYSTOPIA
+    server_name: FILES01
+    native_os: Windows 6.1
+    native_lan_manager: Samba 4.3.11
+    shares:
+      ADMIN$:
+        comment: Remote Admin
+        path: C:\\Windows
+        type: disktree
+      C$:
+        comment: Default Share
+        path: C:\\
+        type:
+          - disktree
+          - special
+      IPC$:
+        comment: Remote IPC
+        type: ipc
+      Printer:
+        comment: Microsoft XPS Document Writer
+        type: printq
