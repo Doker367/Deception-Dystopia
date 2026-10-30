@@ -232,6 +232,7 @@ No se comparten contraseñas, API keys ni secretos entre entornos.
 
 ## Documentación
 
+- [Referencia técnica completa](docs/REFERENCE.md)
 - [Compatibilidad con T-Pot](docs/TPOT-COMPATIBILITY.md)
 - [Laboratorio de evaluación](docs/EVALUATION-LAB.md)
 - [Arquitectura y diagnóstico](docs/HARDENING.md)
