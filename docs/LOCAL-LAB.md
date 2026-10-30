@@ -23,6 +23,19 @@ KVM, nftables ni la red señuelo real.
 
 No necesitas KVM/libvirt ni nftables para ver los dashboards.
 
+Desde la Mac **sí** puedes validar:
+
+- arranque de Elasticsearch/Kibana;
+- bootstrap de roles, usuarios, plantillas, ILM y data streams;
+- import de los 7 dashboards y Discover;
+- envío de eventos sintéticos y deduplicación;
+- suite completa, ruff y contratos de integración;
+- plan de instalación (`runtime.install --dry-run`);
+- capturas y revisión de documentación.
+
+No puedes certificar aquí KVM, nftables, systemd, red señuelo ni honeypots con
+tráfico real.
+
 ## Mapa rápido del repositorio
 
 | Ruta | Qué contiene |
@@ -222,7 +235,32 @@ El hash esperado del bundle canónico es:
 47477017d8737bd61c782c7611eee0855026d395ed1edde09c5dc45e70e586aa
 ```
 
-## 8. Parar el laboratorio
+## 8. API y consola
+
+Si arrancas el plano de control localmente, FastAPI expone su referencia en:
+
+```text
+http://127.0.0.1:8082/docs
+```
+
+Rutas principales:
+
+| Ruta | Uso |
+|---|---|
+| `GET /api/health` | Salud del plano de control |
+| `/api/auth/*` | Login y usuario actual |
+| `/api/deception/*` | Topología, dispositivos, segmentos, alertas y consultas |
+| `/api/console/*` | Consola de solo lectura: celdas, eventos, auditoría y actividad |
+| `/api/vms/*` | Contratos de VMs; el arranque real sigue bloqueado |
+
+El ingest local antiguo y la simulación responden `410`/`409` a propósito: la
+ingesta real va por el servicio TLS independiente y la ejecución heredada está
+bloqueada hasta migrar al servicio aislado.
+
+La consola estática se sirve en `http://127.0.0.1:8082/` cuando el plano de
+control está levantado. Requiere el mismo JWT que la API.
+
+## 9. Parar el laboratorio
 
 ```bash
 docker compose \
