@@ -8,6 +8,7 @@ Plataforma Python/FastAPI de deception, en endurecimiento para Ubuntu Server 24.
 - [Instalación, operación y recuperación](<docs/HARDENING-OPERATIONS.md>)
 - [Pruebas y pendientes](<docs/HARDENING-TESTS.md>) — pruebas ASGI ejecutadas; contención Linux pendiente
 - [Sistema unificado: arquitectura y operación](<docs/UNIFIED-DECEPTION.md>) — [procedimiento operativo](<docs/UNIFIED-OPERATIONS.md>) — [informe de validación](<docs/UNIFIED-VALIDATION.md>)
+- [Roadmap hacia el primer PR y el despliegue Linux](<docs/ROADMAP.md>)
 - [Consola operativa: contratos, roles y guía](<docs/CONSOLE-OPERATIONS.md>)
 - [Puente de consulta Unix: arquitectura, despliegue pendiente y diagnóstico](<docs/QUERY-BRIDGE.md>)
 - [Migración](<MIGRATION.md>) y [procedencia de dependencias](<docs/DEPENDENCY-PROVENANCE.md>)
