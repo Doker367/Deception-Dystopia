@@ -5,7 +5,6 @@ Every edit invalidates the previous result in the same SQLite transaction.
 """
 import json
 from datetime import datetime, timezone
-from pathlib import Path
 
 from app.core.settings import STATE_DIR
 from runtime.storage import database
@@ -91,7 +90,8 @@ def validate(cell_id, expected, actor):
             return None
         if row[0] != expected:
             raise Conflict("revision changed; reload before validating")
-        body = json.loads(row[1]); missing = []
+        body = json.loads(row[1])
+        missing = []
         for key in ("name", "purpose", "profile", "segment", "address", "sensor_id", "device_id"):
             if not body.get(key):
                 missing.append(key)
