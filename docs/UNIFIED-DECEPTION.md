@@ -513,12 +513,13 @@ No está demostrado hoy:
 - que los honeypots compilen, arranquen o resistan abuso;
 - que la normalización funcione sobre logs reales (solo fixtures);
 - que exista un colector sensor → normalizador → publicador en producción;
-- que el publicador autentique contra el Elasticsearch entregado;
-- que Elasticsearch/Kibana arranquen, apliquen roles/ILM o importen dashboards;
-- que `nft`, libvirt, cgroups, cuotas o la topología contengan tráfico;
-- que la suite completa esté verde: conserva fallos de contratos retirados y
-  pruebas del puente de consulta que en macOS fallan por longitud de ruta
-  `AF_UNIX`.
+- que la contención KVM/nftables/cgroups/cuotas funcione en la máquina objetivo;
+- que systemd, permisos, red de segmentos y recuperación estén certificados;
+- que TLS/reverse proxy, snapshots y observabilidad de producción estén listos.
+
+Sí está validado en el laboratorio: contrato ECS/Dystopia, publicador, roles,
+data streams, ingesta real, import 53/53 de Kibana, 7 dashboards con datos
+sintéticos, Discover, suite completa y ruff.
 
 No deben usarse como evidencia: `nft --check`, un XML bien formado, un JSON
 válido, una unidad systemd válida, `internal: true`, una VLAN, un contenedor

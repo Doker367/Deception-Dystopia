@@ -477,24 +477,23 @@ arrancado no sustituyen ninguna fila.
 
 ## 10. Estado de verificación actual
 
-Ejecutado el 2026-10-29 en esta sesión, host macOS 26.6.2 / Python 3.14.7, sin
-servicios ni red:
+Verificación local del 2026-10-30, host macOS/Colima y Python 3.12/3.14:
 
 | Comprobación | Resultado | Alcance |
 |---|---|---|
-| `tests/integration_unified` | **82 OK, 3 skips** | Contratos, mappings, dedupe, filtros, artefactos; skips son lab y log externo |
-| `tests/deception` | **50 passed** | Bindings, adaptadores, publicador con transporte falso |
-| `tests/hardening` | **53 passed, 41 subtests** | Separación, identidad, cuotas, instalación, aislamiento con mocks |
-| Suite completa `tests/` | **20 fallos, 4 errores** | 17+4 son contratos retirados; 3 son el puente de consulta con `AF_UNIX path too long` en macOS |
+| `tests/integration_unified` | **80 passed, 3 skipped, 134 subtests** | Contratos, mappings, dedupe, filtros, artefactos; skips son lab y log externo |
+| `tests/deception` + `tests/hardening` | **115 passed, 41 subtests** | Bindings, adaptadores, publicador, identidad, cuotas, instalación y aislamiento con mocks |
+| Suite completa `tests/` | **297 passed, 3 skipped, 175 subtests** | Verde en Python 3.12 y 3.14 |
+| Ruff | **OK** | `app` y `tests` |
 | Honeypots: builds | **No ejecutados** | No hay evidencia de compilación ni arranque |
-| Digests/firmas/SBOM/CVE | **Pendientes** | Digests observados, sin verificar firma ni reproducibilidad |
-| Elasticsearch/Kibana | **No arrancados** | Sin bootstrap, import ni consultas reales |
+| Digests/firmas/SBOM/CVE | **Pendientes** | Sin verificar firma ni reproducibilidad |
+| Elasticsearch/Kibana | **Validado en macOS/Colima** | Bootstrap, roles, data streams, import 53/53 y consultas con datos sintéticos |
 | `nft`/libvirt/contenedores | **No ejecutados** | Contención no demostrada |
 | Observabilidad | **No ejecutada** | Compose heredado sin validar |
 
-Estas cifras acreditan lógica de aplicación y coherencia de artefactos offline;
-**no** certifican Ubuntu 24.04, Python 3.12, los pins de despliegue, TLS, red,
-contención ni integración real.
+Estas cifras acreditan lógica de aplicación, artefactos y el plano analítico en
+macOS; **no** certifican Ubuntu 24.04, KVM, nftables, red, honeypots reales,
+TLS de producción, snapshots ni contención.
 
 ## 11. Referencia rápida de comandos
 

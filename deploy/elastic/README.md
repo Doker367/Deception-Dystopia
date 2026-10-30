@@ -4,8 +4,8 @@ Panel analítico de eventos normalizados de honeypots. **Dystopia conserva
 configuración/control**; la salud del stack la sigue el stack
 Prometheus/Loki/Grafana (área de otro agente), no este.
 
-Para levantar el laboratorio completo en macOS antes del servidor Linux, ver
-[`docs/LOCAL-LAB.md`](../../docs/LOCAL-LAB.md).
+Para un entorno de evaluación con Docker Desktop/Colima antes de disponer del
+servidor Linux, ver [`docs/EVALUATION-LAB.md`](../../docs/EVALUATION-LAB.md).
 
 ## Contenido
 
