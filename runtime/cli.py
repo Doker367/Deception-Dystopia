@@ -5,9 +5,14 @@ import ipaddress
 import json
 import os
 from pathlib import Path
+import sys
 import time
 
 from runtime.localfiles import create_private, read_private
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+HONEYPOT_INVENTORY = REPO_ROOT / "deploy/honeypots/inventory.yaml"
+HONEYPOT_PROFILE = REPO_ROOT / "deploy/honeypots/profiles/cell-mvp.example.yaml"
 
 
 def bootstrap(users_file, username, password):
@@ -59,6 +64,12 @@ def main(argv=None):
     status = sub.add_parser("status")
     status.add_argument("--events", type=Path)
     status.add_argument("--spool", type=Path)
+    honeypots = sub.add_parser("honeypots", help="read-only per-cell honeypot compose planning")
+    honeypots.add_argument("action", choices=("plan", "render", "validate") +
+                           ("apply", "up", "down"))
+    honeypots.add_argument("--inventory", type=Path, default=HONEYPOT_INVENTORY)
+    honeypots.add_argument("--profile", type=Path, default=HONEYPOT_PROFILE)
+    honeypots.add_argument("--output", type=Path)
     args = p.parse_args(argv)
     os.umask(0o077)
     if args.command == "bootstrap-admin":
@@ -113,6 +124,42 @@ def main(argv=None):
         from runtime.health import snapshot
         data = snapshot(args.events or args.spool, "ingest" if args.events else "sensor")
         print(json.dumps(data, sort_keys=True))
+    elif args.command == "honeypots":
+        from runtime import honeypots
+        if args.action in honeypots.BLOCKED_ACTIONS:
+            # No containment verification exists; activation is unreachable.
+            try:
+                honeypots.blocked(args.action)
+            except honeypots.HoneypotBlocked as exc:
+                print(json.dumps({"action": args.action, "state": "blocked",
+                                  "containment_verified": False, "detail": str(exc)}),
+                      file=sys.stderr)
+                return 2
+        try:
+            if args.action == "render":
+                inventory = honeypots.load_inventory(args.inventory)
+                cell = honeypots.load_cell(args.profile, inventory)
+                text = honeypots.dump_cell(inventory, cell)
+                if args.output:
+                    try:
+                        args.output.write_text(text, encoding="utf-8")
+                    except OSError as exc:
+                        p.error(f"cannot write compose file: {exc.strerror or exc}")
+                    print(json.dumps({"action": "render", "output": str(args.output),
+                                      "containment_verified": False,
+                                      "activation_allowed": False}, sort_keys=True))
+                else:
+                    print(text, end="")
+            elif args.output is not None:
+                p.error("--output is only valid with render")
+            elif args.action == "plan":
+                print(json.dumps(honeypots.plan(args.inventory, args.profile),
+                                 indent=2, sort_keys=True))
+            else:
+                print(json.dumps(honeypots.validate(args.inventory, args.profile),
+                                 indent=2, sort_keys=True))
+        except honeypots.HoneypotError as exc:
+            p.error(str(exc))
     return 0
 
 
