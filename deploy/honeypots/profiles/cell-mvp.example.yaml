@@ -1,0 +1,33 @@
+# Dystopia — perfil de celda de honeypots del MVP (SOLO PLAN/RENDER)
+#
+# Este perfil describe UNA celda (`cell: 1`) con los seis motores del MVP.
+# No es un despliegue: `python -m runtime.cli honeypots render` solo genera un
+# Compose. `apply`/`up`/`down` están bloqueados hasta que exista verificación
+# de contención en Linux. `internal: true` NO es evidencia de contención.
+#
+# Modos:
+#   internal      (por defecto) sin puertos publicados; el tráfico entra solo
+#                 por la política de red/nft de la celda autorizada.
+#   loopback-lab  laboratorio local: publica ÚNICAMENTE en 127.0.0.1 con
+#                 puertos altos explícitos. Nunca 0.0.0.0, nunca gestión.
+#
+# Para loopback-lab, añadir (y validar) algo como:
+#   mode: loopback-lab
+#   publish:
+#     cowrie:
+#       - {container: 2222, proto: tcp, host: 12222}
+#     endlessh:
+#       - {container: 2222, proto: tcp, host: 12223}
+
+schema: dystopia.honeypots.cell/v1
+cell: 1
+mode: internal
+data_root: /var/lib/dystopia/honeypots
+engines:
+  - cowrie
+  - opencanary
+  - dionaea
+  - heralding
+  - redishoneypot
+  - endlessh
+publish: {}

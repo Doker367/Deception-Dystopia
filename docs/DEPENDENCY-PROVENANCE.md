@@ -64,3 +64,22 @@ Antes de autorizar una instalación, en una fase posterior expresamente aprobada
 4. Hacer que el instalador use únicamente el bundle aprobado, sin índice ni acceso de red, con verificación obligatoria de hashes y sin fallback a sdists o compilación. Debe fallar cerrado si falta el lock, un wheel, un hash, la aprobación o hay cualquier discrepancia.
 
 **No se creó ni se certifica la existencia de un bundle o `requirements.lock` aprobado en este trabajo.** No se inventaron hashes, URLs de artefactos, referencias de aprobación ni evidencias de instalación. Los digests visibles en PyPI no se copiaron como si constituyeran un hashlock completo y validado.
+
+## Actualización posterior (Ola A, 2026-10-30)
+
+Se generaron locks candidatos con versiones exactas y hashes SHA-256 para
+CPython 3.12 / Linux amd64:
+
+- `deploy/requirements-control.lock` (29 paquetes),
+- `deploy/requirements-test.lock` (37 paquetes, superconjunto de control).
+
+También se añadieron `scripts/build_offline_bundle.sh`, dos SBOM CycloneDX en
+`deploy/sbom/` y la documentación `docs/OFFLINE-BUNDLE.md` y `docs/SBOM.md`.
+La auditoría con pip-audit/OSV encontró 9 avisos únicos en `python-jose`,
+`ecdsa` y `starlette`; el detalle y las correcciones declaradas están en
+`docs/OFFLINE-BUNDLE.md`.
+
+Estos artefactos permiten verificar hashes y construir un bundle, pero **no
+aprueban el despliegue**. El bloqueo de python-jose continúa, y la actualización
+de FastAPI/Starlette necesaria para corregir los avisos de Starlette queda
+pendiente. Los wheels no se versionaron.

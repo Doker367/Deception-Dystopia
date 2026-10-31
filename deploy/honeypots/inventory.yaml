@@ -41,6 +41,9 @@ engines:
       base_reference: cowrie/cowrie:3.1.4
       base_digest: sha256:4e2d40671691ab7a4af19840918556c62316939e905bfc9ab3fc1f9e1db54e55
       upstream_commit: 085ed091a84ae1cee7f15b6e8aa549d11826a0f7
+    config:
+      file: cowrie.cfg
+      target: /etc/cowrie/cowrie.cfg
     user: "999:999"
     ports:
       - {container: 2222, proto: tcp, purpose: ssh}
@@ -61,6 +64,7 @@ engines:
       cpus: 0.50
       pids_limit: 256
       nofile: 4096
+      tmpfs_mib: 64
 
   - id: opencanary
     description: Multi-protocol low-interaction honeypot
@@ -74,6 +78,9 @@ engines:
       base_digest: sha256:2199a62885a12290dc9c5be3ca0681d367576ab7bf037da120e564723292a2f0
       package: opencanary==0.9.10
       upstream_commit: fb12e4fefbdb1b9acd1e5561a2614f827ab639ff
+    config:
+      file: opencanary.conf
+      target: /etc/opencanaryd/opencanary.conf
     user: "2000:2000"
     capabilities_add: [NET_BIND_SERVICE]
     ports:
@@ -98,6 +105,7 @@ engines:
       cpus: 0.25
       pids_limit: 128
       nofile: 2048
+      tmpfs_mib: 16
 
   - id: dionaea
     description: SMB/FTP/TFTP/HTTP/database multi-protocol honeypot
@@ -110,6 +118,9 @@ engines:
       base_reference: ubuntu:26.04
       base_digest: sha256:6a06111c3b0a8600feadb270aec771dc239bf407b25625f93f44ab00e11f4d3c
       upstream_commit: 78af2ff2a0f1b62ac7cc5858bac2ab46898c9cc0
+    config:
+      file: dionaea.cfg
+      target: /opt/dionaea/etc/dionaea/dionaea.cfg
     user: "2000:2000"
     capabilities_add: [NET_BIND_SERVICE]
     ports:
@@ -140,6 +151,7 @@ engines:
       cpus: 1.00
       pids_limit: 512
       nofile: 4096
+      tmpfs_mib: 128
 
   - id: heralding
     description: Credential-capturing multi-protocol honeypot
@@ -152,6 +164,9 @@ engines:
       base_reference: alpine:3.23.7
       base_digest: sha256:ff7f0c727dd796aa36787bfcd9a64bf35a6ce72a73451b3359fde849b6703d63
       upstream_commit: ac12724ab38c4e2fe78f07d1bc35e6e586ba69c0
+    config:
+      file: heralding.yml
+      target: /etc/heralding/heralding.yml
     user: "2000:2000"
     capabilities_add: [NET_BIND_SERVICE]
     ports:
@@ -186,6 +201,7 @@ engines:
       cpus: 0.50
       pids_limit: 256
       nofile: 4096
+      tmpfs_mib: 32
 
   - id: redishoneypot
     description: Redis protocol honeypot
@@ -198,6 +214,9 @@ engines:
       base_reference: alpine:3.23.7
       base_digest: sha256:ff7f0c727dd796aa36787bfcd9a64bf35a6ce72a73451b3359fde849b6703d63
       upstream_commit: 45adc622a423d12d76392c3a54274f6cff111d58
+    config:
+      file: redis.conf
+      target: /opt/redishoneypot/redis.conf
     user: "2000:2000"
     ports:
       - {container: 6379, proto: tcp, purpose: redis}
@@ -217,6 +236,7 @@ engines:
       cpus: 0.25
       pids_limit: 128
       nofile: 2048
+      tmpfs_mib: 32
 
   - id: endlessh
     description: SSH tarpit
@@ -229,6 +249,9 @@ engines:
       base_reference: alpine:3.23.7
       base_digest: sha256:ff7f0c727dd796aa36787bfcd9a64bf35a6ce72a73451b3359fde849b6703d63
       upstream_commit: dfe44eb2c5b6fc3c48a39ed826fe0e4459cdf6ef
+    config:
+      file: endlessh.conf
+      target: /opt/endlessh/endlessh.conf
     user: "2000:2000"
     ports:
       - {container: 2222, proto: tcp, purpose: ssh-tarpit}
@@ -248,6 +271,7 @@ engines:
       cpus: 0.10
       pids_limit: 64
       nofile: 8192
+      tmpfs_mib: 16
 
 totals:
   mem_limit: 2304m
