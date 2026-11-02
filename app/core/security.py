@@ -11,7 +11,7 @@ import os
 from datetime import datetime, timedelta, timezone
 
 import bcrypt
-from jose import JWTError, jwt
+import jwt  # PyJWT — remplaza a python-jose (ver docs/DEPENDENCY-PROVENANCE.md)
 
 # ── Configuración ─────────────────────────────────────────────
 
@@ -66,9 +66,13 @@ def verify_token(token: str) -> dict | None:
         Diccionario con los claims del token, o None si es inválido/expirado.
     """
     try:
-        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        # algorithms es un allowlist estricto (mitigación de confusión de
+        # algoritmos: HS256 solamente, sin claves públicas como secretos HMAC).
+        # require=["exp"] mantiene la exigencia de expiración de python-jose:
+        # PyJWT no la impone por defecto.
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM], options={"require": ["exp"]})
         return payload
-    except JWTError:
+    except jwt.PyJWTError:
         return None
 
 

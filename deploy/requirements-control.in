@@ -1,14 +1,20 @@
 # Candidate direct pins for the minimal control surface, targeting Python 3.12.
 # Verified release metadata only; NOT a resolved lock or production approval.
-# See docs/DEPENDENCY-PROVENANCE.md, including the python-jose advisory.
+# See docs/DEPENDENCY-PROVENANCE.md for the JWT and Starlette remediation state.
 # Installer must use an approved offline bundle + requirements.lock with real
 # hashes for every direct/transitive wheel, never install from this input.
-fastapi==0.115.12
+fastapi==0.162.0
+# Explicit starlette pin: FastAPI >=0.140 dropped its upper cap, but the direct
+# pin documents and guarantees the 1.x line that closes all 7 Starlette advisories.
+starlette==1.10.0
 uvicorn==0.34.3
 pydantic==2.11.7
 slowapi==0.1.9
-# Approval blocked pending review of the advisory recorded in provenance.
-python-jose[cryptography]==3.5.0
+# Replaces python-jose 3.5.0 (no-fix CVEs) and drops its transitive ecdsa/rsa/pyasn1.
+# PyJWT 2.15.1: maintained JWT library, official Python 3.12 support; the crypto
+# extra reuses the already-locked cryptography wheel. Code now uses app/core/security.py
+# with `import jwt` (PyJWT).
+PyJWT[crypto]==2.15.1
 bcrypt==4.3.0
 PyYAML==6.0.2
 prometheus-client==0.22.1
