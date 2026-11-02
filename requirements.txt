@@ -9,7 +9,8 @@ napalm
 napalm-ros
 netmiko
 prometheus-client
-python-jose[cryptography]
+# JWT: PyJWT replaces python-jose (see docs/DEPENDENCY-PROVENANCE.md).
+PyJWT[crypto]
 bcrypt>=4.1.0
 httpx
 pyotp

@@ -4,8 +4,10 @@
 
 Artefactos de cadena de suministro para el objetivo **CPython 3.12 / Linux amd64**.
 Los locks son reproducibles y verificables, pero **no constituyen aprobación de
-producción**: la auditoría de vulnerabilidades mantiene bloqueada la aprobación
-(véase [Auditoría](#auditoría)). El bundle de wheels no se versiona.
+producción**: la aprobación sigue en revisión formal (véase [Auditoría](#auditoría)).
+Los bloqueos previos de `python-jose`, `ecdsa` y Starlette quedaron **resueltos**
+en la remediación del 2026-11-02: py-audit ya no reporta avisos en ningún lock.
+El bundle de wheels no se versiona.
 
 Este trabajo se ejecutó en un host macOS arm64. La resolución y descarga se
 hicieron para la plataforma Linux amd64; los wheels **no se instalaron ni se
@@ -49,17 +51,26 @@ publicados con etiquetas más antiguas, siempre que el hash esté en el lock.
 
 | Archivo | Contenido | Paquetes | SHA-256 |
 | --- | --- | --- | --- |
-| `deploy/requirements-control.lock` | cierre de control, solo wheels | 29 | `1b6326eabf1e9944cf783b8d98a20106c73d6f3245996ab74231529124e748fb` |
-| `deploy/requirements-test.lock` | control + herramientas de test | 37 | `992c684935ab43f631701d5183043a62025fac7db437ee74d1aba8b955d1a8b5` |
-| `deploy/sbom/control-cyclonedx.json` | SBOM CycloneDX 1.6 de control | 29 componentes | véase `docs/SBOM.md` |
-| `deploy/sbom/test-cyclonedx.json` | SBOM CycloneDX 1.6 de tests | 37 componentes | véase `docs/SBOM.md` |
+| `deploy/requirements-control.lock` | cierre de control, solo wheels | 27 | `53016f893c91651e6b4bbd39db653f1f9eea9a2db83dd06b5de9ce36f98765c0` |
+| `deploy/requirements-test.lock` | control + herramientas de test | 35 | `27b90b3f00253845079d71a643015bb7b2a8d1397669120ed5c4145fc660c745` |
+| `deploy/sbom/control-cyclonedx.json` | SBOM CycloneDX 1.6 de control | 27 componentes | véase `docs/SBOM.md` |
+| `deploy/sbom/test-cyclonedx.json` | SBOM CycloneDX 1.6 de tests | 35 componentes | véase `docs/SBOM.md` |
 
-El lock de control tiene 509 entradas `--hash` y el de tests 525, porque uv
+El lock de control tiene 505 entradas `--hash` y el de tests 521, porque uv
 emite los digests de todas las distribuciones compatibles con la plataforma
 resuelta; el bundle descarga un único wheel Linux por requisito y lo valida
 contra ese conjunto. No hay sdists ni dependencias fuera del lock. El lock de
 tests es un superconjunto del de control y **no debe instalarse en la superficie
 de control productiva**.
+
+Remediación del 2026-11-02 respecto al cierre anterior: se eliminaron
+`python-jose 3.5.0` y sus transitivas `ecdsa 0.19.2`, `rsa` y `pyasn1`; entraron
+`PyJWT 2.15.1` (con el extra `crypto`, que reutiliza el `cryptography 50.0.2`
+ya bloqueado), `FastAPI 0.115.12 → 0.162.0`, `Starlette 0.46.2 → 1.10.0`
+(pin explícito en el `.in`) y las transitivas nuevas de FastAPI
+(`annotated-doc 0.0.5`, `opentelemetry-api 1.45.2`). `uvicorn`, `pydantic`,
+`slowapi`, `bcrypt`, `PyYAML`, `prometheus-client` y `python-multipart`
+mantienen su pin.
 
 Los archivos `.in` (`deploy/requirements-control.in`,
 `deploy/requirements-test.in`) siguen siendo entradas candidatas, no locks.
@@ -130,7 +141,34 @@ python3 -c "from runtime.install import verify_bundle; print(verify_bundle('buil
 
 ## Auditoría
 
-Ejecutada el **2026-10-30** con pip-audit 2.10.1 y el servicio OSV:
+### Auditoría previa (2026-10-30, cierre antiguo)
+
+Se documentan los 9 avisos del cierre de 2026-10-30 por trazabilidad; **todos
+quedaron cubiertos por la remediación del 2026-11-02** y ninguna versión de ese
+cierre permanece en los locks actuales:
+
+| Paquete | Versión | Aviso | Corrección declarada | Resolución en esta ola |
+| --- | --- | --- | --- | --- |
+| `python-jose` | 3.5.0 | `PYSEC-2024-232`, `PYSEC-2026-4298`; aliases `CVE-2024-33663`, `CVE-2026-85394`, `GHSA-3qf3-8w2g-rqmx`, `GHSA-6c5p-j8vq-pqhj` | ninguna | Dependencia eliminada; JWT en PyJWT 2.15.1 (`app/core/security.py`). |
+| `ecdsa` | 0.19.2 | `PYSEC-2026-1325` (`CVE-2024-23342`, `GHSA-wj6h-64fc-37mp`) | ninguna | Transitiva eliminada con python-jose. |
+| `starlette` | 0.46.2 | `PYSEC-2026-161` (`CVE-2026-48710`) | 1.0.1 | Starlette 1.10.0 ≥ 1.0.1. |
+| `starlette` | 0.46.2 | `PYSEC-2026-1941` (`CVE-2025-54121`) | 0.47.2 | Starlette 1.10.0 ≥ 0.47.2. |
+| `starlette` | 0.46.2 | `PYSEC-2026-1942` (`CVE-2025-62727`) | 0.49.1 | Starlette 1.10.0 ≥ 0.49.1. |
+| `starlette` | 0.46.2 | `PYSEC-2026-2280` (`CVE-2026-48817`) | 1.1.0 | Starlette 1.10.0 ≥ 1.1.0. |
+| `starlette` | 0.46.2 | `PYSEC-2026-2281` (`CVE-2026-48818`) | 1.1.0 | Starlette 1.10.0 ≥ 1.1.0. |
+| `starlette` | 0.46.2 | `PYSEC-2026-248` (`CVE-2026-54282`, corregido en 1.3.0) | 1.3.0 | Starlette 1.10.0 ≥ 1.3.0. |
+| `starlette` | 0.46.2 | `PYSEC-2026-249` (`CVE-2026-54283`, corregido en 1.3.1) | 1.3.1 | Starlette 1.10.0 ≥ 1.3.1. |
+
+La combinación elegida es la que existe y fue verificada (host macOS arm64):
+`FastAPI 0.162.0` de declara `starlette>=0.46.0` **sin límite superior**, de modo
+que con el pin directo `starlette==1.10.0` el cierre ya no contiene ninguna de
+las 7 versiones afectadas. Las versiones de Starlette anteriores a 1.3.1
+siguen afectadas si otra resolución retrocede; el pin explícito del `.in` evita
+eso en los locks regenerados.
+
+### Auditoría actual (2026-11-02, cierre remediado)
+
+Ejecutada con pip-audit (vía `uvx`, mismo comando y servicio OSV):
 
 ```bash
 uvx pip-audit -r deploy/requirements-control.lock \
@@ -139,33 +177,53 @@ uvx pip-audit -r deploy/requirements-test.lock \
   --no-deps --vulnerability-service osv --progress-spinner off --format columns
 ```
 
-Resultado: **9 avisos únicos en 3 paquetes** (18 filas por aliases duplicados).
-El lock de tests presenta los mismos 9 avisos; sus herramientas de test no
-añadieron avisos nuevos.
+Resultado real de ambas ejecuciones: **"No known vulnerabilities found"**,
+incluidos `PyJWT 2.15.1`, `FastAPI 0.162.0`, `Starlette 1.10.0`,
+`cryptography 50.0.2`, `annotated-doc 0.0.5` y `opentelemetry-api 1.45.2`.
 
-| Paquete | Versión | Aviso | Corrección declarada | Nota |
-| --- | --- | --- | --- | --- |
-| `python-jose` | 3.5.0 | `PYSEC-2024-232`, `PYSEC-2026-4298`; aliases `CVE-2024-33663`, `CVE-2026-85394`, `GHSA-3qf3-8w2g-rqmx`, `GHSA-6c5p-j8vq-pqhj` | ninguna | Confusión de algoritmos evadida con claves públicas DER. Aviso conocido y bloqueo de aprobación. |
-| `ecdsa` | 0.19.2 | `PYSEC-2026-1325` (`CVE-2024-23342`, `GHSA-wj6h-64fc-37mp`) | ninguna | Ataque de temporización Minerva sobre P-256; transitiva de python-jose. |
-| `starlette` | 0.46.2 | `PYSEC-2026-161` (`CVE-2026-48710`) | 1.0.1 | Falta de validación del header Host; corrupción de `request.url.path`. |
-| `starlette` | 0.46.2 | `PYSEC-2026-1941` (`CVE-2025-54121`) | 0.47.2 | DoS al parsear multipart grandes. |
-| `starlette` | 0.46.2 | `PYSEC-2026-1942` (`CVE-2025-62727`) | 0.49.1 | DoS O(n^2) en `FileResponse` por Range. |
-| `starlette` | 0.46.2 | `PYSEC-2026-2280` (`CVE-2026-48817`) | 1.1.0 | Dispatch de métodos HTTP arbitrarios en `HTTPEndpoint`. |
-| `starlette` | 0.46.2 | `PYSEC-2026-2281` (`CVE-2026-48818`) | 1.1.0 | SSRF / robo de credenciales NTLM con rutas UNC en StaticFiles (Windows). |
-| `starlette` | 0.46.2 | `PYSEC-2026-248` (`CVE-2026-54282`) | 1.3.0 | Path no validado concatenado en la autoridad de la URL. |
-| `starlette` | 0.46.2 | `PYSEC-2026-249` (`CVE-2026-54283`) | 1.3.1 | Límites de `request.form()` ignorados para formularios urlencoded. |
+### Prueba real del bundle
 
-`FastAPI 0.115.12` restringe `starlette<0.47.0`; por tanto, dentro del pin
-directo actual no existe una versión de Starlette que corrija los avisos. Se
-requiere una actualización revisada de FastAPI (y probablemente de Starlette a
-la línea 1.x), seguida de nueva resolución, tests y auditoría. No se cambió el
-pin en esta ola.
+```bash
+bash -n scripts/build_offline_bundle.sh                     # sintaxis OK
+PYTHON=/…/.py312/bin/python ./scripts/build_offline_bundle.sh \
+  deploy/requirements-control.lock build/offline-bundle-deps    # 27 wheels, hashes.json
+PYTHON=/…/.py312/bin/python ./scripts/build_offline_bundle.sh \
+  deploy/requirements-test.lock build/offline-bundle-test-deps  # 35 wheels, hashes.json
+python3 -c "from runtime.install import verify_bundle; \
+  print(verify_bundle('build/offline-bundle-deps'), \
+        verify_bundle('build/offline-bundle-test-deps'))"     # True True
+```
 
-La ruta JWT de la aplicación usa `algorithms=["HS256"]` de forma explícita
-(lectura estática de `app/core/security.py`), lo que no demuestra la
-precondición del aviso de python-jose, pero **no es una mitigación certificada**
-ni una aprobación de la dependencia. La aprobación del bundle permanece
-bloqueada hasta revisión y aceptación formal.
+Ambos bundles pasan la verificación exacta del instalador
+(`runtime/install.py::verify_bundle`). Los directorios de bundle son
+temporales, no se versionan.
+
+### Ruta JWT de la aplicación
+
+`app/core/security.py` usa PyJWT con allowlist estricto de algoritmos
+(`algorithms=["HS256"]`) y `options={"require": ["exp"]}`, que conserva la
+exigencia de `exp` que python-jose imponía por defecto (PyJWT no la impone).
+Las pruebas de `tests/auth/test_jwt_remediation.py` cubren: login correcto,
+JWT mal firmado, token sin `ver`, usuario cambiado/revocado y separación entre
+API key (`np_...`) y JWT. La suite completa (367 tests + 173 subtests) pasa.
+
+### Estado de la aprobación
+
+Los bloqueos por vulnerabilidad conocida quedan levantados: **ya no queda
+ninguna advertencia abierta en los locks**. La aprobación de producción exige
+además el cierre formal previsto en `docs/DEPENDENCY-PROVENANCE.md`
+(instalación/puesta en marcha en el destino Linux, `pip check` en el venv real
+y aceptación explícita). Placeholder de aprobación:
+
+```
+APPROVAL: [PENDING]
+- Dependency remediation complete:      [x] 2026-11-02
+- pip-audit/OSV clean on both locks:    [x] 2026-11-02
+- Bundle verified by runtime installer: [x] 2026-11-02
+- Linux destination run (pip check +
+  controlled boot):                     [ ]
+- Formal release sign-off:              [ ]                     (revisiones: ____ fecha: ____)
+```
 
 ## Limitaciones
 
@@ -196,7 +254,9 @@ bloqueada hasta revisión y aceptación formal.
 
 4. Ejecutar `pip check`, la suite de tests y un arranque controlado; repetir
    `pip-audit` sobre el venv real.
-5. Resolver el bloqueo de FastAPI/Starlette y python-jose/ecdsa, regenerar los
-   locks, regenerar el SBOM y repetir la auditoría.
+5. ~~Resolver el bloqueo de FastAPI/Starlette y python-jose/ecdsa, regenerar
+   los locks, regenerar el SBOM y repetir la auditoría.~~ **Hecho el
+   2026-11-02** (PyJWT 2.15.1, FastAPI 0.162.0, Starlette 1.10.0; auditoría
+   limpia).
 6. Solo tras aprobación explícita, registrar `hashes.json` y el lock en el
    proceso de release del instalador.

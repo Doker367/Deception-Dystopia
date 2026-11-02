@@ -36,6 +36,40 @@
       "version": "6.0.2"
     },
     {
+      "bom-ref": "pkg:pypi/annotated-doc@0.0.5?file_name=annotated_doc-0.0.5-py3-none-any.whl#sha256=117bac03a25ede5df5440e855b32d556049ca169ead221505badf432fed4b101",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "117bac03a25ede5df5440e855b32d556049ca169ead221505badf432fed4b101"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "MIT"
+          }
+        }
+      ],
+      "name": "annotated-doc",
+      "properties": [
+        {
+          "name": "dystopia:wheel",
+          "value": "annotated_doc-0.0.5-py3-none-any.whl"
+        },
+        {
+          "name": "dystopia:license-source",
+          "value": "License-Expression"
+        },
+        {
+          "name": "dystopia:target-platform",
+          "value": "linux/amd64, CPython 3.12, manylinux_2_28"
+        }
+      ],
+      "purl": "pkg:pypi/annotated-doc@0.0.5",
+      "type": "library",
+      "version": "0.0.5"
+    },
+    {
       "bom-ref": "pkg:pypi/annotated-types@0.8.0?file_name=annotated_types-0.8.0-py3-none-any.whl#sha256=f072f4d804ea359e4eaf198b1af7a8b0943881a87f31bb764f8bf219bb9419e0",
       "hashes": [
         {
@@ -308,11 +342,11 @@
       "version": "3.0.1"
     },
     {
-      "bom-ref": "pkg:pypi/ecdsa@0.19.2?file_name=ecdsa-0.19.2-py2.py3-none-any.whl#sha256=840f5dc5e375c68f36c1a7a5b9caad28f95daa65185c9253c0c08dd952bb7399",
+      "bom-ref": "pkg:pypi/fastapi@0.162.0?file_name=fastapi-0.162.0-py3-none-any.whl#sha256=3785963de305dd09912426cb81f2d230fce98ab3521cdfe97265c8d14983128c",
       "hashes": [
         {
           "alg": "SHA-256",
-          "content": "840f5dc5e375c68f36c1a7a5b9caad28f95daa65185c9253c0c08dd952bb7399"
+          "content": "3785963de305dd09912426cb81f2d230fce98ab3521cdfe97265c8d14983128c"
         }
       ],
       "licenses": [
@@ -322,58 +356,24 @@
           }
         }
       ],
-      "name": "ecdsa",
-      "properties": [
-        {
-          "name": "dystopia:wheel",
-          "value": "ecdsa-0.19.2-py2.py3-none-any.whl"
-        },
-        {
-          "name": "dystopia:license-source",
-          "value": "License"
-        },
-        {
-          "name": "dystopia:target-platform",
-          "value": "linux/amd64, CPython 3.12, manylinux_2_28"
-        }
-      ],
-      "purl": "pkg:pypi/ecdsa@0.19.2",
-      "type": "library",
-      "version": "0.19.2"
-    },
-    {
-      "bom-ref": "pkg:pypi/fastapi@0.115.12?file_name=fastapi-0.115.12-py3-none-any.whl#sha256=e94613d6c05e27be7ffebdd6ea5f388112e5e430c8f7d6494a9d1d88d43e814d",
-      "hashes": [
-        {
-          "alg": "SHA-256",
-          "content": "e94613d6c05e27be7ffebdd6ea5f388112e5e430c8f7d6494a9d1d88d43e814d"
-        }
-      ],
-      "licenses": [
-        {
-          "license": {
-            "name": "MIT License"
-          }
-        }
-      ],
       "name": "fastapi",
       "properties": [
         {
           "name": "dystopia:wheel",
-          "value": "fastapi-0.115.12-py3-none-any.whl"
+          "value": "fastapi-0.162.0-py3-none-any.whl"
         },
         {
           "name": "dystopia:license-source",
-          "value": "Classifier"
+          "value": "License-Expression"
         },
         {
           "name": "dystopia:target-platform",
           "value": "linux/amd64, CPython 3.12, manylinux_2_28"
         }
       ],
-      "purl": "pkg:pypi/fastapi@0.115.12",
+      "purl": "pkg:pypi/fastapi@0.162.0",
       "type": "library",
-      "version": "0.115.12"
+      "version": "0.162.0"
     },
     {
       "bom-ref": "pkg:pypi/h11@0.16.0?file_name=h11-0.16.0-py3-none-any.whl#sha256=63cf8bbe7522de3bf65932fda1d9c2772064ffb3dae62d55932da54b31cb6c86",
@@ -580,6 +580,40 @@
       "version": "5.8.0"
     },
     {
+      "bom-ref": "pkg:pypi/opentelemetry-api@1.45.2?file_name=opentelemetry_api-1.45.2-py3-none-any.whl#sha256=2cbd737377e710ee740d261c94e93fa0f08e6d037c18f17513cc0a2d94479a34",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "2cbd737377e710ee740d261c94e93fa0f08e6d037c18f17513cc0a2d94479a34"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "Apache-2.0"
+          }
+        }
+      ],
+      "name": "opentelemetry-api",
+      "properties": [
+        {
+          "name": "dystopia:wheel",
+          "value": "opentelemetry_api-1.45.2-py3-none-any.whl"
+        },
+        {
+          "name": "dystopia:license-source",
+          "value": "License-Expression"
+        },
+        {
+          "name": "dystopia:target-platform",
+          "value": "linux/amd64, CPython 3.12, manylinux_2_28"
+        }
+      ],
+      "purl": "pkg:pypi/opentelemetry-api@1.45.2",
+      "type": "library",
+      "version": "1.45.2"
+    },
+    {
       "bom-ref": "pkg:pypi/packaging@26.3?file_name=packaging-26.3-py3-none-any.whl#sha256=d7193f7c8e4e93f444fde0262bf90af30e16fa0ad0ad44cb553c87339b23cd1c",
       "hashes": [
         {
@@ -680,40 +714,6 @@
       "purl": "pkg:pypi/prometheus-client@0.22.1",
       "type": "library",
       "version": "0.22.1"
-    },
-    {
-      "bom-ref": "pkg:pypi/pyasn1@0.6.5?file_name=pyasn1-0.6.5-py3-none-any.whl#sha256=4017b0fce125096b8573b39c989fdb1a4b19cf761e683398184550fea0e66587",
-      "hashes": [
-        {
-          "alg": "SHA-256",
-          "content": "4017b0fce125096b8573b39c989fdb1a4b19cf761e683398184550fea0e66587"
-        }
-      ],
-      "licenses": [
-        {
-          "license": {
-            "name": "BSD-2-Clause"
-          }
-        }
-      ],
-      "name": "pyasn1",
-      "properties": [
-        {
-          "name": "dystopia:wheel",
-          "value": "pyasn1-0.6.5-py3-none-any.whl"
-        },
-        {
-          "name": "dystopia:license-source",
-          "value": "License"
-        },
-        {
-          "name": "dystopia:target-platform",
-          "value": "linux/amd64, CPython 3.12, manylinux_2_28"
-        }
-      ],
-      "purl": "pkg:pypi/pyasn1@0.6.5",
-      "type": "library",
-      "version": "0.6.5"
     },
     {
       "bom-ref": "pkg:pypi/pycparser@3.12?file_name=pycparser-3.12-py3-none-any.whl#sha256=a076f3f489b39b43ed13563a1dafe42447445bec2e294154ec5c57fcdda4c85e",
@@ -852,6 +852,40 @@
       "version": "2.21.0"
     },
     {
+      "bom-ref": "pkg:pypi/pyjwt@2.15.1?file_name=pyjwt-2.15.1-py3-none-any.whl#sha256=42d59d631f7768a1028a64c7ff581a9bf7519804daf91fc5b6c56e30eec5e193",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "42d59d631f7768a1028a64c7ff581a9bf7519804daf91fc5b6c56e30eec5e193"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "name": "MIT"
+          }
+        }
+      ],
+      "name": "PyJWT",
+      "properties": [
+        {
+          "name": "dystopia:wheel",
+          "value": "pyjwt-2.15.1-py3-none-any.whl"
+        },
+        {
+          "name": "dystopia:license-source",
+          "value": "License-Expression"
+        },
+        {
+          "name": "dystopia:target-platform",
+          "value": "linux/amd64, CPython 3.12, manylinux_2_28"
+        }
+      ],
+      "purl": "pkg:pypi/pyjwt@2.15.1",
+      "type": "library",
+      "version": "2.15.1"
+    },
+    {
       "bom-ref": "pkg:pypi/pytest@9.0.3?file_name=pytest-9.0.3-py3-none-any.whl#sha256=2c5efc453d45394fdd706ade797c0a81091eccd1d6e4bccfcd476e2b8e0ab5d9",
       "hashes": [
         {
@@ -920,40 +954,6 @@
       "version": "1.3.0"
     },
     {
-      "bom-ref": "pkg:pypi/python-jose@3.5.0?file_name=python_jose-3.5.0-py2.py3-none-any.whl#sha256=abd1202f23d34dfad2c3d28cb8617b90acf34132c7afd60abd0b0b7d3cb55771",
-      "hashes": [
-        {
-          "alg": "SHA-256",
-          "content": "abd1202f23d34dfad2c3d28cb8617b90acf34132c7afd60abd0b0b7d3cb55771"
-        }
-      ],
-      "licenses": [
-        {
-          "license": {
-            "name": "MIT"
-          }
-        }
-      ],
-      "name": "python-jose",
-      "properties": [
-        {
-          "name": "dystopia:wheel",
-          "value": "python_jose-3.5.0-py2.py3-none-any.whl"
-        },
-        {
-          "name": "dystopia:license-source",
-          "value": "License"
-        },
-        {
-          "name": "dystopia:target-platform",
-          "value": "linux/amd64, CPython 3.12, manylinux_2_28"
-        }
-      ],
-      "purl": "pkg:pypi/python-jose@3.5.0",
-      "type": "library",
-      "version": "3.5.0"
-    },
-    {
       "bom-ref": "pkg:pypi/python-multipart@0.0.31?file_name=python_multipart-0.0.31-py3-none-any.whl#sha256=8408153d68a9773291fc1da39a8b85a50044bddbabd2dd72e9229776b7b15e28",
       "hashes": [
         {
@@ -986,74 +986,6 @@
       "purl": "pkg:pypi/python-multipart@0.0.31",
       "type": "library",
       "version": "0.0.31"
-    },
-    {
-      "bom-ref": "pkg:pypi/rsa@4.9.1?file_name=rsa-4.9.1-py3-none-any.whl#sha256=68635866661c6836b8d39430f97a996acbd61bfa49406748ea243539fe239762",
-      "hashes": [
-        {
-          "alg": "SHA-256",
-          "content": "68635866661c6836b8d39430f97a996acbd61bfa49406748ea243539fe239762"
-        }
-      ],
-      "licenses": [
-        {
-          "license": {
-            "name": "Apache-2.0"
-          }
-        }
-      ],
-      "name": "rsa",
-      "properties": [
-        {
-          "name": "dystopia:wheel",
-          "value": "rsa-4.9.1-py3-none-any.whl"
-        },
-        {
-          "name": "dystopia:license-source",
-          "value": "License"
-        },
-        {
-          "name": "dystopia:target-platform",
-          "value": "linux/amd64, CPython 3.12, manylinux_2_28"
-        }
-      ],
-      "purl": "pkg:pypi/rsa@4.9.1",
-      "type": "library",
-      "version": "4.9.1"
-    },
-    {
-      "bom-ref": "pkg:pypi/six@1.17.0?file_name=six-1.17.0-py2.py3-none-any.whl#sha256=4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274",
-      "hashes": [
-        {
-          "alg": "SHA-256",
-          "content": "4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274"
-        }
-      ],
-      "licenses": [
-        {
-          "license": {
-            "name": "MIT"
-          }
-        }
-      ],
-      "name": "six",
-      "properties": [
-        {
-          "name": "dystopia:wheel",
-          "value": "six-1.17.0-py2.py3-none-any.whl"
-        },
-        {
-          "name": "dystopia:license-source",
-          "value": "License"
-        },
-        {
-          "name": "dystopia:target-platform",
-          "value": "linux/amd64, CPython 3.12, manylinux_2_28"
-        }
-      ],
-      "purl": "pkg:pypi/six@1.17.0",
-      "type": "library",
-      "version": "1.17.0"
     },
     {
       "bom-ref": "pkg:pypi/slowapi@0.1.9?file_name=slowapi-0.1.9-py3-none-any.whl#sha256=cfad116cfb84ad9d763ee155c1e5c5cbf00b0d47399a769b227865f5df576e36",
@@ -1090,11 +1022,11 @@
       "version": "0.1.9"
     },
     {
-      "bom-ref": "pkg:pypi/starlette@0.46.2?file_name=starlette-0.46.2-py3-none-any.whl#sha256=595633ce89f8ffa71a015caed34a5b2dc1c0cdb3f0f1fbd1e69339cf2abeec35",
+      "bom-ref": "pkg:pypi/starlette@1.10.0?file_name=starlette-1.10.0-py3-none-any.whl#sha256=478c0ab3b4ced6e82719849c118fa406f0278a3499c1a898cd15cd31bdc38ce4",
       "hashes": [
         {
           "alg": "SHA-256",
-          "content": "595633ce89f8ffa71a015caed34a5b2dc1c0cdb3f0f1fbd1e69339cf2abeec35"
+          "content": "478c0ab3b4ced6e82719849c118fa406f0278a3499c1a898cd15cd31bdc38ce4"
         }
       ],
       "licenses": [
@@ -1108,7 +1040,7 @@
       "properties": [
         {
           "name": "dystopia:wheel",
-          "value": "starlette-0.46.2-py3-none-any.whl"
+          "value": "starlette-1.10.0-py3-none-any.whl"
         },
         {
           "name": "dystopia:license-source",
@@ -1119,9 +1051,9 @@
           "value": "linux/amd64, CPython 3.12, manylinux_2_28"
         }
       ],
-      "purl": "pkg:pypi/starlette@0.46.2",
+      "purl": "pkg:pypi/starlette@1.10.0",
       "type": "library",
-      "version": "0.46.2"
+      "version": "1.10.0"
     },
     {
       "bom-ref": "pkg:pypi/typing-extensions@4.16.0?file_name=typing_extensions-4.16.0-py3-none-any.whl#sha256=481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8",
@@ -1276,7 +1208,7 @@
       ]
     }
   },
-  "serialNumber": "urn:uuid:059e7150-2622-5fe9-829c-7b402e4c0fb5",
+  "serialNumber": "urn:uuid:7500aa75-d9c5-5299-be85-1ca1eae85697",
   "specVersion": "1.6",
   "version": 1
 }

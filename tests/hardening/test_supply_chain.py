@@ -77,7 +77,16 @@ def test_control_lock_excludes_test_tooling():
     names = {normalize(line.split("==", 1)[0].split("[", 1)[0]) for line in lock_pins(CONTROL_LOCK)}
     assert names.isdisjoint(TEST_TOOLS)
     assert "fastapi" in names
-    assert "python-jose" in names
+    # JWT path: PyJWT replaced python-jose (no-fix advisories) and dropped ecdsa.
+    assert "pyjwt" in names
+    assert "python-jose" not in names
+    assert "ecdsa" not in names
+    starlette_version = next(
+        line.split("==", 1)[1]
+        for line in lock_pins(CONTROL_LOCK) if line.split("==", 1)[0] == "starlette"
+    )
+    starlette_parts = tuple(int(part) for part in re.findall(r"\d+", starlette_version))
+    assert starlette_parts >= (1, 3, 1), starlette_version
 
 
 def test_test_lock_is_a_superset_with_test_tooling():

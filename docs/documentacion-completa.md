@@ -189,7 +189,7 @@ AUDIT SERVICE
 | **netmiko** | 4.7.0 | SSH a dispositivos de red (base de NAPALM) |
 | **nornir** | 3.5.0 | Orquestador de operaciones paralelas |
 | **pydantic** | 2.13 | Validación de datos y schemas |
-| **python-jose** | — | Generación y validación de tokens JWT |
+| **PyJWT** | 2.15.1 | Generación y validación de tokens JWT |
 | **passlib[bcrypt]** | — | Hashing seguro de contraseñas |
 | **cryptography** | — | Encriptación Fernet (AES) de credenciales |
 | **prometheus-client** | — | Exportación de métricas en formato Prometheus |

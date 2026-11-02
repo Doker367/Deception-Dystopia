@@ -14,7 +14,7 @@
 | **Netmiko** | 4.7.0 | SSH a dispositivos de red | — |
 | **Nornir** | 3.5.0 | Orquestador paralelo (ThreadedRunner) | — |
 | **Pydantic** | 2.13 | Validación de datos | — |
-| **python-jose** | — | JWT (HS256) | — |
+| **PyJWT** | 2.15.1 | JWT (HS256) | — |
 | **passlib[bcrypt]** | — | Hash de contraseñas | — |
 | **cryptography (Fernet)** | — | Encriptación AES de credenciales | — |
 | **slowapi** | — | Rate limiting | — |

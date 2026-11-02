@@ -7,8 +7,11 @@ reales descargados para CPython 3.12 / Linux amd64 (`manylinux_2_28`):
 
 | Archivo | Bundle de origen | Componentes | SHA-256 del SBOM |
 | --- | --- | --- | --- |
-| `deploy/sbom/control-cyclonedx.json` | `deploy/requirements-control.lock` | 29 | `a094ca6f8a117bc418813acca1358109ac9647575f90b145f6f3ab98d1114267` |
-| `deploy/sbom/test-cyclonedx.json` | `deploy/requirements-test.lock` | 37 | `d3aea2e1b4419d44b2885dcc6a76b2645f61fe75e343e3ed4499171b6aab69e0` |
+| `deploy/sbom/control-cyclonedx.json` | `deploy/requirements-control.lock` | 27 | `cb9345089a68951692ee461946d6c2dd35323fac3820f48f748805009fd03f93` |
+| `deploy/sbom/test-cyclonedx.json` | `deploy/requirements-test.lock` | 35 | `700eb78f08c431cd93e22f23b264589a035901814af34426b054c64b170cbc26` |
+
+Regenerados el 2026-11-02 tras la remediación JWT/FastAPI/Starlette (PyJWT 2.15.1,
+FastAPI 0.162.0, Starlette 1.10.0).
 
 Cada componente incluye:
 
@@ -21,7 +24,7 @@ Cada componente incluye:
 - el nombre del wheel y la plataforma objetivo como propiedades.
 
 No se inventaron licencias ni hashes. Si un wheel no declarara licencia, el
-generador registraría `NOASSERTION`; en estos dos bundles los 29 y 37
+generador registraría `NOASSERTION`; en estos dos bundles los 27 y 35
 componentes declaran alguna licencia en sus metadatos.
 
 ## Cómo se generó
@@ -59,18 +62,17 @@ Datos tal como los declara cada distribución, sin normalización legal:
 | MIT | 13 | 16 |
 | BSD-3-Clause | 5 | 7 |
 | Apache-2.0 | 3 | 4 |
-| BSD-2-Clause | 2 | 3 |
+| BSD-2-Clause | 1 | 2 |
 | MPL-2.0 | 0 | 1 |
 | MIT-0 | 1 | 1 |
 | Apache-2.0 OR BSD-3-Clause | 1 | 1 |
 | Apache-2.0 OR BSD-2-Clause | 1 | 1 |
 | Apache-2.0 AND BSD-2-Clause | 1 | 1 |
 | PSF-2.0 | 1 | 1 |
-| MIT License | 1 | 1 |
 
-La cadena `MIT License` proviene del clasificador de un paquete y no es un
-identificador SPDX canónico. El SBOM la conserva como nombre declarado; no se
-reescribió a `MIT` para no alterar la evidencia.
+La cadena `MIT License` del cierre anterior desapareció con python-jose; los
+SBOM conservan los nombres declarados por cada distribución sin normalizarlos a
+identificadores SPDX canónicos.
 
 ## Validación
 
