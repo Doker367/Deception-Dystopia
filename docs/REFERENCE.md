@@ -776,6 +776,7 @@ lsof -nP -iTCP:5601 -sTCP:LISTEN
 - [Orquestador de honeypots por celda](HONEYPOT-ORCHESTRATION.md)
 - [Bundle offline y locks](OFFLINE-BUNDLE.md)
 - [SBOM](SBOM.md)
+- [TLS y reverse proxy de Kibana](../deploy/tls-proxy/README.md)
 - [Compatibilidad con T-Pot](TPOT-COMPATIBILITY.md)
 - [Seguridad y operaciones](SEGURIDAD-Y-OPS.md)
 - [Procedencia de dependencias](DEPENDENCY-PROVENANCE.md)

@@ -1,0 +1,58 @@
+# Dystopia TLS edge. Install the reverse-proxy leaf cert/key and the Elastic
+# CA at the absolute paths below before starting Caddy. Both sites are TLS-only
+# and bind to loopback unless an operator deliberately changes the bind.
+{
+	auto_https disable_redirects
+}
+
+https://kibana.mgmt.example.invalid:8443 {
+	bind 127.0.0.1
+	tls /etc/dystopia/tls-proxy/certs/reverse-proxy.crt /etc/dystopia/tls-proxy/certs/reverse-proxy.key
+	@notManagement not remote_ip 127.0.0.1 ::1
+	respond @notManagement "Forbidden" 403
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		Permissions-Policy "camera=(), geolocation=(), microphone=()"
+	}
+	@deception path /api/deception /api/deception/*
+	respond @deception "Not Found" 404
+	reverse_proxy https://127.0.0.1:5601 {
+		transport http {
+			tls
+			tls_trust_pool file /etc/dystopia/elastic/certs/ca.crt
+			tls_server_name localhost
+		}
+	}
+}
+
+# Optional control-plane endpoint. Keep local-only unless the management
+# network and firewall have been explicitly approved. This is not the public
+# analytics endpoint and never forwards /api/deception/*.
+https://control.mgmt.example.invalid:9443 {
+	bind 127.0.0.1
+	tls /etc/dystopia/tls-proxy/certs/reverse-proxy.crt /etc/dystopia/tls-proxy/certs/reverse-proxy.key
+	@notManagement not remote_ip 127.0.0.1 ::1
+	respond @notManagement "Forbidden" 403
+	log {
+		output discard
+	}
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		Permissions-Policy "camera=(), geolocation=(), microphone=()"
+		Cache-Control "no-store, private"
+		Pragma "no-cache"
+	}
+	@deception path /api/deception /api/deception/*
+	respond @deception "Not Found" 404
+	reverse_proxy 127.0.0.1:8082 {
+		header_up -X-Forwarded-For
+		header_up -X-Real-IP
+		header_up -Forwarded
+	}
+}

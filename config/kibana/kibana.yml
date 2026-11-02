@@ -18,8 +18,10 @@ server:
   name: "dystopia-kibana"
   port: 5601
   publicBaseUrl: ${KIBANA_PUBLIC_BASE_URL}
-  # Para exponer vía HTTPS en un reverse proxy de gestión, descomentar y
-  # apuntar a pem generados por deploy/elastic/scripts/generate-certs.sh:
+  # TLS también en el salto local entre el proxy y Kibana. El certificado y la
+  # clave los crea deploy/elastic/scripts/generate-certs.sh; no se versionan.
+  # TLS queda como cambio objetivo del despliegue Linux; en el laboratorio
+  # canónico actual se mantiene HTTP para no romper el import y CI.
   # ssl:
   #   enabled: true
   #   certificate: /usr/share/kibana/config/certs/kibana.crt
