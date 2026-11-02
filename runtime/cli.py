@@ -70,8 +70,55 @@ def main(argv=None):
     honeypots.add_argument("--inventory", type=Path, default=HONEYPOT_INVENTORY)
     honeypots.add_argument("--profile", type=Path, default=HONEYPOT_PROFILE)
     honeypots.add_argument("--output", type=Path)
+    cells = sub.add_parser("cells", help="offline cell admission contracts")
+    cell_sub = cells.add_subparsers(dest="cell_action", required=True)
+    gate = cell_sub.add_parser("gate", help="evaluate cell verification evidence without effects")
+    gate.add_argument("--cell", type=int, required=True)
+    gate.add_argument("--policy", type=Path, required=True)
+    gate.add_argument("--artifacts", type=Path)
     args = p.parse_args(argv)
-    os.umask(0o077)
+    # The offline gate is read-only; do not even change process umask on that path.
+    if args.command != "cells":
+        os.umask(0o077)
+    if args.command == "cells":
+        from runtime.cell_gate import (
+            REQUIRED_ARTIFACTS, CellGateContext, evaluate_cell_gate,
+        )
+        from runtime.isolation.containers import ContainerCellPolicy
+        from runtime.isolation.policy import CellPolicy
+
+        def unique_object(pairs):
+            document = {}
+            for key, value in pairs:
+                if key in document:
+                    raise ValueError("duplicate JSON key")
+                document[key] = value
+            return document
+
+        try:
+            raw = args.policy.read_bytes()
+            if len(raw) > 16384:
+                raise ValueError("policy exceeds 16 KiB")
+            document = json.loads(raw, object_pairs_hook=unique_object)
+            if type(document) is not dict:
+                raise ValueError("policy object required")
+            policy = (ContainerCellPolicy.from_mapping(document)
+                      if document.get("workload") == "container"
+                      else CellPolicy.from_mapping(document))
+            result = evaluate_cell_gate(
+                policy, CellGateContext(cell=args.cell), artifacts_path=args.artifacts,
+            )
+            payload = result.as_dict()
+        except (OSError, ValueError, TypeError) as exc:
+            payload = {
+                "activation_allowed": False,
+                "blocking_reasons": [f"policy unavailable or invalid: {exc}"],
+                "containment_verified": False,
+                "detail": "activation blocked; validated cell policy is required",
+                "required_artifacts": list(REQUIRED_ARTIFACTS),
+            }
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0 if payload["activation_allowed"] else 2
     if args.command == "bootstrap-admin":
         first = getpass.getpass("Contraseña única del primer administrador: ")
         if first != getpass.getpass("Repetir contraseña: "):
