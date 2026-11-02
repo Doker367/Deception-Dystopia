@@ -25,10 +25,11 @@ ni aparece como upstream.
 
 El TLS de entrada es obligatorio: las plantillas solo crean listeners `https`
 o `ssl` y no ofrecen listener HTTP. Kibana también usa TLS en el salto local
-proxy→Kibana, validado contra la CA de Elastic. `config/kibana/kibana.yml` ya
-activa ese certificado generado por
+proxy→Kibana, validado contra la CA de Elastic. `config/kibana/kibana.yml` deja TLS preparado para el despliegue Linux, cuando el
+proxy y Kibana se muevan a HTTPS. En el laboratorio canónico actual el
+fake `KIBANA_PUBLIC_BASE_URL` sigue apuntando a HTTP para no romper el import.
 `deploy/elastic/scripts/generate-certs.sh`; el `.env` del despliegue debe fijar
-`KIBANA_PUBLIC_BASE_URL` al URL HTTPS del proxy, por ejemplo
+`KIBANA_PUBLIC_BASE_URL` al URL HTTPS del proxy cuando se habilita TLS, por ejemplo
 `https://kibana.mgmt.example.invalid:8443`.
 
 Para certificados de entrada de laboratorio/gestión (la clave de CA queda en

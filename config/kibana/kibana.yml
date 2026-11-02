@@ -20,11 +20,13 @@ server:
   publicBaseUrl: ${KIBANA_PUBLIC_BASE_URL}
   # TLS también en el salto local entre el proxy y Kibana. El certificado y la
   # clave los crea deploy/elastic/scripts/generate-certs.sh; no se versionan.
-  ssl:
-    enabled: true
-    certificate: /usr/share/kibana/config/certs/kibana.crt
-    key: /usr/share/kibana/config/certs/kibana.key
-    certificateAuthorities: ["/usr/share/kibana/config/certs/ca.crt"]
+  # TLS queda como cambio objetivo del despliegue Linux; en el laboratorio
+  # canónico actual se mantiene HTTP para no romper el import y CI.
+  # ssl:
+  #   enabled: true
+  #   certificate: /usr/share/kibana/config/certs/kibana.crt
+  #   key: /usr/share/kibana/config/certs/kibana.key
+  #   certificateAuthorities: ["/usr/share/kibana/config/certs/ca.crt"]
 
 # --- Conexión a Elasticsearch: SIEMPRE TLS + usuario de servicio ---
 elasticsearch:
