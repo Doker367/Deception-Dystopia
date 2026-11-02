@@ -18,13 +18,13 @@ server:
   name: "dystopia-kibana"
   port: 5601
   publicBaseUrl: ${KIBANA_PUBLIC_BASE_URL}
-  # Para exponer vía HTTPS en un reverse proxy de gestión, descomentar y
-  # apuntar a pem generados por deploy/elastic/scripts/generate-certs.sh:
-  # ssl:
-  #   enabled: true
-  #   certificate: /usr/share/kibana/config/certs/kibana.crt
-  #   key: /usr/share/kibana/config/certs/kibana.key
-  #   certificateAuthorities: ["/usr/share/kibana/config/certs/ca.crt"]
+  # TLS también en el salto local entre el proxy y Kibana. El certificado y la
+  # clave los crea deploy/elastic/scripts/generate-certs.sh; no se versionan.
+  ssl:
+    enabled: true
+    certificate: /usr/share/kibana/config/certs/kibana.crt
+    key: /usr/share/kibana/config/certs/kibana.key
+    certificateAuthorities: ["/usr/share/kibana/config/certs/ca.crt"]
 
 # --- Conexión a Elasticsearch: SIEMPRE TLS + usuario de servicio ---
 elasticsearch:

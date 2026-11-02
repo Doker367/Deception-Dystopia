@@ -103,6 +103,7 @@ config/deception/vms.json
 data/
 deploy/elastic/api-keys/
 deploy/elastic/certs/
+deploy/tls-proxy/certs/
 *.db
 *.db-wal
 *.db-shm
