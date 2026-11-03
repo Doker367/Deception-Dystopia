@@ -14,8 +14,12 @@ def snapshot(path, role):
         if role == "sensor":
             count, used, oldest = db.execute("SELECT COUNT(*),COALESCE(SUM(length(payload)),0),MIN(queued) FROM queue").fetchone()
             quarantined = db.execute("SELECT COUNT(*) FROM queue WHERE quarantined=1").fetchone()[0]
+            pending = count - quarantined
             dropped = db.execute("SELECT value FROM counters WHERE name='discarded'").fetchone()
-            return {"queued": count, "payload_bytes": used, "quarantined": quarantined,
+            dead_lettered = db.execute("SELECT value FROM counters WHERE name='dead_lettered'").fetchone()
+            return {"queued": count, "pending": pending, "live": pending,
+                    "payload_bytes": used, "quarantined": quarantined,
+                    "dead_lettered_persisted": dead_lettered[0] if dead_lettered else 0,
                     "oldest_seconds": max(0,time.time()-oldest) if oldest else 0,
                     "discarded_persisted": dropped[0] if dropped else 0,
                     "connection_state": "see running sensor metrics"}

@@ -14,6 +14,7 @@ import stat
 import time
 
 from runtime.contracts import encode
+from runtime.localfiles import open_private_parent
 
 
 class CapacityError(RuntimeError):
@@ -23,7 +24,11 @@ class CapacityError(RuntimeError):
 @contextmanager
 def database(path, max_bytes=256 * 1024 * 1024, read_group_gid=None):
     path = Path(path)
-    # Parent must be provisioned, owned by the service and inaccessible to decoys.
+    # Parent must be provisioned, owned by the service/root and inaccessible to
+    # decoys.  Verify it before creating the leaf; tmp_path-style 0700 parents
+    # and the deployed /var/lib/dystopia tree both satisfy this invariant.
+    parent_fd = open_private_parent(path)
+    os.close(parent_fd)
     fd = os.open(path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
     try:
         info = os.fstat(fd)
@@ -36,6 +41,8 @@ def database(path, max_bytes=256 * 1024 * 1024, read_group_gid=None):
                       and stat.S_IMODE(info.st_mode) == 0o640)
         if read_group_gid is not None and info.st_uid != os.geteuid():
             raise PermissionError("event database owner must be the ingest service")
+        if read_group_gid is None and info.st_uid not in {0, os.geteuid()}:
+            raise PermissionError("database owner must be root or the service uid")
         if not (private or query_read):
             raise PermissionError("database permissions differ from the configured private policy")
     finally:

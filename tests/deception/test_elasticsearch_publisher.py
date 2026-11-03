@@ -50,6 +50,7 @@ class FakeTransport:
     def __init__(self, *responses):
         self.responses = list(responses)
         self.calls = []
+        self.credentials_changed = False
 
     def index(self, event_id, document, timeout):
         self.calls.append({"id": event_id, "document": document, "timeout": timeout})
@@ -57,6 +58,9 @@ class FakeTransport:
         if isinstance(response, BaseException):
             raise response
         return response
+
+    def reload_api_key(self):
+        return self.credentials_changed
 
 
 def test_disabled_by_default_and_never_confirms_delivery():
@@ -142,6 +146,120 @@ def test_permanent_rejection_is_kept_and_flagged(tmp_path):
     assert publisher.flush() == 0
     assert publisher.publish(document()) is False
     assert len(transport.calls) == 1
+
+
+def test_permanent_rows_do_not_consume_the_live_queue_budget(tmp_path):
+    transport = FakeTransport(400, 201)
+    publisher = ElasticPublisher(
+        config(tmp_path, max_events=1, dead_letter_events=4),
+        transport=transport, sleep=lambda _: None,
+    )
+    assert publisher.publish(document("permanent-one")) is False
+    health = publisher.health()
+    assert health["live"] == 0
+    assert health["permanent"] == 1
+    assert health["queued"] == 1
+
+    # The single live slot is free even though a permanent row is retained.
+    assert publisher.publish(document("healthy-two")) is True
+    health = publisher.health()
+    assert health["live"] == 0
+    assert health["permanent"] == 1
+    assert health["queued"] == 1
+    assert health["operator_action_required"] is True
+
+
+def test_dead_letter_budget_evicts_oldest_and_counts_the_loss(tmp_path):
+    transport = FakeTransport(400, 400, 201)
+    publisher = ElasticPublisher(
+        config(tmp_path, max_events=4, dead_letter_events=1),
+        transport=transport, sleep=lambda _: None,
+    )
+    assert publisher.publish(document("oldest")) is False
+    assert publisher.health()["permanent"] == 1
+    assert publisher.publish(document("newest")) is False
+    health = publisher.health()
+    assert health["permanent"] == 1
+    assert health["dead_letter_evicted_since_start"] == 1
+    assert health["dead_letter_capacity"] == 1
+    # Live data still flows after the bounded dead-letter eviction.
+    assert publisher.publish(document("healthy")) is True
+    assert publisher.health()["live"] == 0
+
+
+def test_auth_failure_is_retryable_and_does_not_consume_permanent_budget(tmp_path):
+    transport = FakeTransport(401, 401, 401)
+    publisher = ElasticPublisher(
+        config(tmp_path, max_retries=0), transport=transport, sleep=lambda _: None,
+    )
+    for name in ("one", "two", "three"):
+        assert publisher.enqueue(document(name)) is True
+    assert publisher.flush() == 0
+    # A flush pauses on the first 401 instead of replaying the same bad key.
+    assert len(transport.calls) == 1
+    health = publisher.health()
+    assert health["permanent"] == 0
+    assert health["auth_blocked"] == 1
+    assert health["live"] == 3
+    assert health["operator_action_required"] is True
+
+
+def test_auth_failure_retries_after_controlled_key_rotation(tmp_path):
+    transport = FakeTransport(401)
+    publisher = ElasticPublisher(
+        config(tmp_path, max_retries=2), transport=transport, sleep=lambda _: None,
+    )
+    assert publisher.enqueue(document()) is True
+    assert publisher.flush() == 0
+    assert publisher.health()["auth_blocked"] == 1
+    assert publisher.health()["permanent"] == 0
+
+    # Operator rotates the key file: the next attempt sees a changed key and
+    # is allowed to retry without a process restart or a permanent entry.
+    transport.responses = [401, 201]
+    transport.credentials_changed = True
+    assert publisher.flush() == 1
+    health = publisher.health()
+    assert health["auth_blocked"] == 0
+    assert health["permanent"] == 0
+    assert health["queued"] == 0
+    assert health["credential_reloads_since_start"] == 1
+
+
+def test_transport_reloads_a_rotated_api_key(tmp_path):
+    key_file = tmp_path / "elastic-key"
+    key_file.write_text("synthetic-key-one", encoding="ascii")
+    key_file.chmod(0o600)
+    cfg = config(url="https://192.0.2.10:9200", api_key_file=key_file)
+    transport = _HttpTransport(cfg)
+    assert transport._api_key == "synthetic-key-one"
+    assert transport.reload_api_key() is False
+    key_file.write_text("synthetic-key-two", encoding="ascii")
+    key_file.chmod(0o600)
+    assert transport.reload_api_key() is True
+    assert transport._api_key == "synthetic-key-two"
+
+
+def test_dead_letter_can_be_exported_and_purged(tmp_path):
+    publisher = ElasticPublisher(
+        config(tmp_path, max_events=4, dead_letter_events=4),
+        transport=FakeTransport(400, 400), sleep=lambda _: None,
+    )
+    assert publisher.publish(document("rejected-one")) is False
+    assert publisher.publish(document("rejected-two")) is False
+    assert publisher.health()["permanent"] == 2
+
+    output = tmp_path / "dead-letter.jsonl"
+    assert publisher.export_dead_letter(output) == 2
+    lines = output.read_text().splitlines()
+    assert len(lines) == 2
+    assert publisher.health()["permanent"] == 2  # export is non-destructive
+
+    assert publisher.purge_dead_letter() == 2
+    health = publisher.health()
+    assert health["permanent"] == 0
+    assert health["queued"] == 0
+    assert health["operator_action_required"] is False
 
 
 def test_409_create_conflict_is_deduplicated_not_counted_as_2xx(tmp_path):

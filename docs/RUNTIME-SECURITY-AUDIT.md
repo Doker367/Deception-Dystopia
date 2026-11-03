@@ -30,7 +30,7 @@ Esta es una revisión acotada, no una auditoría exhaustiva del repositorio ni u
 | RT-03 | Restore no exige el conjunto completo ni es todo-o-nada | Alta | E1 + E2 |
 | RT-04 | La evidencia del gate es rejugable y no tiene frescura ni identidad de host | Alta antes de activar | E1 + E2 (clave de prueba) |
 | RT-05 | Los artefactos del backup nacen con permisos de umask y se endurecen después | Media (confidencialidad local) | E1 + E2 |
-| RT-06 | La confianza en el directorio padre de bases y archivos privados no se verifica | Media condicionada al despliegue | E1 |
+| RT-06 | La confianza en el directorio padre de bases y archivos privados no se verifica | Media condicionada al despliegue | E1 + E2 (tests de padres) |
 | RT-07 | El spool del sensor puede quedar bloqueado por lotes en cuarentena | Media (disponibilidad) | E1 + E2 (suite) |
 | RT-08 | Fallos permanentes de Elasticsearch consumen la cola y detienen el exportador | Media (disponibilidad) | E1 + E2 (suite) |
 | RT-09 | El hash del registro crudo publicado es un oráculo de verificación de credenciales | Baja | E1 + E2 |
@@ -38,10 +38,10 @@ Esta es una revisión acotada, no una auditoría exhaustiva del repositorio ni u
 | RV-01 | SHA-256 del backup no autentica contra un escritor malicioso | Decisión de custodia | E1 |
 | RV-02 | `no-new-privileges` no es una invariante universal de Compose | Endurecimiento | E1 + E2 (render) |
 
-**Estado de remediación:** la rama `wave/security-fixes` cierra RT-01 a RT-05 en
-el contrato offline (código, docs y tests); el detalle y los límites E3 están en
-la sección 7. La rama `wave/compose-hardening` cierra RT-09, RT-10 y RV-02
-(sección 9). RT-06, RT-07, RT-08 y RV-01 siguen abiertos.
+**Estado de remediación:** la rama integrada `feature/runtime-wave` reúne
+`wave/security-fixes` (RT-01 a RT-05), `wave/runtime-hardening` (RT-06 a RT-08)
+y `wave/compose-hardening` (RT-09, RT-10 y RV-02), todos a nivel de contrato
+offline. RV-01 (autenticidad del backup) sigue abierto.
 
 ## 1. Fronteras de confianza y flujo de datos
 
@@ -97,7 +97,7 @@ la sección 7. La rama `wave/compose-hardening` cierra RT-09, RT-10 y RV-02
 | Elasticsearch/Kibana | Conservar y mostrar telemetría | `dynamic=false` evita indexar campos desconocidos, pero no elimina datos de `_source`. |
 | Helper de aislamiento | Ejecutar una transacción `nft` cerrada como root local | No acepta argv, URI ni política arbitraria del llamador. Aceptar la transacción no prueba aislamiento. |
 | Backup/restore | Copiar artefactos declarados y restaurar en rutas derivadas de código | El almacenamiento de backup es una frontera de confianza propia, no un archivo inerte. |
-| Directorios de estado | Guardar bases, tokens, colas y TLS | Deben ser propiedad del servicio/root y no escribibles por otros. El código **asume** esto; no lo verifica en todos los caminos (RT-06). |
+| Directorios de estado | Guardar bases, tokens, colas y TLS | Deben ser propiedad del servicio/root y no escribibles por otros. Desde RT-06 el código lo verifica (padre inmediato estricto y cadena de ancestros en restore); la prueba E3 debe confirmar los UID/GID reales. |
 | Verificador/gate | Validar un paquete de evidencia y su firma | En este commit el trust store está vacío. No observa el host ni activa nada. |
 
 ### Datos sensibles que realmente cruzan fronteras
@@ -262,7 +262,9 @@ Crear cada archivo con `os.open(..., O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)` (o f
 ### RT-06 — La confianza en el directorio padre de bases y archivos privados es un supuesto no verificado
 
 **Prioridad:** media, condicionada a que el despliegue no garantice los permisos del padre.  
-**Estado:** confirmado estáticamente (E1); requiere verificación de permisos en Linux (E3).
+**Estado:** confirmado estáticamente (E1); **remediado en contrato offline** en
+`wave/runtime-hardening` (E2). La verificación de UID/GID reales del despliegue
+sigue siendo E3.
 
 **Evidencia**
 
@@ -281,10 +283,24 @@ El restore de backup tiene una variante del mismo supuesto: comprueba `target.pa
 
 Recorrer los ancestros con descriptores retenidos y `O_NOFOLLOW`, exigiendo propietario root/servicio y ausencia de escritura por grupo/otros (se puede reutilizar el patrón de `runtime/isolation/backend.py:51-74`). Alternativamente, `fstat` del padre y comparación explícita de UID/GID/modo antes de abrir la base. Añadir una prueba con un padre sintético `0777` y una base sustituida que deba fallar cerrada.
 
+**Remediación offline (wave/runtime-hardening)**
+
+- `runtime.localfiles.open_trusted_directory` abre el padre con `O_DIRECTORY |
+  O_NOFOLLOW`, rechaza symlinks, exige propietario root/UID del servicio y
+  prohíbe escritura por grupo/otros. `open_private_parent` lo aplica a
+  `database()`, `read_private`, `create_private` y `replace_private`;
+  `verify_ancestor_chain` añade la cadena de ancestros (con admisión acotada de
+  raíces sticky como `/tmp`) y se invoca en el preflight de restore.
+- `database()` verifica además que el propietario del leaf privado sea root o
+  el UID efectivo, no solo en la variante de lectura por grupo.
+- Pruebas: padre `0777/0770/0772`, padre symlink, padre de ficheros privados
+  inseguro, UID esperado distinto y `--state-root` writable/symlink en restore.
+
 ### RT-07 — El spool del sensor puede quedar permanentemente bloqueado por lotes en cuarentena
 
 **Prioridad:** media (disponibilidad; no confidencialidad).  
-**Estado:** confirmado estáticamente y por las suites offline existentes (E1 + E2).
+**Estado:** confirmado estáticamente y por las suites offline existentes (E1 + E2);
+**remediado en contrato offline** en `wave/runtime-hardening` (E2).
 
 **Evidencia**
 
@@ -301,10 +317,26 @@ Un cambio de asignación de dispositivo, una rotación de credenciales o una rev
 
 Separar un presupuesto acotado para cuarentena (o un archivo de dead-letter) del presupuesto de eventos pendientes; exponer un comando de operador para drenar/exportar y borrar cuarentena; alertar con `operator_action_required`. Añadir una prueba que llene la cuarentena y verifique que los eventos válidos posteriores siguen teniendo un camino acotado, o que el sensor se detiene de forma explícita y documentada.
 
+**Remediación offline (wave/runtime-hardening)**
+
+- `Spool` cuenta para el presupuesto vivo solo `quarantined=0`. La cuarentena
+  tiene su propio límite (`max_quarantine_events`/`max_quarantine_bytes`,
+  por defecto 20 %/12,5 % del spool) y, al desbordarse, aplica dead-letter
+  explícito del lote más antiguo con contador persistido `dead_lettered`.
+- `health` separa `pending` (vivo) de `quarantined`, expone capacidades y
+  mantiene `operator_action_required` cuando hay cuarentena.
+- Operador: `sensor-quarantine --output` (export no destructivo), `--drain`
+  (export durable y borrado de lo exportado) y `--purge`; también métodos
+  `export_quarantine`, `drain_quarantine` y `purge_quarantine`.
+- Pruebas de presión: cuarentena llena con el presupuesto vivo libre, nuevos
+  eventos aceptados y entregados, dead-letter del más antiguo y migración de
+  un spool con el esquema previo.
+
 ### RT-08 — Fallos permanentes de Elasticsearch consumen la cola acotada y detienen el exportador
 
 **Prioridad:** media (disponibilidad analítica).  
-**Estado:** confirmado estáticamente y por las suites offline existentes (E1 + E2).
+**Estado:** confirmado estáticamente y por las suites offline existentes (E1 + E2);
+**remediado en contrato offline** en `wave/runtime-hardening` (E2).
 
 **Evidencia**
 
@@ -320,6 +352,26 @@ Tras suficientes rechazos permanentes, la cola se llena y el exportador deja de 
 **Corrección mínima**
 
 Separar un área de dead-letter/permanentes que no consuma el presupuesto de eventos vivos; reintentar `401/403` tras una recarga controlada de credenciales; añadir un comando de drenaje/exportación y una alerta cuando `permanent > 0`. Añadir una prueba de cola llena por permanentes que demuestre que los eventos nuevos siguen fluyendo o que el sistema se detiene con una acción de operador explícita.
+
+**Remediación offline (wave/runtime-hardening)**
+
+- `enqueue` cuenta para el presupuesto vivo solo `permanent=0`: una cola llena
+  de rechazos permanentes ya no detiene el exportador.
+- Los permanentes tienen un presupuesto acotado propio
+  (`dead_letter_events`/`dead_letter_bytes`); al desbordarse se descarta el más
+  antiguo y se incrementa `dead_letter_evicted` con alerta explícita.
+- `401/403` se clasifican como autenticación, no como defecto permanente:
+  `_HttpTransport.reload_api_key()` relee el fichero privado y solo permite un
+  reintento si el valor cambió. Una clave sin cambios marca `auth_blocked`,
+  mantiene la fila reintentable y pausa el flush para no repetir el mismo
+  error sobre cada fila.
+- Operador: `export_dead_letter` y `purge_dead_letter`; `health` expone
+  `live`, `permanent`, `auth_blocked`, `dead_letter_evicted_since_start` y
+  `operator_action_required`.
+- Pruebas: permanentes que no consumen el presupuesto vivo, dead-letter
+  acotado, 401 que no se vuelve permanente, reintento tras rotación real del
+  fichero de API key y exportador que sigue avanzando con la cola llena de
+  permanentes.
 
 ### RT-09 — El hash del registro crudo publicado es un oráculo de verificación de credenciales
 
@@ -426,9 +478,9 @@ No se encontró `pickle`, `marshal`, `eval`, `exec` ni carga YAML insegura en el
 | Componente | Límite observado | Riesgo residual |
 |---|---|---|
 | Ingesta | 8 concurrentes, 5 s de cuerpo, 256 KiB, 64 eventos, 120 req/min por sensor, presupuesto de 1024 identidades (`runtime/ingest.py:20-55`). | El límite por sensor es por identidad autenticada; un sensor comprometido solo agota su propio presupuesto. |
-| Spool del sensor | 10 000 eventos / 64 MiB, payload limitado a la mitad del presupuesto (`runtime/sensor.py:56-99`). | La cuarentena consume el mismo presupuesto (RT-07). |
+| Spool del sensor | 10 000 eventos / 64 MiB, payload limitado a la mitad del presupuesto (`runtime/sensor.py`). | Presupuesto vivo separado de la cuarentena acotada y del dead-letter (RT-07). |
 | Event store | 100 000 eventos, 10 000 por sensor, 256 MiB, chequeo de disco libre 2x (`runtime/storage.py:61-107`). | Sin borrado automático; el operador debe archivar. |
-| Cola Elastic | 10 000 eventos / 64 MiB (`elastic_svc.py:83-86,316-325`). | Los permanentes consumen el presupuesto (RT-08). |
+| Cola Elastic | 10 000 eventos / 64 MiB (`elastic_svc.py`), dead-letter 2 000 / 8 MiB por defecto. | Los permanentes no consumen el presupuesto vivo; el dead-letter está acotado (RT-08). |
 | Backup | 64 MiB por archivo, 8 GiB por base (`runtime/backup.py:45-46`). | El backup completo puede ser grande; no hay cuota del directorio de salida. |
 | Gate | 64 KiB manifiesto, 16 MiB por artefacto (`runtime/cell_gate.py:24-25`). | Correcto para evidencia; la frescura no está cubierta (RT-04). |
 | Honeypots | Memoria, CPU, PIDs, nofile, tmpfs y rotación de logs de 10m x3 (`runtime/honeypots.py:548-610`). | No hay cuota de disco para los volúmenes de log escribibles; es una obligación del operador (E3). |
@@ -484,6 +536,23 @@ Scripts efímeros fuera del repositorio, con directorios temporales y fixtures i
 - No demuestran que un atacante externo pueda ejecutar algo: los hallazgos de path/backup requieren acceso al checkout, al almacenamiento o al host según el caso.
 - No sustituyen un drill de restore ni una prueba de agotamiento de recursos.
 
+### Cierre offline de RT-06/07/08 y frontera E3
+
+- **RT-06 (E2 cerrado):** los tests usan padres sintéticos `0777/0770/0772`,
+  symlinks, ficheros privados y un `--state-root` writable. **E3 pendiente:**
+  comprobar propietario/modo reales de la cadena `/var/lib/dystopia`, de
+  `/etc/dystopia`, de sockets/unidades systemd y de un `--state-root` en un
+  filesystem real, no solo `tmp_path`.
+- **RT-07 (E2 cerrado):** se llenó la cuarentena con el presupuesto vivo libre,
+  se forzó dead-letter y se verificó que los eventos válidos posteriores se
+  aceptan y entregan. **E3 pendiente:** presión sostenida bajo systemd,
+  rotación/revocación real de credenciales del sensor y un `--drain` sobre el
+  spool del servicio.
+- **RT-08 (E2 cerrado):** transportes inyectados cubren 400/401/403, cola llena
+  por permanentes, dead-letter y recarga de API key desde fichero. **E3
+  pendiente:** Elasticsearch real, rol writer mínimo, `401/403` reales tras
+  rotar la API key en el clúster y exportación del dead-letter por el operador.
+
 ### Validación obligatoriamente Linux, en laboratorio desechable y autorizado (E3)
 
 1. **Red y kernel:** aplicar las reglas generadas en Ubuntu 24.04; comprobar ruleset cargado, hooks/prioridades, conntrack por celda y baseline positivo. Probar IPv4/IPv6, spoofing MAC/IP, host, gestión, otras celdas, Internet simulada, fragmentos, VLAN, ARP/ND/RA/DHCP, tráfico inverso nuevo y sesiones existentes durante cuarentena.
@@ -533,9 +602,9 @@ Scripts efímeros fuera del repositorio, con directorios temporales y fixtures i
    - [ ] Prueba con `umask 022` y directorio preexistente `0755`: ningún archivo intermedio es legible por grupo/otros.
 
 6. **RT-06: confianza explícita en padres.**
-   - [ ] Todo padre de base/archivo privado es propiedad del servicio/root y no escribible por grupo/otros; se verifica con descriptores retenidos.
-   - [ ] El restore valida la cadena completa de ancestros y rechaza `--state-root` symlink o ancestro sustituido.
-   - [ ] Prueba con padre `0777` y base sustituida que deba fallar cerrada.
+   - [x] Todo padre de base/archivo privado es propiedad del servicio/root y no escribible por grupo/otros; se verifica con descriptores retenidos.
+   - [x] El restore valida la cadena completa de ancestros y rechaza `--state-root` symlink o ancestro sustituido.
+   - [x] Prueba con padre `0777`/symlink que falla cerrada antes de crear la base (E2); la sustitución real entre UIDs se confirma en E3.
 
 7. **RV-02: NNP y capabilities.**
    - [x] Todo servicio renderizado incluye `no-new-privileges:true`, sin excepción en el contrato offline.
@@ -544,10 +613,11 @@ Scripts efímeros fuera del repositorio, con directorios temporales y fixtures i
    - [x] Pruebas que rechacen NNP ausente, opciones que lo desactivan y `cap_add` no permitido.
 
 8. **RT-07/RT-08: presupuestos de cuarentena y dead-letter.**
-   - [ ] La cuarentena del spool y los permanentes de Elastic no consumen el presupuesto de eventos vivos, o existe un drenaje de operador documentado.
-   - [ ] `401/403` de Elastic se reintentan tras recarga controlada de credenciales; el resto va a dead-letter exportable.
-   - [ ] Alertas cuando `quarantined > 0` o `permanent > 0`.
-   - [ ] Pruebas de cola llena que demuestren flujo acotado o parada explícita con acción de operador.
+   - [x] La cuarentena del spool y los permanentes de Elastic no consumen el presupuesto de eventos vivos, y existe drenaje/exportación de operador.
+   - [x] `401/403` de Elastic se reintentan tras recarga controlada de credenciales; el resto va a dead-letter exportable.
+   - [x] Alertas (`operator_action_required`, logs) cuando `quarantined > 0` o `permanent/auth_blocked > 0`.
+   - [x] Pruebas de cola llena que demuestran flujo acotado o parada explícita con acción de operador.
+   - [ ] Presión sostenida contra el servicio real y Elasticsearch real; queda para E3 (sección 5.10).
 
 9. **RT-09: fingerprint sin secretos.**
    - [x] La referencia se calcula con HMAC-SHA-256 y clave provisionada fuera del documento (archivo privado).
@@ -574,7 +644,7 @@ Scripts efímeros fuera del repositorio, con directorios temporales y fixtures i
 - [ ] Ningún backup se publica como “sin secretos” mientras contenga `server.key` o estado de credenciales.
 - [ ] Todas las pruebas P0/P1 anteriores pasan offline; las E3 se ejecutan en un laboratorio Linux desechable y autorizado, con resultados registrados sin secretos.
 
-## 7. Estado de remediación (rama `wave/security-fixes`)
+## 7. Estado de remediación (ramas `wave/security-fixes` y `wave/runtime-hardening`)
 
 **Fecha:** 2026-11-02. **Base:** `feature/runtime-wave`. **Entorno de prueba:**
 macOS arm64, Python 3.12.14, sin red, sin Docker/KVM/systemd/nftables y sin
@@ -587,12 +657,14 @@ datos reales. Nada se activó: `TRUSTED_VERIFIER_KEYS` sigue vacío y
 | RT-02 | **Cerrado** | `load_inventory`, `render_cell` y `assert_safe` resuelven el contexto, abren el leaf con `O_NOFOLLOW`, exigen archivo regular no symlink y comprueban que el resuelto queda dentro del contexto revisado. | Tests con symlink absoluto, relativo, cadena y `/etc/passwd`; `assert_safe` rechaza binds fuera del contexto y symlinks. | Validación Compose real y Docker quedan para E3. |
 | RT-03 | **Cerrado** | Restore exige conjunto exacto, `artifact_count`, esquema por entrada, estados válidos y todos los `required`; preflight de destinos/padres; staging privado; publicación sin overwrite y rollback. | Tests de required `missing`, conjunto incompleto, `artifact_count` erróneo, estado inválido, colisión tardía y fallo de publicación con cero archivos finales. | No se promete atomicidad entre filesystems distintos; el caso normal queda todo-o-nada con rollback. |
 | RT-04 | **Cerrado en contrato; E3 pendiente** | Manifiesto con `issued_at`, `expires_at`, `host_id`, `challenge`; contexto con host, boot, ahora, challenge y skew; ventana máxima de una hora; rechazo de replay en otro boot, expirado, futuro, host/challenge incorrectos. | Tests con clave Ed25519 efímera fijada solo en el proceso de prueba; el trust store real sigue vacío. | Falta el verificador Linux independiente y la custodia/fijación de su clave; no se ejecutó en Linux. |
-| RT-05 | **Cerrado** | Archivos `0600` y directorios `0700` desde el nacimiento; `umask 077` durante toda la exportación; directorio de salida endurecido antes de la primera escritura. | Tests con `umask 022` y directorio preexistente `0755`: modos observados en el momento del digest y del primer copiado. | La verificación de propietario/ancestros reales sigue siendo E3 (RT-06). |
+| RT-05 | **Cerrado** | Archivos `0600` y directorios `0700` desde el nacimiento; `umask 077` durante toda la exportación; directorio de salida endurecido antes de la primera escritura. | Tests con `umask 022` y directorio preexistente `0755`: modos observados en el momento del digest y del primer copiado. | RT-06 cubre el contrato de padres/ancestros; los UID/GID reales se confirman en E3. |
+| RT-06 | **Cerrado en contrato offline; E3 pendiente** | Helper único `open_trusted_directory`/`open_private_parent` (padre real, `O_NOFOLLOW`, propietario root/servicio, sin escritura grupo/otros) aplicado a `database()`, `read_private`, `create_private`, `replace_private` y al preflight de restore (`verify_ancestor_chain`). `database()` exige además propietario root/UID efectivo. | `tests/hardening/test_private_parents.py` (padres `0777/0770/0772`, symlink, ficheros privados, UID esperado, ancestros) y `test_restore_rejects_a_writable_or_symlinked_state_root`. | Los UID/GID y la cadena real de `/var/lib/dystopia` se confirman en Linux (E3, sección 5.6); raíces sticky como `/tmp` se admiten solo como ancestros. |
+| RT-07 | **Cerrado** | Presupuesto vivo separado de cuarentena; cuarentena acotada con dead-letter del más antiguo y contador persistido; `health` separa `pending`/`quarantined`; operador `sensor-quarantine --output/--drain/--purge`. | `tests/hardening/test_spool_quarantine.py`: presión con presupuesto vivo libre, nuevos eventos aceptados/entregados, evicción dead-letter, export/drain/purge y migración de esquema previo. | El drenaje real del sensor systemd y la rotación de credenciales en laboratorio quedan para E3; no se probó un dispositivo físico. |
+| RT-08 | **Cerrado** | Presupuesto vivo excluye `permanent=1`; dead-letter acotado con evicción contada; `401/403` son autenticación reintentable con recarga de API key solo si cambia; `flush` se pausa en auth en vez de repetir; `export_dead_letter`/`purge_dead_letter`. | `test_permanent_rows_do_not_consume_the_live_queue_budget`, `test_dead_letter_budget_evicts_oldest_and_counts_the_loss`, `test_auth_failure_retries_after_controlled_key_rotation`, `test_transport_reloads_a_rotated_api_key`, `test_dead_letter_can_be_exported_and_purged`, `test_permanent_rejections_do_not_stop_the_exporter`. | Elasticsearch real, rotación de API key en clúster y permisos del rol writer quedan para E3 (sección 5.8); el dead-letter no se reintenta automáticamente. |
 
-RT-01 a RT-05 quedaron cerrados en esa rama. **RT-09, RT-10 y RV-02 se
-cierran en `wave/compose-hardening`** (sección 9). RT-06 (confianza en
-padres), RT-07/RT-08 (presupuestos de cuarentena/cola) y RV-01 (autenticidad
-del backup) siguen abiertos.
+RT-01 a RT-10 y RV-02 quedaron cerrados a nivel de contrato offline en las
+ramas integradas. RV-01 (autenticidad del backup) sigue abierto. Las
+dependencias de kernel, Docker, systemd, TLS y Elasticsearch siguen en E3.
 
 **Suites offline ejecutadas para este cierre** (sin Docker, sin red, sin
 servicios; el test de Compose se omite si falta el plugin):
@@ -600,15 +672,20 @@ servicios; el test de Compose se omite si falta el plugin):
 ```bash
 python3.12 -m pytest -q -p no:cacheprovider \
   tests/hardening/test_backup.py tests/hardening/test_cell_gate.py \
-  tests/hardening/test_honeypots.py \
-  tests/ops-integration/test_backup_runtime_state.py \
-  tests/ops-integration/test_cell_gate_report.py \
-  tests/ops-integration/test_ops_report.py
+  tests/hardening/test_honeypots.py tests/hardening/test_isolation.py \
+  tests/hardening/test_telemetry.py tests/hardening/test_control.py \
+  tests/hardening/test_install.py tests/hardening/test_supply_chain.py \
+  tests/hardening/test_private_parents.py tests/hardening/test_spool_quarantine.py \
+  tests/deception/test_elastic_export.py \
+  tests/deception/test_elasticsearch_publisher.py \
+  tests/deception/test_external_adapters.py
 ```
 
-Resultado: **144 passed**. Estas pruebas no demuestran contención Linux,
-comportamiento de Docker/Compose, TLS real ni permisos de kernel; no
-sustituyen las validaciones E3 de la sección 5.
+Resultado: **282 passed**. La suite completa del repositorio en este mismo
+entorno terminó con **703 passed, 3 skipped, 0 failed**. Estas pruebas no
+demuestran contención Linux, comportamiento de Docker/Compose, TLS real,
+Elasticsearch real ni permisos de kernel; no sustituyen las validaciones E3 de
+la sección 5.
 
 ## 8. Conclusión
 
@@ -619,11 +696,10 @@ no de explotación remota: un backup que se declara sin secretos pero los contie
 una configuración que puede escapar del contexto revisado, un restore que puede
 quedar incompleto o parcial, y una evidencia de gate que no está ligada al host ni
 al momento. En la rama `wave/security-fixes` esos cuatro bloques y RT-05 quedaron
-cerrados **a nivel de contrato offline** (sección 7). La rama
-`wave/compose-hardening` cerró además RT-09 (referencia HMAC sin oráculo),
-RT-10 (imágenes por digest con modo de laboratorio explícito) y RV-02 (NNP
-obligatorio en todo servicio) a nivel de contrato offline (sección 9).
-RT-06, RT-07, RT-08 y RV-01 siguen abiertos.
+cerrados **a nivel de contrato offline** (secciones 7 y 9). RT-06/07/08 se
+cerraron en `wave/runtime-hardening`; RT-09/10 y RV-02 en
+`wave/compose-hardening`. RV-01 sigue abierto y requiere una decisión de
+custodia/autenticación del backup.
 
 Nada de lo anterior autoriza a activar un workload. La regla sigue siendo: **un render, un hash, un mock, un `nft --check` o un test unitario no son evidencia de contención**. La evidencia válida es la del verificador Linux independiente, y todavía no existe en este commit.
 
@@ -644,12 +720,12 @@ reales. Nada se activó: `TRUSTED_VERIFIER_KEYS` sigue vacío,
 servicios; el test de Compose se omite si falta el plugin):
 
 ```bash
-/Users/doker/Deception/.venv-wave/bin/python -m pytest -p no:cacheprovider
-/Users/doker/Deception/.py312/bin/ruff check \
+python3.12 -m pytest -p no:cacheprovider
+ruff check \
   runtime/honeypots.py app/services/deception/integrations/ecs.py \
   tests/hardening/test_honeypots.py tests/deception/test_external_adapters.py \
   tests/conftest.py
-/Users/doker/Deception/.py312/bin/pyright \
+pyright \
   runtime/honeypots.py app/services/deception/integrations/ecs.py
 ```
 

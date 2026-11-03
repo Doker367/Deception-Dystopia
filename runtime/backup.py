@@ -49,6 +49,8 @@ import tempfile
 import time
 from dataclasses import dataclass
 
+from runtime.localfiles import open_trusted_directory, verify_ancestor_chain
+
 SCHEMA = "dystopia.backup/v1"
 RUNTIME_STATE_SCHEMA = "dystopia.backup.runtime-state/v1"
 STATE_ROOT = Path("/var/lib/dystopia")
@@ -748,6 +750,16 @@ def _preflight_target(target):
                                   f"{parent}")
         else:
             missing.add(parent)
+    # The immediate existing ancestor is the trust boundary for the new leaf:
+    # it must be owned by root/the service and never writable by group/other.
+    # The rest of the chain is checked too, admitting sticky shared roots such
+    # as /tmp while still rejecting symlinked or foreign-owned ancestors.
+    nearest = target.parent
+    while not nearest.exists() and not nearest.is_symlink():
+        nearest = nearest.parent
+    descriptor = open_trusted_directory(nearest)
+    os.close(descriptor)
+    verify_ancestor_chain(target.parent)
     return missing
 
 
