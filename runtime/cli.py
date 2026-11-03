@@ -5,6 +5,8 @@ import ipaddress
 import json
 import os
 from pathlib import Path
+import re
+import sqlite3
 import sys
 import time
 
@@ -13,6 +15,7 @@ from runtime.localfiles import create_private, read_private
 REPO_ROOT = Path(__file__).resolve().parent.parent
 HONEYPOT_INVENTORY = REPO_ROOT / "deploy/honeypots/inventory.yaml"
 HONEYPOT_PROFILE = REPO_ROOT / "deploy/honeypots/profiles/cell-mvp.example.yaml"
+_CREATE_AT = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\Z")
 
 
 def bootstrap(users_file, username, password):
@@ -26,6 +29,18 @@ def bootstrap(users_file, username, password):
                        "password_hash": bcrypt.hashpw(password.encode(), bcrypt.gensalt(12)).decode()}]}
     if not create_private(users_file, json.dumps(data).encode()):
         raise FileExistsError("users already provisioned; bootstrap never overwrites")
+
+
+def _backup_common(parser):
+    # Lazy import: no hygiene change, no side effects, keeps CLI startup lean.
+    from runtime import backup
+    parser.add_argument("--state-root", type=Path, default=backup.STATE_ROOT)
+    parser.add_argument("--control-env-dir", type=Path, default=backup.CONTROL_ENV_DIR)
+    return parser
+
+
+def _backup_report(payload, file=None):
+    print(json.dumps(payload, sort_keys=True), file=file or sys.stdout, flush=True)
 
 
 def main(argv=None):
@@ -70,6 +85,17 @@ def main(argv=None):
     honeypots.add_argument("--inventory", type=Path, default=HONEYPOT_INVENTORY)
     honeypots.add_argument("--profile", type=Path, default=HONEYPOT_PROFILE)
     honeypots.add_argument("--output", type=Path)
+    _backup_common(sub.add_parser(
+        "backup-plan", help="read-only backup plan; fails if state artifacts are missing"))
+    bexport = _backup_common(sub.add_parser(
+        "backup-export", help="export control state and analytics config offline"))
+    bexport.add_argument("--output", type=Path, required=True)
+    bexport.add_argument("--label", default="backup")
+    bexport.add_argument("--created-at",
+                         help="deterministic UTC timestamp (YYYY-MM-DDTHH:MM:SSZ)")
+    brestore = _backup_common(sub.add_parser(
+        "backup-restore", help="verify a backup completely, then restore; never overwrites"))
+    brestore.add_argument("--backup", type=Path, required=True)
     args = p.parse_args(argv)
     os.umask(0o077)
     if args.command == "bootstrap-admin":
@@ -160,6 +186,43 @@ def main(argv=None):
                                  indent=2, sort_keys=True))
         except honeypots.HoneypotError as exc:
             p.error(str(exc))
+    elif args.command in {"backup-plan", "backup-export", "backup-restore"}:
+        from runtime import backup as contract
+        try:
+            if args.command == "backup-plan":
+                report = contract.plan(state_root=args.state_root,
+                                       control_env_dir=args.control_env_dir)
+                _backup_report({"schema": report["schema"], "action": report["action"],
+                                "dry_run": report["dry_run"],
+                                "artifact_count": len(report["artifacts"]),
+                                "required_count": report["required_count"],
+                                "optional_count": report["optional_count"],
+                                "artifacts": report["artifacts"]})
+            elif args.command == "backup-export":
+                if args.created_at is not None \
+                        and not _CREATE_AT.fullmatch(args.created_at):
+                    p.error("--created-at must use YYYY-MM-DDTHH:MM:SSZ (UTC)")
+                manifest, data = contract.create_backup(
+                    contract.default_artifact_specs(args.state_root,
+                                                    args.control_env_dir),
+                    args.output, created_at=args.created_at, label=args.label)
+                _backup_report({"schema": manifest["schema"], "backup_dir": str(args.output),
+                                "backup_id": contract.backup_id(manifest),
+                                "created_at": manifest["created_at"],
+                                "artifact_count": manifest["artifact_count"],
+                                "manifest_bytes": len(data)})
+            else:
+                report = contract.restore(args.backup, state_root=args.state_root,
+                                          control_env_dir=args.control_env_dir)
+                _backup_report({"schema": report["schema"], "action": report["action"],
+                                "backup_dir": report["backup_dir"],
+                                "created_at": report["created_at"],
+                                "restored": sorted(report["restored"]),
+                                "overwrites": report["overwrites"]})
+        except (contract.BackupError, FileExistsError, FileNotFoundError,
+                PermissionError, sqlite3.Error) as exc:
+            _backup_report({"error": type(exc).__name__, "detail": str(exc)}, sys.stderr)
+            return 2
     return 0
 
 
