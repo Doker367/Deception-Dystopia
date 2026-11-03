@@ -48,13 +48,14 @@ inventario (global, revisado)      perfil de celda (por celda)
 | Invariante | Cómo se garantiza |
 |---|---|
 | Nombres únicos por celda | `name: dystopia-honeypot-cell-<N>`, `container_name: dystopia-hp-c<N>-<motor>`, red `dyhp<N>-<motor>`. |
-| Sin `latest` | El motor exige tag explícito en el namespace `dystopia/honeypot-*`; `latest`/`stable`/`main`/`edge` se rechazan. |
+| Imagen inmutable | `image_policy: digest-required` (por defecto) exige `local_digest` revisado en el inventario y renderiza `dystopia/honeypot-*@sha256:<digest>`; si falta, el render falla cerrado. `tag-lab-only` es una excepción explícita, marcada como no apta para despliegue, y sigue rechazando `latest`/`stable`/`main`/`edge`. |
 | Sin red host ni privilegios | El esquema no admite `network_mode`, `privileged`, `pid/ipc/uts: host`, `devices`, `sysctls` ni socket Docker; `assert_safe()` re-verifica la salida. |
 | Sin puertos por defecto | Modo `internal`: solo `expose`. Publicar exige `mode: loopback-lab` y `127.0.0.1:<host alto>:<contenedor>`. |
 | Red interna | Un bridge `internal: true` por motor y celda, sin IPv6, sin `external`. |
 | Configuración read-only | Bind del fichero de configuración revisado del contexto de build, siempre `read_only: true`. |
 | Logs declarados | Bind escribible únicamente en `<data_root>/cells/<N>/<motor>/…`; el path del log debe caer dentro del volumen declarado. |
 | Límites de recursos | `mem_limit`, `cpus`, `pids_limit`, `ulimits` (`nofile`, `core=0`), `tmpfs` con `noexec,nosuid` y tamaño acotado. |
+| `no-new-privileges` obligatorio | Todo servicio lleva exactamente `security_opt: ["no-new-privileges:true"]`. `assert_safe()` rechaza su ausencia, `false`, `seccomp=unconfined` o cualquier opción extra. `cap_add` solo puede ser `NET_BIND_SERVICE` y nunca sustituye a NNP. |
 | Reinicio responsable | `restart: "no"`; un honeypot no debe entrar en bucles de reinicio. |
 | Doble seguro de arranque | Todos los servicios quedan tras el profile `authorized-activation`; `docker compose up` sin ese profile no arranca nada. |
 | Healthcheck | Derivado del marcador de proceso del inventario (`grep -q <marker> /proc/1/cmdline`), intervalo y `start_period` acotados. |
@@ -64,9 +65,11 @@ desvía de estas reglas, el render falla en vez de producir un artefacto
 peligroso.
 
 Capacidades: solo `NET_BIND_SERVICE`, y únicamente cuando el motor escucha por
-debajo de 1024. En ese caso se omite `no-new-privileges` porque anula las file
-capabilities; es una decisión heredada del perfil de referencia y debe
-revisarse en la ola Linux (ver §6).
+debajo de 1024. `no-new-privileges` **no se omite**: la capability se concede de
+forma explícita y NNP permanece activo para bloquear setuid/file-capabilities de
+la imagen. Que la capability siga en el conjunto efectivo al ejecutar como UID
+no-root, o que haya que remapear a puertos altos con DNAT, se verifica en la ola
+Linux (ver §6).
 
 ## 3. Uso
 
@@ -95,7 +98,7 @@ name: dystopia-honeypot-cell-1
 services:
   cowrie:
     container_name: dystopia-hp-c1-cowrie
-    image: dystopia/honeypot-cowrie:3.1.4
+    image: dystopia/honeypot-cowrie@sha256:<digest-revisado-de-la-imagen-local>
     build:
       context: /srv/dystopia/docker/deception/cowrie
       dockerfile: Dockerfile
@@ -131,6 +134,12 @@ networks:
     internal: true
     enable_ipv6: false
 ```
+
+El digest del ejemplo es un marcador: no se ha construido ninguna imagen ni se
+ha inventado un digest real. El inventario actual no declara `local_digest`, por
+lo que su perfil usa `image_policy: tag-lab-only`; para producción hay que
+anotar el digest observado de cada imagen y cambiar el perfil a
+`digest-required`.
 
 ### Bloqueo de activación
 
@@ -178,9 +187,14 @@ duplicadas, alias YAML, puertos publicados fuera de `127.0.0.1`, nombres
 - **Los límites son declarativos.** `mem_limit`, `cpus`, `pids_limit` y
   `ulimits` son cotas de Compose; que el kernel las aplique debe verificarse de
   forma independiente.
-- **Las imágenes están fijadas por tag, no por digest.** El inventario
-  documenta el digest de la base, no el de la imagen construida. Fijar
-  `a@sha256:…` antes de cualquier activación.
+- **Las imágenes no están fijadas por digest en este inventario.** El
+  inventario documenta el digest de la base, no el de la imagen construida, y
+  no se ha inventado un `local_digest`. El render por defecto
+  (`image_policy: digest-required`) falla cerrado sin digest; el perfil de
+  referencia declara `tag-lab-only`, que es explícitamente no productivo.
+- **NNP no es opcional.** Todo servicio lleva `no-new-privileges:true`.
+  `NET_BIND_SERVICE` puede convivir con NNP, pero su efecto real al ejecutar
+  como UID no-root debe verificarse en Linux.
 - **Colector offline, no operativo.** `runtime.dataplane` lee fixtures y, con
   `--data-root`, los binds renderizados; no es un daemon ni sustituye la
   supervisión, rotación y cuota que siguen pendientes. Ver
@@ -203,15 +217,16 @@ duplicadas, alias YAML, puertos publicados fuera de `127.0.0.1`, nombres
    `nft list ruleset` de la tabla de celda, egress denegado, sin ruta por
    defecto) y quién firma la evidencia. Hasta entonces `apply` sigue bloqueado.
 3. **Runtime**: Docker rootless/userns, seccomp por motor, AppArmor/SELinux y
-   ausencia verificada del socket. `no-new-privileges` vs `NET_BIND_SERVICE`
-   debe resolverse: remapear a puertos altos con DNAT es la opción preferida.
+   ausencia verificada del socket. NNP ya es obligatorio en el contrato; falta
+   verificar con NNP activo si `NET_BIND_SERVICE` basta para los puertos <1024
+   o si hay que remapear a puertos altos con DNAT (opción preferida).
 4. **Enforcement de cgroups**: comprobar `memory.max`, `pids.max`, `cpu.max`
    y `memory.events` bajo carga sintética, no solo que Compose los declare.
 5. **Cuotas y rotación**: provisión de `cells/<N>` con uid/gid correctos,
    cuota XFS/ext4, rotación externa y retención de datos hostiles.
-6. **Digests**: reconstruir las seis imágenes, fijar `image@sha256:…` y
-   registrar SBOM/CVE. El esquema actual acepta tags versionados y deberá
-   admitir (y preferir) digests.
+6. **Digests**: reconstruir las seis imágenes, anotar `local_digest` en el
+   inventario y poner el perfil en `image_policy: digest-required`. El motor ya
+   acepta y prefiere digests; sin uno revisado, el render falla cerrado.
 7. **Salida de Dionaea**: bloquear egress en la celda y verificar que el
    módulo `curl` no alcanza Internet.
 8. **Integración systemd**: unidad one-shot sin `[Install]` para render, y una

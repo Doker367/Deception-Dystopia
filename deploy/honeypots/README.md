@@ -93,8 +93,11 @@ docker compose -f profiles/honeypots.example.yaml config --quiet
 
 - Los builds **no se ejecutaron** en este entorno. No hay evidencia de que las
   imágenes compilen, arranquen o resistan abuso.
-- Los digests se consultaron en el registro, pero no se verificó firma,
-  procedencia SLSA ni reproducible build.
+- Los digests de las imágenes base se consultaron en el registro, pero no se
+  verificó firma, procedencia SLSA ni reproducible build. No hay
+  `local_digest` de las imágenes construidas: el perfil de referencia usa
+  `image_policy: tag-lab-only` (no productivo). Para activar, construir las
+  imágenes, anotar su digest y cambiar el perfil a `digest-required`.
 - Dependencias Python transitivas de OpenCanary y Heralding no están lockeadas
   con hashes; hacerlo antes de una activación real.
 - Heralding (GPL-3.0), Dionaea (GPL-2.0-or-later) y RedisHoneyPot (GPL-3.0)
@@ -110,6 +113,9 @@ docker compose -f profiles/honeypots.example.yaml config --quiet
 - Endlessh con `MaxClients 4096` consume descriptores; el límite `nofile` del
   perfil debe validarse contra el `fs.file-max` de la celda.
 - OpenCanary, Dionaea y Heralding escuchan en puertos < 1024. Corren como UID
-  2000 con la file capability `NET_BIND_SERVICE`; por eso **no** llevan
-  `no-new-privileges` (esa opción anula las file capabilities). Si la política
-  exige NNP, remapear a puertos altos y hacer DNAT en la celda.
+  2000 con la capability `NET_BIND_SERVICE` y **mantienen**
+  `no-new-privileges:true`: NNP bloquea la elevación por setuid/file
+  capabilities de la imagen, no la capability concedida explícitamente al
+  contenedor. Falta verificar en Linux que la capability sigue efectiva al
+  ejecutar como UID no-root; si no, remapear a puertos altos y hacer DNAT en la
+  celda.

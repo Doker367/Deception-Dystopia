@@ -30,7 +30,7 @@ Esta es una revisión acotada, no una auditoría exhaustiva del repositorio ni u
 | RT-03 | Restore no exige el conjunto completo ni es todo-o-nada | Alta | E1 + E2 |
 | RT-04 | La evidencia del gate es rejugable y no tiene frescura ni identidad de host | Alta antes de activar | E1 + E2 (clave de prueba) |
 | RT-05 | Los artefactos del backup nacen con permisos de umask y se endurecen después | Media (confidencialidad local) | E1 + E2 |
-| RT-06 | La confianza en el directorio padre de bases y archivos privados no se verifica | Media condicionada al despliegue | E1 |
+| RT-06 | La confianza en el directorio padre de bases y archivos privados no se verifica | Media condicionada al despliegue | E1 + E2 (tests de padres) |
 | RT-07 | El spool del sensor puede quedar bloqueado por lotes en cuarentena | Media (disponibilidad) | E1 + E2 (suite) |
 | RT-08 | Fallos permanentes de Elasticsearch consumen la cola y detienen el exportador | Media (disponibilidad) | E1 + E2 (suite) |
 | RT-09 | El hash del registro crudo publicado es un oráculo de verificación de credenciales | Baja | E1 + E2 |
@@ -38,9 +38,10 @@ Esta es una revisión acotada, no una auditoría exhaustiva del repositorio ni u
 | RV-01 | SHA-256 del backup no autentica contra un escritor malicioso | Decisión de custodia | E1 |
 | RV-02 | `no-new-privileges` no es una invariante universal de Compose | Endurecimiento | E1 + E2 (render) |
 
-**Estado de remediación:** la rama `wave/security-fixes` cierra RT-01 a RT-05 en
-el contrato offline (código, docs y tests); el detalle y los límites E3 están en
-la sección 7. RT-06 a RT-10 y RV-01/RV-02 siguen abiertos.
+**Estado de remediación:** la rama integrada `feature/runtime-wave` reúne
+`wave/security-fixes` (RT-01 a RT-05), `wave/runtime-hardening` (RT-06 a RT-08)
+y `wave/compose-hardening` (RT-09, RT-10 y RV-02), todos a nivel de contrato
+offline. RV-01 (autenticidad del backup) sigue abierto.
 
 ## 1. Fronteras de confianza y flujo de datos
 
@@ -96,7 +97,7 @@ la sección 7. RT-06 a RT-10 y RV-01/RV-02 siguen abiertos.
 | Elasticsearch/Kibana | Conservar y mostrar telemetría | `dynamic=false` evita indexar campos desconocidos, pero no elimina datos de `_source`. |
 | Helper de aislamiento | Ejecutar una transacción `nft` cerrada como root local | No acepta argv, URI ni política arbitraria del llamador. Aceptar la transacción no prueba aislamiento. |
 | Backup/restore | Copiar artefactos declarados y restaurar en rutas derivadas de código | El almacenamiento de backup es una frontera de confianza propia, no un archivo inerte. |
-| Directorios de estado | Guardar bases, tokens, colas y TLS | Deben ser propiedad del servicio/root y no escribibles por otros. El código **asume** esto; no lo verifica en todos los caminos (RT-06). |
+| Directorios de estado | Guardar bases, tokens, colas y TLS | Deben ser propiedad del servicio/root y no escribibles por otros. Desde RT-06 el código lo verifica (padre inmediato estricto y cadena de ancestros en restore); la prueba E3 debe confirmar los UID/GID reales. |
 | Verificador/gate | Validar un paquete de evidencia y su firma | En este commit el trust store está vacío. No observa el host ni activa nada. |
 
 ### Datos sensibles que realmente cruzan fronteras
@@ -104,7 +105,7 @@ la sección 7. RT-06 a RT-10 y RV-01/RV-02 siguen abiertos.
 - `sensor.py` lee el token en cada envío y lo coloca solo en `Authorization`; usa HTTPS con IP literal, CA, TLS >= 1.2, sin proxy y sin redirects (`runtime/sensor.py:24-53`).
 - `events.db` contiene el evento completo, incluidos `detail` y posibles secretos capturados. El exporter no envía ese JSON directamente: lo normaliza antes de publicar (`app/services/deception/integrations/exporter_svc.py:246-269`).
 - En la rama normal, `ecs.build_event` representa la contraseña como `CredentialReference`, cuya serialización JSON contiene solo el identificador (`ecs.py:368-431`, `632-637`). El comando/URL/mensaje se conserva en `dystopia_restricted`, no desaparece.
-- **Derivado sensible:** el documento publicado incluye `dystopia.raw_reference` con `sha256=<hash del registro crudo>`. Ese registro contiene la contraseña capturada; el hash es un oráculo de confirmación, no un redactor (RT-09).
+- **Derivado sensible (corregido en §9):** antes de esta rama, el documento publicado incluía `dystopia.raw_reference` con `sha256=<hash del registro crudo>`. Ese registro contiene la contraseña capturada; el hash era un oráculo de confirmación, no un redactor (RT-09). Ahora la referencia es `hmac-sha256=<digest>` con clave provisionada fuera del documento.
 - El template tiene `dynamic=false` de nivel raíz, por lo que un campo restringido queda almacenado en `_source` pero no indexado (`config/elasticsearch/templates/deception-events-template.json:2,22-24`). **No indexado no significa redactado, cifrado ni ausente de backups/snapshots.**
 - El backup incluye eventos, colas, registro de sensores y la clave TLS; por tanto debe tratarse como material sensible aunque los archivos `.env` se filtren.
 - La cola persistente de Elasticsearch y el spool del sensor contienen payloads capturados; ambos son bases SQLite privadas, pero su contenido sigue siendo hostil y sensible.
@@ -261,7 +262,9 @@ Crear cada archivo con `os.open(..., O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)` (o f
 ### RT-06 — La confianza en el directorio padre de bases y archivos privados es un supuesto no verificado
 
 **Prioridad:** media, condicionada a que el despliegue no garantice los permisos del padre.  
-**Estado:** confirmado estáticamente (E1); requiere verificación de permisos en Linux (E3).
+**Estado:** confirmado estáticamente (E1); **remediado en contrato offline** en
+`wave/runtime-hardening` (E2). La verificación de UID/GID reales del despliegue
+sigue siendo E3.
 
 **Evidencia**
 
@@ -280,10 +283,24 @@ El restore de backup tiene una variante del mismo supuesto: comprueba `target.pa
 
 Recorrer los ancestros con descriptores retenidos y `O_NOFOLLOW`, exigiendo propietario root/servicio y ausencia de escritura por grupo/otros (se puede reutilizar el patrón de `runtime/isolation/backend.py:51-74`). Alternativamente, `fstat` del padre y comparación explícita de UID/GID/modo antes de abrir la base. Añadir una prueba con un padre sintético `0777` y una base sustituida que deba fallar cerrada.
 
+**Remediación offline (wave/runtime-hardening)**
+
+- `runtime.localfiles.open_trusted_directory` abre el padre con `O_DIRECTORY |
+  O_NOFOLLOW`, rechaza symlinks, exige propietario root/UID del servicio y
+  prohíbe escritura por grupo/otros. `open_private_parent` lo aplica a
+  `database()`, `read_private`, `create_private` y `replace_private`;
+  `verify_ancestor_chain` añade la cadena de ancestros (con admisión acotada de
+  raíces sticky como `/tmp`) y se invoca en el preflight de restore.
+- `database()` verifica además que el propietario del leaf privado sea root o
+  el UID efectivo, no solo en la variante de lectura por grupo.
+- Pruebas: padre `0777/0770/0772`, padre symlink, padre de ficheros privados
+  inseguro, UID esperado distinto y `--state-root` writable/symlink en restore.
+
 ### RT-07 — El spool del sensor puede quedar permanentemente bloqueado por lotes en cuarentena
 
 **Prioridad:** media (disponibilidad; no confidencialidad).  
-**Estado:** confirmado estáticamente y por las suites offline existentes (E1 + E2).
+**Estado:** confirmado estáticamente y por las suites offline existentes (E1 + E2);
+**remediado en contrato offline** en `wave/runtime-hardening` (E2).
 
 **Evidencia**
 
@@ -300,10 +317,26 @@ Un cambio de asignación de dispositivo, una rotación de credenciales o una rev
 
 Separar un presupuesto acotado para cuarentena (o un archivo de dead-letter) del presupuesto de eventos pendientes; exponer un comando de operador para drenar/exportar y borrar cuarentena; alertar con `operator_action_required`. Añadir una prueba que llene la cuarentena y verifique que los eventos válidos posteriores siguen teniendo un camino acotado, o que el sensor se detiene de forma explícita y documentada.
 
+**Remediación offline (wave/runtime-hardening)**
+
+- `Spool` cuenta para el presupuesto vivo solo `quarantined=0`. La cuarentena
+  tiene su propio límite (`max_quarantine_events`/`max_quarantine_bytes`,
+  por defecto 20 %/12,5 % del spool) y, al desbordarse, aplica dead-letter
+  explícito del lote más antiguo con contador persistido `dead_lettered`.
+- `health` separa `pending` (vivo) de `quarantined`, expone capacidades y
+  mantiene `operator_action_required` cuando hay cuarentena.
+- Operador: `sensor-quarantine --output` (export no destructivo), `--drain`
+  (export durable y borrado de lo exportado) y `--purge`; también métodos
+  `export_quarantine`, `drain_quarantine` y `purge_quarantine`.
+- Pruebas de presión: cuarentena llena con el presupuesto vivo libre, nuevos
+  eventos aceptados y entregados, dead-letter del más antiguo y migración de
+  un spool con el esquema previo.
+
 ### RT-08 — Fallos permanentes de Elasticsearch consumen la cola acotada y detienen el exportador
 
 **Prioridad:** media (disponibilidad analítica).  
-**Estado:** confirmado estáticamente y por las suites offline existentes (E1 + E2).
+**Estado:** confirmado estáticamente y por las suites offline existentes (E1 + E2);
+**remediado en contrato offline** en `wave/runtime-hardening` (E2).
 
 **Evidencia**
 
@@ -320,14 +353,34 @@ Tras suficientes rechazos permanentes, la cola se llena y el exportador deja de 
 
 Separar un área de dead-letter/permanentes que no consuma el presupuesto de eventos vivos; reintentar `401/403` tras una recarga controlada de credenciales; añadir un comando de drenaje/exportación y una alerta cuando `permanent > 0`. Añadir una prueba de cola llena por permanentes que demuestre que los eventos nuevos siguen fluyendo o que el sistema se detiene con una acción de operador explícita.
 
+**Remediación offline (wave/runtime-hardening)**
+
+- `enqueue` cuenta para el presupuesto vivo solo `permanent=0`: una cola llena
+  de rechazos permanentes ya no detiene el exportador.
+- Los permanentes tienen un presupuesto acotado propio
+  (`dead_letter_events`/`dead_letter_bytes`); al desbordarse se descarta el más
+  antiguo y se incrementa `dead_letter_evicted` con alerta explícita.
+- `401/403` se clasifican como autenticación, no como defecto permanente:
+  `_HttpTransport.reload_api_key()` relee el fichero privado y solo permite un
+  reintento si el valor cambió. Una clave sin cambios marca `auth_blocked`,
+  mantiene la fila reintentable y pausa el flush para no repetir el mismo
+  error sobre cada fila.
+- Operador: `export_dead_letter` y `purge_dead_letter`; `health` expone
+  `live`, `permanent`, `auth_blocked`, `dead_letter_evicted_since_start` y
+  `operator_action_required`.
+- Pruebas: permanentes que no consumen el presupuesto vivo, dead-letter
+  acotado, 401 que no se vuelve permanente, reintento tras rotación real del
+  fichero de API key y exportador que sigue avanzando con la cola llena de
+  permanentes.
+
 ### RT-09 — El hash del registro crudo publicado es un oráculo de verificación de credenciales
 
 **Prioridad:** baja.  
-**Estado:** confirmado estáticamente y reproducido offline (E1 + E2).
+**Estado:** confirmado estáticamente y reproducido offline (E1 + E2). **Cerrado en contrato offline en §9.**
 
-**Evidencia**
+**Evidencia (estado previo a §9)**
 
-- `ecs.fingerprint(raw)` calcula SHA-256 sobre el JSON canónico del registro **completo**, incluidas las claves de credenciales (`app/services/deception/integrations/ecs.py:277-286`).
+- `ecs.fingerprint(raw)` calculaba SHA-256 sobre el JSON canónico del registro **completo**, incluidas las claves de credenciales (`app/services/deception/integrations/ecs.py:277-286`).
 - `build_event` publica ese digest en `dystopia.raw_reference` como `sha256=<hash>` (`ecs.py:596-599`) y, en adaptadores legacy, también alimenta `stable_event_id` (`ecs.py:555-568`).
 - Todos los normalizadores pasan el registro crudo completo: `cowrie_svc.py:146`, `opencanary_svc.py:146`, `dionaea_svc.py:122`, `heralding_svc.py:87`, `redishoneypot_svc.py:95`, `native_svc.py:119`.
 - `_payload` excluye `password` del contenedor restringido y `CredentialReference` lo excluye del JSON, pero el hash derivado permanece.
@@ -350,7 +403,7 @@ Calcular el fingerprint sobre una copia redactada (excluir `password`, `pass`, `
 ### RT-10 — El render de Compose fija la imagen por tag mutable, no por digest
 
 **Prioridad:** media (integridad de cadena de suministro; requiere control del host/Docker para materializarse).  
-**Estado:** confirmado estáticamente (E1).
+**Estado:** confirmado estáticamente (E1). **Cerrado en contrato offline en §9; verificación Docker pendiente E3.**
 
 **Evidencia**
 
@@ -380,7 +433,7 @@ Si el almacenamiento es root-only, íntegro y tan confiable como el host de rest
 
 ### RV-02 — `no-new-privileges` no es una invariante universal de Compose
 
-**Estado:** riesgo de endurecimiento confirmado en el render; impacto real depende de las imágenes y requiere Linux.
+**Estado:** riesgo de endurecimiento confirmado en el render; impacto real depende de las imágenes y requiere Linux. **Cerrado en contrato offline en §9; privilegios efectivos pendientes E3.**
 
 Con `NET_BIND_SERVICE`, `_service` elimina `security_opt` deliberadamente (`runtime/honeypots.py:603-606`). `assert_safe` exige `cap_drop` y limita `cap_add`, pero **nunca exige ni valida `security_opt`** (`runtime/honeypots.py:636-711`). La prueba acepta explícitamente una u otra alternativa (`tests/hardening/test_honeypots.py:69-71`). El camino de contenedores, en cambio, exige `no_new_privileges=True` (`runtime/isolation/containers.py:115`), lo que evidencia la inconsistencia entre ambos modelos.
 
@@ -417,7 +470,7 @@ No se encontró `pickle`, `marshal`, `eval`, `exec` ni carga YAML insegura en el
 - `exporter_svc.py` registra `sensor` y `event_id` (asignados por el servidor), no `detail`, comandos ni contraseñas (`exporter_svc.py:262-306`).
 - `elastic_svc.py` registra `event_id`, estado HTTP y contadores; no registra el documento (`elastic_svc.py:322-530`).
 - `telemetry_svc` (camino legacy, fuera del pipeline nuevo) envía a Loki solo `event_type`, nunca credenciales/comandos (`app/services/deception/telemetry_svc.py:79,108`), pero **persiste `detail` en `store_svc`**; los parsers legacy `cowrie_svc.parse`/`opencanary_svc.parse` siguen incluyendo `password`/`msg` en `detail` (`cowrie_svc.py:52-68`, `opencanary_svc.py:49-68`). No se encontraron llamadas de producción a esos parsers; el tailer está bloqueado (`tailer_svc.py`). No deben reconectarse al pipeline restringido ni a un logger.
-- RT-09 es la excepción derivada: el hash del registro crudo sí se publica.
+- RT-09 (corregido en §9): la referencia publicada ya no es un hash verificable del registro crudo; es un HMAC con clave fuera del documento.
 - Los errores de backup/gate pueden incluir rutas locales del host; son visibles para el operador, no para el workload, pero conviene no exponerlas en respuestas de API.
 
 ### Cuotas y agotamiento
@@ -425,9 +478,9 @@ No se encontró `pickle`, `marshal`, `eval`, `exec` ni carga YAML insegura en el
 | Componente | Límite observado | Riesgo residual |
 |---|---|---|
 | Ingesta | 8 concurrentes, 5 s de cuerpo, 256 KiB, 64 eventos, 120 req/min por sensor, presupuesto de 1024 identidades (`runtime/ingest.py:20-55`). | El límite por sensor es por identidad autenticada; un sensor comprometido solo agota su propio presupuesto. |
-| Spool del sensor | 10 000 eventos / 64 MiB, payload limitado a la mitad del presupuesto (`runtime/sensor.py:56-99`). | La cuarentena consume el mismo presupuesto (RT-07). |
+| Spool del sensor | 10 000 eventos / 64 MiB, payload limitado a la mitad del presupuesto (`runtime/sensor.py`). | Presupuesto vivo separado de la cuarentena acotada y del dead-letter (RT-07). |
 | Event store | 100 000 eventos, 10 000 por sensor, 256 MiB, chequeo de disco libre 2x (`runtime/storage.py:61-107`). | Sin borrado automático; el operador debe archivar. |
-| Cola Elastic | 10 000 eventos / 64 MiB (`elastic_svc.py:83-86,316-325`). | Los permanentes consumen el presupuesto (RT-08). |
+| Cola Elastic | 10 000 eventos / 64 MiB (`elastic_svc.py`), dead-letter 2 000 / 8 MiB por defecto. | Los permanentes no consumen el presupuesto vivo; el dead-letter está acotado (RT-08). |
 | Backup | 64 MiB por archivo, 8 GiB por base (`runtime/backup.py:45-46`). | El backup completo puede ser grande; no hay cuota del directorio de salida. |
 | Gate | 64 KiB manifiesto, 16 MiB por artefacto (`runtime/cell_gate.py:24-25`). | Correcto para evidencia; la frescura no está cubierta (RT-04). |
 | Honeypots | Memoria, CPU, PIDs, nofile, tmpfs y rotación de logs de 10m x3 (`runtime/honeypots.py:548-610`). | No hay cuota de disco para los volúmenes de log escribibles; es una obligación del operador (E3). |
@@ -435,7 +488,7 @@ No se encontró `pickle`, `marshal`, `eval`, `exec` ni carga YAML insegura en el
 ### Invariantes que dependen de la disciplina entre módulos
 
 1. **`ElasticPublisher` no es un redactor de secretos.** `_serialize` solo exige objeto y `event.id`, y serializa cualquier otro campo (`elastic_svc.py:273-293`). La frontera segura es `ecs.build_event`; no deben inyectarse documentos crudos en el publisher.
-2. **`CredentialReference` protege la serialización JSON, no toda API Python.** Sus valores permanecen accesibles por `.get`, item e `.items()` (`ecs.py:368-399`). Debe quedar dentro de consumidores confiables y no pasar a plantillas, logs ni serializadores que inspecten esos métodos. Tampoco protege el hash del registro crudo (RT-09).
+2. **`CredentialReference` protege la serialización JSON, no toda API Python.** Sus valores permanecen accesibles por `.get`, item e `.items()` (`ecs.py:368-399`). Debe quedar dentro de consumidores confiables y no pasar a plantillas, logs ni serializadores que inspecten esos métodos. La referencia publicada es independiente: HMAC keyed, no verificable sin la clave (§9).
 3. **Los parsers legacy no comparten la garantía del adaptador nuevo.** `cowrie_svc.parse` incluye `password` en `detail` (`cowrie_svc.py:52-68`) y `opencanary_svc.parse` conserva `msg` (`opencanary_svc.py:49-68`). No se encontraron llamadas de producción a esos parsers en esta revisión y el tailer está bloqueado; no se eleva a fuga activa, pero no deben reconectarse al pipeline restringido.
 4. **El contenido restringido sigue siendo dato hostil.** No ejecutarlo en shell, no abrirlo como fórmula, no renderizarlo como CSV/terminal sin escape y no enviarlo a IA. `dynamic=false` reduce búsqueda/agregación accidental, no lectura de `_source` ni exportación.
 5. **La contención no se hereda de un render, un hash o un `nft --check`.** `internal: true`, un Compose válido, una transacción aceptada y un test unitario no son evidencia de kernel. La única fuente válida es el verificador Linux independiente, y el gate actual no puede autorizar nada.
@@ -473,7 +526,7 @@ Scripts efímeros fuera del repositorio, con directorios temporales y fixtures i
 | Colisión en el último destino | 5 archivos ya escritos antes de `FileExistsError` | RT-03 |
 | Clave Ed25519 efímera fijada solo en el proceso; bundle sintético | Aceptado y rejugable; el contexto solo tiene `cell`/`apply_succeeded` | RT-04 |
 | `umask 022`, backup sintético | `server.key` estaba en `0644` antes del `chmod`; después `0600` | RT-05 |
-| Evento sintético con `detail.password` | La contraseña no aparecía en el JSON; `fingerprint(raw)` sí aparecía en `dystopia.raw_reference` | RT-09 |
+| Evento sintético con `detail.password` (estado previo a §9) | La contraseña no aparecía en el JSON; `fingerprint(raw)` sí aparecía en `dystopia.raw_reference` | RT-09, corregido en §9 |
 
 ### Qué **no** demuestran estas pruebas
 
@@ -482,6 +535,23 @@ Scripts efímeros fuera del repositorio, con directorios temporales y fixtures i
 - No demuestran la independencia ni la calidad del verificador Linux del gate; solo el contrato del gate con una clave de prueba.
 - No demuestran que un atacante externo pueda ejecutar algo: los hallazgos de path/backup requieren acceso al checkout, al almacenamiento o al host según el caso.
 - No sustituyen un drill de restore ni una prueba de agotamiento de recursos.
+
+### Cierre offline de RT-06/07/08 y frontera E3
+
+- **RT-06 (E2 cerrado):** los tests usan padres sintéticos `0777/0770/0772`,
+  symlinks, ficheros privados y un `--state-root` writable. **E3 pendiente:**
+  comprobar propietario/modo reales de la cadena `/var/lib/dystopia`, de
+  `/etc/dystopia`, de sockets/unidades systemd y de un `--state-root` en un
+  filesystem real, no solo `tmp_path`.
+- **RT-07 (E2 cerrado):** se llenó la cuarentena con el presupuesto vivo libre,
+  se forzó dead-letter y se verificó que los eventos válidos posteriores se
+  aceptan y entregan. **E3 pendiente:** presión sostenida bajo systemd,
+  rotación/revocación real de credenciales del sensor y un `--drain` sobre el
+  spool del servicio.
+- **RT-08 (E2 cerrado):** transportes inyectados cubren 400/401/403, cola llena
+  por permanentes, dead-letter y recarga de API key desde fichero. **E3
+  pendiente:** Elasticsearch real, rol writer mínimo, `401/403` reales tras
+  rotar la API key en el clúster y exportación del dead-letter por el operador.
 
 ### Validación obligatoriamente Linux, en laboratorio desechable y autorizado (E3)
 
@@ -532,29 +602,30 @@ Scripts efímeros fuera del repositorio, con directorios temporales y fixtures i
    - [ ] Prueba con `umask 022` y directorio preexistente `0755`: ningún archivo intermedio es legible por grupo/otros.
 
 6. **RT-06: confianza explícita en padres.**
-   - [ ] Todo padre de base/archivo privado es propiedad del servicio/root y no escribible por grupo/otros; se verifica con descriptores retenidos.
-   - [ ] El restore valida la cadena completa de ancestros y rechaza `--state-root` symlink o ancestro sustituido.
-   - [ ] Prueba con padre `0777` y base sustituida que deba fallar cerrada.
+   - [x] Todo padre de base/archivo privado es propiedad del servicio/root y no escribible por grupo/otros; se verifica con descriptores retenidos.
+   - [x] El restore valida la cadena completa de ancestros y rechaza `--state-root` symlink o ancestro sustituido.
+   - [x] Prueba con padre `0777`/symlink que falla cerrada antes de crear la base (E2); la sustitución real entre UIDs se confirma en E3.
 
 7. **RV-02: NNP y capabilities.**
-   - [ ] Todo servicio renderizado incluye `no-new-privileges:true`, salvo una excepción estrecha y documentada.
-   - [ ] `assert_safe` valida `security_opt` y no acepta la alternativa `cap_add` como sustituto universal.
+   - [x] Todo servicio renderizado incluye `no-new-privileges:true`, sin excepción en el contrato offline.
+   - [x] `assert_safe` valida `security_opt` exacto y no acepta `cap_add` como sustituto; `cap_add` sigue limitado a `NET_BIND_SERVICE`.
    - [ ] Inventario de binarios setuid/file-capabilities en cada imagen; verificación de privilegios efectivos en Linux.
-   - [ ] Pruebas que rechacen NNP ausente y `cap_add` no permitido.
+   - [x] Pruebas que rechacen NNP ausente, opciones que lo desactivan y `cap_add` no permitido.
 
 8. **RT-07/RT-08: presupuestos de cuarentena y dead-letter.**
-   - [ ] La cuarentena del spool y los permanentes de Elastic no consumen el presupuesto de eventos vivos, o existe un drenaje de operador documentado.
-   - [ ] `401/403` de Elastic se reintentan tras recarga controlada de credenciales; el resto va a dead-letter exportable.
-   - [ ] Alertas cuando `quarantined > 0` o `permanent > 0`.
-   - [ ] Pruebas de cola llena que demuestren flujo acotado o parada explícita con acción de operador.
+   - [x] La cuarentena del spool y los permanentes de Elastic no consumen el presupuesto de eventos vivos, y existe drenaje/exportación de operador.
+   - [x] `401/403` de Elastic se reintentan tras recarga controlada de credenciales; el resto va a dead-letter exportable.
+   - [x] Alertas (`operator_action_required`, logs) cuando `quarantined > 0` o `permanent/auth_blocked > 0`.
+   - [x] Pruebas de cola llena que demuestran flujo acotado o parada explícita con acción de operador.
+   - [ ] Presión sostenida contra el servicio real y Elasticsearch real; queda para E3 (sección 5.10).
 
 9. **RT-09: fingerprint sin secretos.**
-   - [ ] El hash se calcula sobre una copia redactada (sin `password`/`pass`/`pwd`) o con HMAC keyed fuera de Elasticsearch.
-   - [ ] Prueba: dos registros que solo difieren en la contraseña no comparten el hash publicado, o el hash no es verificable sin la clave.
+   - [x] La referencia se calcula con HMAC-SHA-256 y clave provisionada fuera del documento (archivo privado).
+   - [x] Prueba: dos registros que solo difieren en la contraseña no comparten la referencia publicada; sin clave el módulo falla cerrado.
 
 10. **RT-10: imágenes inmutables.**
-    - [ ] El render usa `@sha256` o verifica el ID local contra un digest revisado antes del apply.
-    - [ ] El camino de activación rechaza tags mutables; prueba negativa con tag sin digest.
+    - [x] El render con `image_policy: digest-required` exige `local_digest` y emite `repo@sha256:<digest>`; si falta, falla cerrado.
+    - [x] Un perfil `tag-lab-only` es explícito, se marca en labels y en el informe, y nunca se presenta como productivo.
 
 ### P2 — endurecimiento y consistencia
 
@@ -573,7 +644,7 @@ Scripts efímeros fuera del repositorio, con directorios temporales y fixtures i
 - [ ] Ningún backup se publica como “sin secretos” mientras contenga `server.key` o estado de credenciales.
 - [ ] Todas las pruebas P0/P1 anteriores pasan offline; las E3 se ejecutan en un laboratorio Linux desechable y autorizado, con resultados registrados sin secretos.
 
-## 7. Estado de remediación (rama `wave/security-fixes`)
+## 7. Estado de remediación (ramas `wave/security-fixes` y `wave/runtime-hardening`)
 
 **Fecha:** 2026-11-02. **Base:** `feature/runtime-wave`. **Entorno de prueba:**
 macOS arm64, Python 3.12.14, sin red, sin Docker/KVM/systemd/nftables y sin
@@ -586,12 +657,14 @@ datos reales. Nada se activó: `TRUSTED_VERIFIER_KEYS` sigue vacío y
 | RT-02 | **Cerrado** | `load_inventory`, `render_cell` y `assert_safe` resuelven el contexto, abren el leaf con `O_NOFOLLOW`, exigen archivo regular no symlink y comprueban que el resuelto queda dentro del contexto revisado. | Tests con symlink absoluto, relativo, cadena y `/etc/passwd`; `assert_safe` rechaza binds fuera del contexto y symlinks. | Validación Compose real y Docker quedan para E3. |
 | RT-03 | **Cerrado** | Restore exige conjunto exacto, `artifact_count`, esquema por entrada, estados válidos y todos los `required`; preflight de destinos/padres; staging privado; publicación sin overwrite y rollback. | Tests de required `missing`, conjunto incompleto, `artifact_count` erróneo, estado inválido, colisión tardía y fallo de publicación con cero archivos finales. | No se promete atomicidad entre filesystems distintos; el caso normal queda todo-o-nada con rollback. |
 | RT-04 | **Cerrado en contrato; E3 pendiente** | Manifiesto con `issued_at`, `expires_at`, `host_id`, `challenge`; contexto con host, boot, ahora, challenge y skew; ventana máxima de una hora; rechazo de replay en otro boot, expirado, futuro, host/challenge incorrectos. | Tests con clave Ed25519 efímera fijada solo en el proceso de prueba; el trust store real sigue vacío. | Falta el verificador Linux independiente y la custodia/fijación de su clave; no se ejecutó en Linux. |
-| RT-05 | **Cerrado** | Archivos `0600` y directorios `0700` desde el nacimiento; `umask 077` durante toda la exportación; directorio de salida endurecido antes de la primera escritura. | Tests con `umask 022` y directorio preexistente `0755`: modos observados en el momento del digest y del primer copiado. | La verificación de propietario/ancestros reales sigue siendo E3 (RT-06). |
+| RT-05 | **Cerrado** | Archivos `0600` y directorios `0700` desde el nacimiento; `umask 077` durante toda la exportación; directorio de salida endurecido antes de la primera escritura. | Tests con `umask 022` y directorio preexistente `0755`: modos observados en el momento del digest y del primer copiado. | RT-06 cubre el contrato de padres/ancestros; los UID/GID reales se confirman en E3. |
+| RT-06 | **Cerrado en contrato offline; E3 pendiente** | Helper único `open_trusted_directory`/`open_private_parent` (padre real, `O_NOFOLLOW`, propietario root/servicio, sin escritura grupo/otros) aplicado a `database()`, `read_private`, `create_private`, `replace_private` y al preflight de restore (`verify_ancestor_chain`). `database()` exige además propietario root/UID efectivo. | `tests/hardening/test_private_parents.py` (padres `0777/0770/0772`, symlink, ficheros privados, UID esperado, ancestros) y `test_restore_rejects_a_writable_or_symlinked_state_root`. | Los UID/GID y la cadena real de `/var/lib/dystopia` se confirman en Linux (E3, sección 5.6); raíces sticky como `/tmp` se admiten solo como ancestros. |
+| RT-07 | **Cerrado** | Presupuesto vivo separado de cuarentena; cuarentena acotada con dead-letter del más antiguo y contador persistido; `health` separa `pending`/`quarantined`; operador `sensor-quarantine --output/--drain/--purge`. | `tests/hardening/test_spool_quarantine.py`: presión con presupuesto vivo libre, nuevos eventos aceptados/entregados, evicción dead-letter, export/drain/purge y migración de esquema previo. | El drenaje real del sensor systemd y la rotación de credenciales en laboratorio quedan para E3; no se probó un dispositivo físico. |
+| RT-08 | **Cerrado** | Presupuesto vivo excluye `permanent=1`; dead-letter acotado con evicción contada; `401/403` son autenticación reintentable con recarga de API key solo si cambia; `flush` se pausa en auth en vez de repetir; `export_dead_letter`/`purge_dead_letter`. | `test_permanent_rows_do_not_consume_the_live_queue_budget`, `test_dead_letter_budget_evicts_oldest_and_counts_the_loss`, `test_auth_failure_retries_after_controlled_key_rotation`, `test_transport_reloads_a_rotated_api_key`, `test_dead_letter_can_be_exported_and_purged`, `test_permanent_rejections_do_not_stop_the_exporter`. | Elasticsearch real, rotación de API key en clúster y permisos del rol writer quedan para E3 (sección 5.8); el dead-letter no se reintenta automáticamente. |
 
-Los hallazgos **RT-06 a RT-10 y RV-01/RV-02 no se corrigen en esta rama** y
-mantienen su estado original. En particular, RT-06 (confianza en padres),
-RT-07/RT-08 (presupuestos de cuarentena/cola), RT-09 (fingerprint), RT-10
-(imágenes por digest) y RV-02 (NNP) siguen abiertos.
+RT-01 a RT-10 y RV-02 quedaron cerrados a nivel de contrato offline en las
+ramas integradas. RV-01 (autenticidad del backup) sigue abierto. Las
+dependencias de kernel, Docker, systemd, TLS y Elasticsearch siguen en E3.
 
 **Suites offline ejecutadas para este cierre** (sin Docker, sin red, sin
 servicios; el test de Compose se omite si falta el plugin):
@@ -599,15 +672,20 @@ servicios; el test de Compose se omite si falta el plugin):
 ```bash
 python3.12 -m pytest -q -p no:cacheprovider \
   tests/hardening/test_backup.py tests/hardening/test_cell_gate.py \
-  tests/hardening/test_honeypots.py \
-  tests/ops-integration/test_backup_runtime_state.py \
-  tests/ops-integration/test_cell_gate_report.py \
-  tests/ops-integration/test_ops_report.py
+  tests/hardening/test_honeypots.py tests/hardening/test_isolation.py \
+  tests/hardening/test_telemetry.py tests/hardening/test_control.py \
+  tests/hardening/test_install.py tests/hardening/test_supply_chain.py \
+  tests/hardening/test_private_parents.py tests/hardening/test_spool_quarantine.py \
+  tests/deception/test_elastic_export.py \
+  tests/deception/test_elasticsearch_publisher.py \
+  tests/deception/test_external_adapters.py
 ```
 
-Resultado: **144 passed**. Estas pruebas no demuestran contención Linux,
-comportamiento de Docker/Compose, TLS real ni permisos de kernel; no
-sustituyen las validaciones E3 de la sección 5.
+Resultado: **282 passed**. La suite completa del repositorio en este mismo
+entorno terminó con **703 passed, 3 skipped, 0 failed**. Estas pruebas no
+demuestran contención Linux, comportamiento de Docker/Compose, TLS real,
+Elasticsearch real ni permisos de kernel; no sustituyen las validaciones E3 de
+la sección 5.
 
 ## 8. Conclusión
 
@@ -618,7 +696,71 @@ no de explotación remota: un backup que se declara sin secretos pero los contie
 una configuración que puede escapar del contexto revisado, un restore que puede
 quedar incompleto o parcial, y una evidencia de gate que no está ligada al host ni
 al momento. En la rama `wave/security-fixes` esos cuatro bloques y RT-05 quedaron
-cerrados **a nivel de contrato offline** (sección 7); RT-06 a RT-10 y RV-01/RV-02
-siguen abiertos.
+cerrados **a nivel de contrato offline** (secciones 7 y 9). RT-06/07/08 se
+cerraron en `wave/runtime-hardening`; RT-09/10 y RV-02 en
+`wave/compose-hardening`. RV-01 sigue abierto y requiere una decisión de
+custodia/autenticación del backup.
 
 Nada de lo anterior autoriza a activar un workload. La regla sigue siendo: **un render, un hash, un mock, un `nft --check` o un test unitario no son evidencia de contención**. La evidencia válida es la del verificador Linux independiente, y todavía no existe en este commit.
+
+## 9. Cierre de RT-09, RT-10 y RV-02 (rama `wave/compose-hardening`)
+
+**Fecha:** 2026-11-02. **Base:** `feature/runtime-wave`. **Entorno:** macOS
+arm64, Python 3.12.14, sin red, sin Docker/KVM/systemd/nftables y sin datos
+reales. Nada se activó: `TRUSTED_VERIFIER_KEYS` sigue vacío,
+`honeypots apply/up/down` y `LocalCellBackend.activate()` siguen bloqueados.
+
+| ID | Estado en contrato offline | Cambios principales | Evidencia offline | Límite / pendiente |
+|---|---|---|---|---|
+| RT-09 | **Cerrado** | `ecs.reference_digest` sustituye a `fingerprint`: HMAC-SHA-256 sobre el registro crudo con una clave provisionada fuera del documento. La clave se carga de `DYSTOPIA_EVENT_REFERENCE_KEY_FILE` mediante `read_private` (archivo 0600, sin symlink); también se puede inyectar con `configure_reference_key`. Sin clave, el módulo lanza `ReferenceKeyUnavailable` en vez de publicar un digest verificable. `dystopia.raw_reference` pasa de `sha256=<hex>` a `hmac-sha256=<hex>`. La identidad de `event.id` usa el mismo HMAC, conservando idempotencia y correlación. | `test_raw_reference_is_not_an_unkeyed_password_oracle`, `test_raw_reference_depends_on_the_provisioned_key_only`, `test_raw_reference_fails_closed_without_a_provisioned_key`, `test_reference_key_is_loaded_from_a_private_file`; `test_external_adapters.py` verifica que la contraseña no aparece y que el SHA-256 sin clave no se publica. | El operador debe provisionar y custodiar la clave; el repo no contiene ninguna. La clave es estable por despliegue, por lo que rotarla cambia `event.id` de eventos futuros. `runtime/normalize` (camino v1) sigue derivando `event_id` del registro crudo antes de publicar; no es `dystopia.raw_reference`, pero mantiene una correlación verificable si se conocen todos los campos. |
+| RT-10 | **Cerrado en contrato; E3 pendiente** | El inventario admite `local_digest` por motor. El perfil de celda añade `image_policy`: `digest-required` (por defecto, fail-closed) exige digest y renderiza `repo@sha256:<digest>`; `tag-lab-only` permite tags explícitos, pero es una elección declarada, marca cada servicio con `dystopia.image-policy` y se reporta como no apta para despliegue. `assert_safe` rechaza un tag bajo política de digest y un digest bajo una etiqueta de laboratorio inconsistente. | `test_digest_policy_renders_immutable_image_references`, `test_digest_policy_fails_closed_without_a_reviewed_local_digest`, `test_tag_lab_policy_is_explicitly_non_productive`, `test_assert_safe_rejects_a_mutable_tag_in_a_digest_cell`, `test_invalid_local_digest_is_rejected`. | No se inventaron digests: el inventario real no tiene `local_digest` y su perfil declara `tag-lab-only`. Falta construir las seis imágenes y anotar el digest observado antes de usar `digest-required`. La verificación del ID local contra el digest revisado es E3 (Docker). |
+| RV-02 | **Cerrado** | `_service` ya no elimina `security_opt` cuando hay `cap_add`; todo servicio lleva exactamente `["no-new-privileges:true"]`. `assert_safe` exige esa lista exacta (rechaza ausencia, `false`, `seccomp=unconfined`, duplicados y opciones extra), valida `cap_add` como lista única y limitada a `NET_BIND_SERVICE`, y mantiene usuario no-root. La plantilla estática `profiles/honeypots.example.yaml` también incorpora NNP en los motores con capabilities. | `test_assert_safe_requires_exactly_no_new_privileges` (5 variantes), `test_capability_engines_keep_no_new_privileges`, `test_rendered_cell_is_safe_and_internal`. | Con NNP activo, las file capabilities de la imagen no pueden elevar privilegios en `exec`; los motores que escuchan por debajo de 1024 requieren verificar en Linux que `NET_BIND_SERVICE` sigue en el conjunto efectivo, o remapear a puertos altos con DNAT. Inventario de binarios setuid/file-capabilities por imagen: pendiente E3. |
+
+**Suites offline ejecutadas para este cierre** (sin Docker, sin red, sin
+servicios; el test de Compose se omite si falta el plugin):
+
+```bash
+python3.12 -m pytest -p no:cacheprovider
+ruff check \
+  runtime/honeypots.py app/services/deception/integrations/ecs.py \
+  tests/hardening/test_honeypots.py tests/deception/test_external_adapters.py \
+  tests/conftest.py
+pyright \
+  runtime/honeypots.py app/services/deception/integrations/ecs.py
+```
+
+Resultado: **521 passed, 4 skipped, 173 subtests passed**; `ruff` sin
+hallazgos; `pyright` 0 errores (1 warning preexistente por `yaml` sin stubs).
+
+**Decisiones**
+
+1. **HMAC con clave, no hash de copia redactada.** Un hash sobre una copia
+   redactada elimina la contraseña del oráculo, pero colapsa eventos que solo
+   difieren en la credencial y rompe la idempotencia de `event.id`. El HMAC
+   conserva ambas propiedades sin permitir verificación offline.
+2. **La clave no vive en el repositorio ni en el documento.** Se provisiona en
+   un archivo privado del servicio; el módulo falla cerrado si no existe. No se
+   añadió ningún valor por defecto ni secreto de ejemplo.
+3. **No se inventaron digests de imagen.** Sin imágenes construidas no hay
+   digest revisado. El perfil de referencia declara `tag-lab-only` de forma
+   explícita y el camino `digest-required` es el valor por defecto del perfil,
+   de modo que una copia sin política falla cerrada.
+4. **NNP no se negocia con capabilities.** Se mantiene `NET_BIND_SERVICE`
+   únicamente donde el inventario lo declara, pero NNP queda siempre activo.
+   La compatibilidad efectiva se valida en Linux, no en el render.
+5. **`runtime/normalize` queda fuera de este cierre.** Su `event_id` derivado
+   del registro crudo v1 no se publica como `dystopia.raw_reference`; se
+   documenta como residual para una futura migración a identidad keyed.
+
+**Pendientes Linux (E3) para estos tres cierres**
+
+- Provisionar `DYSTOPIA_EVENT_REFERENCE_KEY_FILE` con un archivo 0600 propiedad
+  del servicio y verificar que la referencia no es reproducible sin la clave.
+- Construir las seis imágenes, registrar `local_digest`, cambiar el perfil a
+  `image_policy: digest-required` y verificar que el ID local coincide con el
+  digest renderizado antes de cualquier apply.
+- Inventariar binarios setuid/file-capabilities en cada imagen y comprobar los
+  privilegios efectivos con NNP activo; si `NET_BIND_SERVICE` no basta para los
+  puertos <1024, remapear a puertos altos y DNAT en la celda.
+- Ejecutar `docker compose config` con el perfil autorizado y confirmar que no
+  hay tags sin digest, `security_opt` ausente ni binds fuera del contexto.

@@ -5,6 +5,7 @@ syntax check, which is skipped when Docker is unavailable. No container,
 network, port or host path is created or changed.
 """
 import copy
+import hashlib
 import json
 import os
 import shutil
@@ -84,8 +85,10 @@ def test_rendered_cell_is_safe_and_internal():
         assert service["logging"]["options"]["max-size"] == "10m"
         assert service["ulimits"]["core"] == {"soft": 0, "hard": 0}
         assert "noexec" in service["tmpfs"][0] and "nosuid" in service["tmpfs"][0]
-        assert "no-new-privileges:true" in service.get("security_opt", []) \
-            or service.get("cap_add") == ["NET_BIND_SERVICE"]
+        # RV-02: NNP is mandatory for every service; cap_add is never a
+        # substitute for it.
+        assert service["security_opt"] == ["no-new-privileges:true"]
+        assert service["labels"]["dystopia.image-policy"] == "tag-lab-only"
         for mount in service["volumes"]:
             assert mount["type"] == "bind"
             assert mount["source"].startswith("/")
@@ -208,6 +211,114 @@ def render_cell_objects():
     inventory = honeypots.load_inventory(INVENTORY)
     cell = honeypots.Cell.from_mapping(raw_profile())
     return inventory, cell
+
+
+def synthetic_local_digests():
+    """Synthetic per-engine digests; no real image was built or pulled."""
+    data = raw_inventory()
+    for engine in data["engines"]:
+        engine["image"]["local_digest"] = "sha256:" + hashlib.sha256(
+            engine["id"].encode("ascii")
+        ).hexdigest()
+    return data
+
+
+def digest_cell_objects():
+    inventory = honeypots.Inventory.from_mapping(
+        synthetic_local_digests(), INVENTORY.parent)
+    cell = honeypots.Cell.from_mapping(
+        {**raw_profile(), "image_policy": "digest-required"})
+    return inventory, cell
+
+
+def test_digest_policy_renders_immutable_image_references():
+    inventory, cell = digest_cell_objects()
+    document = honeypots.render_cell(inventory, cell)
+    assert document["services"]
+    for name, service in document["services"].items():
+        engine = inventory.engine(name)
+        assert service["image"] == f"dystopia/honeypot-{name}@{engine.local_digest}"
+        assert ":" not in service["image"].split("@", 1)[0].rsplit("/", 1)[1]
+        assert service["labels"]["dystopia.image-policy"] == "digest-required"
+
+
+def test_digest_policy_fails_closed_without_a_reviewed_local_digest():
+    inventory = honeypots.load_inventory(INVENTORY)
+    cell = honeypots.Cell.from_mapping(
+        {**raw_profile(), "image_policy": "digest-required"})
+    with pytest.raises(honeypots.HoneypotError):
+        honeypots.render_cell(inventory, cell)
+
+
+def test_tag_lab_policy_is_explicitly_non_productive():
+    _, document = rendered()
+    for service in document["services"].values():
+        assert service["labels"]["dystopia.image-policy"] == "tag-lab-only"
+        assert "@sha256:" not in service["image"]
+    report = honeypots.validate(INVENTORY, PROFILE)
+    assert report["image_policy"] == "tag-lab-only"
+    assert report["mutable_images"]
+    assert any("lab-only" in warning for warning in report["warnings"])
+
+
+def test_assert_safe_rejects_a_mutable_tag_in_a_digest_cell():
+    inventory, cell = digest_cell_objects()
+    clean = honeypots.render_cell(inventory, cell)
+    tampered = copy.deepcopy(clean)
+    tampered["services"]["cowrie"]["image"] = "dystopia/honeypot-cowrie:3.1.4"
+    with pytest.raises(honeypots.HoneypotError):
+        honeypots.assert_safe(tampered, cell)
+
+
+def test_assert_safe_rejects_a_digest_document_relabelled_as_tag_lab():
+    inventory, cell = digest_cell_objects()
+    clean = honeypots.render_cell(inventory, cell)
+    tampered = copy.deepcopy(clean)
+    tampered["services"]["cowrie"]["labels"]["dystopia.image-policy"] = "tag-lab-only"
+    with pytest.raises(honeypots.HoneypotError):
+        honeypots.assert_safe(tampered, cell)
+
+
+@pytest.mark.parametrize("security_opt", [
+    None,
+    [],
+    ["no-new-privileges:false"],
+    ["no-new-privileges:true", "seccomp=unconfined"],
+    ["no-new-privileges:true", "no-new-privileges:true"],
+])
+def test_assert_safe_requires_exactly_no_new_privileges(security_opt):
+    inventory, cell = render_cell_objects()
+    clean = honeypots.render_cell(inventory, cell)
+    tampered = copy.deepcopy(clean)
+    service = tampered["services"]["cowrie"]
+    if security_opt is None:
+        service.pop("security_opt")
+    else:
+        service["security_opt"] = security_opt
+    with pytest.raises(honeypots.HoneypotError):
+        honeypots.assert_safe(tampered, cell)
+
+
+def test_capability_engines_keep_no_new_privileges():
+    inventory, cell = render_cell_objects()
+    document = honeypots.render_cell(inventory, cell)
+    for name, service in document["services"].items():
+        if inventory.engine(name).capabilities:
+            assert service["cap_add"] == list(inventory.engine(name).capabilities)
+            assert service["security_opt"] == ["no-new-privileges:true"]
+
+
+@pytest.mark.parametrize("digest", [
+    "sha256:" + "0" * 64,
+    "not-a-digest",
+    "sha256:" + "a" * 63,
+    123,
+])
+def test_invalid_local_digest_is_rejected(digest):
+    data = raw_inventory()
+    data["engines"][0]["image"]["local_digest"] = digest
+    with pytest.raises(honeypots.HoneypotError):
+        honeypots.Inventory.from_mapping(data, INVENTORY.parent)
 
 
 def test_projects_and_networks_are_unique_per_cell():

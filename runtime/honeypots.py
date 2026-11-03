@@ -26,9 +26,11 @@ SCHEMA_INVENTORY = "dystopia.honeypots/v1"
 SCHEMA_CELL = "dystopia.honeypots.cell/v1"
 ENGINES = ("cowrie", "opencanary", "dionaea", "heralding", "redishoneypot", "endlessh")
 MODES = ("internal", "loopback-lab")
+IMAGE_POLICIES = ("digest-required", "tag-lab-only")
 ACTIVATION_PROFILE = "authorized-activation"
 BLOCKED_ACTIONS = ("apply", "up", "down")
 ALLOWED_CAPABILITIES = frozenset({"NET_BIND_SERVICE"})
+REQUIRED_SECURITY_OPT = ("no-new-privileges:true",)
 FORBIDDEN_TARGET_PREFIXES = ("/proc", "/sys", "/dev", "/var/run/docker.sock")
 INVENTORY_LIMIT = 256 * 1024
 PROFILE_LIMIT = 64 * 1024
@@ -36,6 +38,10 @@ PROFILE_LIMIT = 64 * 1024
 _IMAGE = re.compile(
     r"[a-z0-9][a-z0-9._-]*(?::[0-9]{1,5})?/[a-z0-9][a-z0-9._/-]*:"
     r"[A-Za-z0-9_][A-Za-z0-9._-]{0,127}\Z"
+)
+_PINNED_IMAGE = re.compile(
+    r"[a-z0-9][a-z0-9._-]*(?::[0-9]{1,5})?/[a-z0-9][a-z0-9._/-]*"
+    r"@sha256:[0-9a-f]{64}\Z"
 )
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _COMMIT = re.compile(r"[0-9a-f]{7,40}\Z")
@@ -295,6 +301,7 @@ class Engine:
     dockerfile: str
     image: str
     base_digest: str
+    local_digest: str | None
     upstream_commit: str
     user: str
     config_file: str
@@ -329,6 +336,12 @@ class Engine:
         if type(self.base_digest) is not str or _DIGEST.fullmatch(self.base_digest) is None \
                 or self.base_digest == "sha256:" + "0" * 64:
             _fail("base_digest must be a real sha256 digest")
+        if self.local_digest is not None:
+            if type(self.local_digest) is not str or _DIGEST.fullmatch(self.local_digest) is None \
+                    or self.local_digest == "sha256:" + "0" * 64:
+                _fail("local_digest must be a real sha256 digest")
+            if self.local_digest == self.base_digest:
+                _fail("local_digest must be the built image digest, not the base digest")
         if type(self.upstream_commit) is not str or _COMMIT.fullmatch(self.upstream_commit) is None:
             _fail("upstream_commit must be a hexadecimal commit")
         match = _USER.fullmatch(self.user) if type(self.user) is str else None
@@ -386,6 +399,18 @@ class Engine:
     def _inside(path, root):
         return path == root or path.startswith(root.rstrip("/") + "/")
 
+    @property
+    def image_repository(self):
+        """Reviewed ``dystopia/honeypot-*`` repository without the mutable tag."""
+        return self.image.rsplit(":", 1)[0]
+
+    @property
+    def pinned_reference(self):
+        """Immutable reference used for digest-required renders (RT-10)."""
+        if self.local_digest is None:
+            _fail(f"{self.name} has no reviewed local image digest")
+        return f"{self.image_repository}@{self.local_digest}"
+
     @classmethod
     def from_mapping(cls, value):
         data = _mapping(value, "engine", {
@@ -395,7 +420,7 @@ class Engine:
         build = _mapping(data["build"], "build", {"context", "dockerfile"})
         image = _mapping(data["image"], "image",
                          {"local_image", "base_reference", "base_digest", "upstream_commit"},
-                         {"package"})
+                         {"package", "local_digest"})
         config = _mapping(data["config"], "config", {"file", "target"})
         logs = _mapping(data["logs"], "logs", {"path", "format", "fixture"}, {"secondary_paths"})
         volumes = []
@@ -408,6 +433,7 @@ class Engine:
             name=data["id"], description=data["description"], device_id=data["device_id"],
             context=build["context"], dockerfile=build["dockerfile"],
             image=image["local_image"], base_digest=image["base_digest"],
+            local_digest=image.get("local_digest"),
             upstream_commit=image["upstream_commit"], user=data["user"],
             config_file=config["file"], config_target=config["target"],
             ports=tuple(Port.from_mapping(item, "port")
@@ -506,11 +532,16 @@ class Cell:
     data_root: str
     engines: tuple[str, ...]
     publish: Mapping[str, tuple[Publication, ...]]
+    # RT-10: digest-required is the fail-closed default. ``tag-lab-only`` must
+    # be declared explicitly and renders a visibly non-production document.
+    image_policy: str = "digest-required"
 
     def __post_init__(self):
         _integer(self.cell, "cell", 1, 254)
         if self.mode not in MODES:
             _fail("cell mode must be internal or loopback-lab")
+        if self.image_policy not in IMAGE_POLICIES:
+            _fail("cell image_policy must be digest-required or tag-lab-only")
         _host_path(self.data_root, "data_root")
         if not self.data_root.startswith("/var/lib/dystopia/"):
             _fail("data_root must live under /var/lib/dystopia")
@@ -562,7 +593,7 @@ class Cell:
     def from_mapping(cls, value):
         data = _mapping(value, "cell profile",
                         {"schema", "cell", "mode", "data_root", "engines"},
-                        {"publish"})
+                        {"publish", "image_policy"})
         if data["schema"] != SCHEMA_CELL:
             _fail("unsupported cell profile schema")
         engines = _sequence(data["engines"], "engines", 1, len(ENGINES))
@@ -584,7 +615,8 @@ class Cell:
                 _fail("duplicate published container port")
             publish[engine] = tuple(parsed)
         return cls(cell=data["cell"], mode=data["mode"], data_root=data["data_root"],
-                   engines=engines, publish=MappingProxyType(publish))
+                   engines=engines, publish=MappingProxyType(publish),
+                   image_policy=data.get("image_policy", "digest-required"))
 
 
 def load_inventory(path):
@@ -607,6 +639,13 @@ def load_cell(path, inventory):
     return cell
 
 
+def _image_reference(cell, engine):
+    """Return the image reference allowed by the cell's explicit policy."""
+    if cell.image_policy == "digest-required":
+        return engine.pinned_reference
+    return engine.image
+
+
 def _service(inventory, cell, engine):
     resources = engine.resources
     repository = inventory.base.resolve().parent.parent.parent
@@ -615,7 +654,7 @@ def _service(inventory, cell, engine):
     config_source = _reviewed_file(context, engine.config_file, "config file")
     service = {
         "container_name": cell.container(engine.name),
-        "image": engine.image,
+        "image": _image_reference(cell, engine),
         "build": {
             "context": str(context),
             "dockerfile": dockerfile.name,
@@ -664,12 +703,14 @@ def _service(inventory, cell, engine):
             "dystopia.engine": engine.name,
             "dystopia.role": "honeypot",
             "dystopia.activation": "manual-authorized-only",
+            "dystopia.image-policy": cell.image_policy,
         },
         "networks": [cell.network(engine.name)],
     }
     if engine.capabilities:
-        # File capabilities require no-new-privileges to stay disabled.
-        service.pop("security_opt")
+        # RT-10/RV-02: the capability is granted explicitly, but NNP is never
+        # dropped. Effective privileges (and any setuid/file-cap binaries in
+        # the image) must be verified in Linux before activation.
         service["cap_add"] = list(engine.capabilities)
     publications = cell.publish.get(engine.name, ())
     if publications:
@@ -744,7 +785,16 @@ def assert_safe(document, cell):
             raise HoneypotError(f"{name} must not restart automatically")
         if service.get("cap_drop") != ["ALL"]:
             raise HoneypotError(f"{name} must drop all capabilities")
-        if not set(service.get("cap_add", ())) <= ALLOWED_CAPABILITIES:
+        # RV-02: NNP is mandatory and is never traded for cap_add. Without it,
+        # a setuid/file-capability binary inside the image can raise privileges
+        # inside the workload even though the container started non-root.
+        if service.get("security_opt") != list(REQUIRED_SECURITY_OPT):
+            raise HoneypotError(
+                f"{name} must set security_opt exactly to {list(REQUIRED_SECURITY_OPT)}"
+            )
+        cap_add = service.get("cap_add", [])
+        if type(cap_add) is not list or not set(cap_add) <= ALLOWED_CAPABILITIES \
+                or len(set(cap_add)) != len(cap_add):
             raise HoneypotError(f"{name} adds an unnecessary capability")
         if not _USER.fullmatch(str(service.get("user", ""))) \
                 or str(service["user"]).startswith("0:"):
@@ -752,10 +802,29 @@ def assert_safe(document, cell):
         if service.get("profiles") != [ACTIVATION_PROFILE]:
             raise HoneypotError(f"{name} must stay behind the activation profile")
         image = service.get("image")
-        if type(image) is not str or image.endswith(":latest") \
-                or _IMAGE.fullmatch(image) is None \
-                or not image.startswith("dystopia/honeypot-"):
-            raise HoneypotError(f"{name} image must be a pinned non-latest tag")
+        if type(image) is not str or not image.startswith("dystopia/honeypot-"):
+            raise HoneypotError(f"{name} image must use the reviewed honeypot namespace")
+        # RT-10: the activation path may not accept a mutable tag. A tag is
+        # tolerated only when the cell explicitly opted into tag-lab-only,
+        # which is reported as non-production and remains behind the blocked
+        # activation path.
+        if cell.image_policy == "digest-required":
+            if _PINNED_IMAGE.fullmatch(image) is None \
+                    or image.rsplit("@", 1)[1] == "sha256:" + "0" * 64:
+                raise HoneypotError(
+                    f"{name} image must be pinned by @sha256 under "
+                    "image_policy=digest-required"
+                )
+        else:
+            if _IMAGE.fullmatch(image) is None \
+                    or image.rsplit(":", 1)[1].lower() in ("latest", "stable", "main", "edge"):
+                raise HoneypotError(
+                    f"{name} image must be an explicit non-floating tag in tag-lab-only mode"
+                )
+        labels = service.get("labels")
+        if type(labels) is not dict \
+                or labels.get("dystopia.image-policy") != cell.image_policy:
+            raise HoneypotError(f"{name} must declare the image policy label")
         for key in ("mem_limit", "cpus", "pids_limit", "healthcheck", "logging", "ulimits"):
             if key not in service:
                 raise HoneypotError(f"{name} is missing {key}")
@@ -804,12 +873,31 @@ def validate(path, profile):
     if published:
         warnings.append("loopback-lab publishes ports; this is not containment evidence")
     if any(engine.capabilities for engine in (inventory.engine(name) for name in cell.engines)):
-        warnings.append("NET_BIND_SERVICE is granted to engines listening below port 1024")
+        warnings.append(
+            "NET_BIND_SERVICE is granted with no-new-privileges still enabled; "
+            "effective privileges need Linux verification"
+        )
+    if cell.image_policy != "digest-required":
+        warnings.append(
+            "image_policy=tag-lab-only renders mutable tags; this is "
+            "lab-only and activation remains blocked"
+        )
+    unpinned = [name for name in cell.engines
+                if inventory.engine(name).local_digest is None]
+    if unpinned:
+        warnings.append(
+            "no reviewed local_digest for: " + ", ".join(sorted(unpinned))
+        )
     return {
         "inventory_revision": inventory.revision,
         "cell": cell.cell,
         "project": cell.project,
         "mode": cell.mode,
+        "image_policy": cell.image_policy,
+        "image_digests": {
+            name: inventory.engine(name).local_digest for name in cell.engines
+        },
+        "mutable_images": sorted(unpinned),
         "engines": list(cell.engines),
         "services": sorted(document["services"]),
         "networks": sorted(document["networks"]),

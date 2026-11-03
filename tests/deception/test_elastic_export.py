@@ -68,18 +68,20 @@ def seed(path, events, sensor=SENSOR):
     return store.ingest(sensor, events)
 
 
-def elastic(queue_path, transport):
-    config = ElasticsearchConfig(
-        enabled=True,
-        url="https://127.0.0.1:9200",
-        index="deception-events",
-        queue_path=queue_path,
-        max_retries=0,
-        backoff=0.0,
-        max_backoff=0.0,
-        batch_size=1000,
-    )
-    return ElasticPublisher(config, transport=transport, sleep=lambda _: None)
+def elastic(queue_path, transport, **changes):
+    values = {
+        "enabled": True,
+        "url": "https://127.0.0.1:9200",
+        "index": "deception-events",
+        "queue_path": queue_path,
+        "max_retries": 0,
+        "backoff": 0.0,
+        "max_backoff": 0.0,
+        "batch_size": 1000,
+    }
+    values.update(changes)
+    return ElasticPublisher(ElasticsearchConfig(**values), transport=transport,
+                            sleep=lambda _: None)
 
 
 class FakeTransport:
@@ -258,6 +260,46 @@ def test_elastic_outage_keeps_events_queued_and_does_not_touch_ingestion(tmp_pat
     assert {call["id"] for call in healthy_transport.calls} == set(
         native_svc.runtime_document_id(SENSOR, event["event_id"]) for event in stored
     )
+
+
+def test_permanent_rejections_do_not_stop_the_exporter(tmp_path):
+    events = tmp_path / "events.db"
+    state = tmp_path / "state.db"
+    queue = tmp_path / "queue.db"
+    stored = [runtime_event(), runtime_event(type="connect")]
+    seed(events, stored)
+
+    # A permanently rejected row already occupies the old (shared) queue bound.
+    victim = native_svc.normalize(runtime_event(), resolver=TOPOLOGY, sensor=SENSOR)
+    assert victim is not None
+    prefill = elastic(queue, FakeTransport(400), max_events=1, dead_letter_events=5)
+    assert prefill.publish(victim) is False
+    assert prefill.health()["permanent"] == 1
+    assert prefill.health()["live"] == 0
+
+    # New events still flow through the single live slot, one bounded step at
+    # a time.  Under the old shared budget the first enqueue stopped the cursor.
+    transport = FakeTransport(201, 201)
+    publisher = elastic(queue, transport, max_events=1, dead_letter_events=5)
+    exporter = NativeExporter(
+        events, state, publisher=publisher, resolver=TOPOLOGY, batch_size=1,
+    )
+    for _ in stored:
+        summary = exporter.run_once()
+        assert summary["read"] == 1
+        assert summary["enqueued"] == 1
+        assert summary["delivered"] == 1
+        assert summary["stopped"] is None
+        assert summary["cursor"] is not None
+
+    health = publisher.health()
+    assert health["live"] == 0
+    assert health["permanent"] == 1
+    assert health["operator_action_required"] is True
+    assert len(transport.calls) == len(stored)
+
+    # The cursor advanced: the permanent row does not re-read events forever.
+    assert exporter.run_once()["read"] == 0
 
 
 def test_stale_pending_enrichment_does_not_block_or_duplicate(tmp_path):

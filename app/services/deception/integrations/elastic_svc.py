@@ -12,6 +12,11 @@ The optional queue is a private, bounded SQLite file using the same
 queue is bounded in memory. Queue-full is an explicit failure, never a silent
 acknowledgement. Captured payloads/credentials are never logged.
 
+Failure classes are explicit: transport errors and 5xx/408/425/429 are
+retryable; 401/403 are authentication failures retried only after the private
+API key file changes; other 4xx are permanent and move to a separately bounded
+dead-letter area that does not consume the live queue budget.
+
 Configuration (all disabled unless ``DYSTOPIA_ELASTIC_ENABLED=true``):
 ``DYSTOPIA_ELASTIC_URL``, ``_INDEX`` (default ``deception-events``),
 ``_API_KEY_FILE``, ``_CA_FILE``, ``_TIMEOUT``, ``_RETRIES``, ``_BACKOFF``,
@@ -47,7 +52,11 @@ from runtime.storage import CapacityError, database
 log = logging.getLogger(__name__)
 
 INDEX_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,254}$")
-PERMANENT_STATUSES = {400, 401, 403, 404, 405, 413, 422}
+# 401/403 are authentication failures, not data defects: they are retried
+# after a controlled credential reload and never consume the live budget.
+AUTH_STATUSES = {401, 403}
+PERMANENT_STATUSES = {400, 404, 405, 413, 422}
+TRANSIENT_STATUSES = {408, 425, 429}
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS elastic_queue (
     event_id TEXT PRIMARY KEY,
@@ -55,6 +64,7 @@ CREATE TABLE IF NOT EXISTS elastic_queue (
     payload BLOB NOT NULL,
     attempts INTEGER NOT NULL DEFAULT 0,
     permanent INTEGER NOT NULL DEFAULT 0,
+    auth INTEGER NOT NULL DEFAULT 0,
     last_error TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS elastic_queue_order ON elastic_queue(permanent, queued);
@@ -84,6 +94,8 @@ class ElasticsearchConfig:
     max_events: int = 10000
     max_bytes: int = 64 * 1024 * 1024
     batch_size: int = 200
+    dead_letter_events: int = 2000
+    dead_letter_bytes: int = 8 * 1024 * 1024
 
     @classmethod
     def from_env(cls, env: Optional[Mapping[str, str]] = None) -> "ElasticsearchConfig":
@@ -122,6 +134,9 @@ class ElasticsearchConfig:
             max_events=number("DYSTOPIA_ELASTIC_QUEUE_MAX", 10000, int),
             max_bytes=number("DYSTOPIA_ELASTIC_QUEUE_BYTES", 64 * 1024 * 1024, int),
             batch_size=number("DYSTOPIA_ELASTIC_BATCH", 200, int),
+            dead_letter_events=number("DYSTOPIA_ELASTIC_DEAD_LETTER_MAX", 2000, int),
+            dead_letter_bytes=number(
+                "DYSTOPIA_ELASTIC_DEAD_LETTER_BYTES", 8 * 1024 * 1024, int),
         )
 
     def validate(self) -> "ElasticsearchConfig":
@@ -162,6 +177,10 @@ class ElasticsearchConfig:
             raise ValueError("queue bytes out of range")
         if not 1 <= self.batch_size <= 1000:
             raise ValueError("batch size out of range")
+        if not 1 <= self.dead_letter_events <= 1_000_000:
+            raise ValueError("dead-letter max events out of range")
+        if not 1024 <= self.dead_letter_bytes <= 1024 * 1024 * 1024:
+            raise ValueError("dead-letter bytes out of range")
         for label, value in (
             ("API key", self.api_key_file), ("CA", self.ca_file),
         ):
@@ -181,17 +200,8 @@ class _HttpTransport:
     def __init__(self, config: ElasticsearchConfig):
         self.base = config.url.rstrip("/")
         self.index_name = config.index
-        self._api_key = None
-        if config.api_key_file is not None:
-            data = read_private(config.api_key_file, max_bytes=1024).strip()
-            if not data or b"\n" in data or b"\r" in data:
-                raise ValueError("invalid elasticsearch API key file")
-            key = data.decode("ascii")
-            if key.lower().startswith("apikey "):
-                key = key[7:].strip()
-            if not key:
-                raise ValueError("invalid elasticsearch API key file")
-            self._api_key = key
+        self._api_key_file = config.api_key_file
+        self._api_key = self._read_api_key()
         context = ssl.create_default_context(
             cafile=str(config.ca_file) if config.ca_file is not None else None
         )
@@ -199,6 +209,31 @@ class _HttpTransport:
         self.opener = build_opener(
             ProxyHandler({}), HTTPSHandler(context=context), _NoRedirect()
         )
+
+    def _read_api_key(self) -> Optional[str]:
+        if self._api_key_file is None:
+            return None
+        data = read_private(self._api_key_file, max_bytes=1024).strip()
+        if not data or b"\n" in data or b"\r" in data:
+            raise ValueError("invalid elasticsearch API key file")
+        key = data.decode("ascii")
+        if key.lower().startswith("apikey "):
+            key = key[7:].strip()
+        if not key:
+            raise ValueError("invalid elasticsearch API key file")
+        return key
+
+    def reload_api_key(self) -> bool:
+        """Re-read the private key file; True only when the value changed.
+
+        Called after 401/403 so an operator rotation is picked up without
+        restarting the exporter, while an unchanged key stops the retry loop.
+        """
+        replacement = self._read_api_key()
+        if replacement == self._api_key:
+            return False
+        self._api_key = replacement
+        return True
 
     def index(self, event_id: str, document: dict, timeout: float) -> int:
         # ``_create`` is the explicit-id write accepted by both data streams
@@ -250,11 +285,18 @@ class ElasticPublisher:
         self._counters = {
             "acked": 0, "duplicates": 0, "errors": 0, "discarded": 0,
             "retries": 0, "conflicts": 0, "permanent_failures": 0,
+            "auth_failures": 0, "credential_reloads": 0,
+            "credential_reload_failures": 0, "dead_letter_evicted": 0,
         }
         if self.enabled and self.config.queue_path is not None:
             self.config.queue_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
             with self._db() as db:
                 db.executescript(_SCHEMA)
+                columns = {row[1] for row in db.execute(
+                    "PRAGMA table_info(elastic_queue)")}
+                if "auth" not in columns:
+                    db.execute(
+                        "ALTER TABLE elastic_queue ADD COLUMN auth INTEGER NOT NULL DEFAULT 0")
 
     @contextmanager
     def _db(self):
@@ -315,7 +357,7 @@ class ElasticPublisher:
                             return False
                         count, used = db.execute(
                             "SELECT COUNT(*),COALESCE(SUM(length(payload)),0) "
-                            "FROM elastic_queue"
+                            "FROM elastic_queue WHERE permanent=0"
                         ).fetchone()
                         if (count >= self.config.max_events
                                 or used + len(payload) > self.config.max_bytes):
@@ -345,17 +387,18 @@ class ElasticPublisher:
                     self._count("conflicts")
                     raise DocumentConflict("event.id reused with different content")
                 return False
-            used = self._memory_bytes
+            live = [value for value in self._memory.values() if not value["permanent"]]
+            used = sum(len(value["payload"]) for value in live)
             if (
-                len(self._memory) >= self.config.max_events
+                len(live) >= self.config.max_events
                 or used + len(payload) > self.config.max_bytes
             ):
                 self._count("discarded")
-                log.error("elastic_queue_full queued=%d bytes=%d", len(self._memory), used)
+                log.error("elastic_queue_full queued=%d bytes=%d", len(live), used)
                 raise CapacityError("elastic queue full")
             self._memory[event_id] = {
                 "queued": self._clock(), "payload": payload, "attempts": 0,
-                "permanent": 0, "last_error": "",
+                "permanent": 0, "auth": 0, "last_error": "",
             }
             self._memory_bytes += len(payload)
             return True
@@ -397,8 +440,14 @@ class ElasticPublisher:
             log.error("elastic_queue_read_failed")
             return 0
         for event_id, document, attempts in pending:
-            if self._deliver(event_id, document, attempts):
+            outcome = self._deliver(event_id, document, attempts)
+            if outcome == "delivered":
                 delivered += 1
+            elif outcome == "auth":
+                # One auth failure pauses the whole flush: retrying every row
+                # with the same rejected key would only burn the batch window.
+                log.warning("elastic_flush_paused_auth_required")
+                break
         return delivered
 
     def flush_event(self, event_id: str) -> bool:
@@ -407,7 +456,54 @@ class ElasticPublisher:
         row = self._get(event_id)
         if row is None:
             return False
-        return self._deliver(*row)
+        return self._deliver(*row) == "delivered"
+
+    def dead_letter_records(self, limit: Optional[int] = None) -> list[dict]:
+        """Decoded permanently rejected documents for operator export."""
+        if self._database():
+            with self._db() as db:
+                sql = ("SELECT payload FROM elastic_queue WHERE permanent=1 "
+                       "ORDER BY queued")
+                params: tuple = ()
+                if limit is not None:
+                    sql += " LIMIT ?"
+                    params = (max(0, int(limit)),)
+                rows = db.execute(sql, params).fetchall()
+            return [json.loads(payload) for payload, in rows]
+        with self._lock:
+            values = [value for value in self._memory.values() if value["permanent"]]
+            values.sort(key=lambda value: value["queued"])
+            if limit is not None:
+                values = values[:max(0, int(limit))]
+            return [json.loads(value["payload"]) for value in values]
+
+    def export_dead_letter(self, output, limit: Optional[int] = None) -> int:
+        """Write permanently rejected documents to a private JSON-lines file."""
+        records = self.dead_letter_records(limit)
+        from runtime.localfiles import replace_private
+        data = b"".join(
+            json.dumps(record, sort_keys=True, ensure_ascii=True,
+                       separators=(",", ":")).encode() + b"\n"
+            for record in records
+        )
+        replace_private(output, data)
+        return len(records)
+
+    def purge_dead_letter(self) -> int:
+        """Explicit operator deletion of the permanent/dead-letter area."""
+        if self._database():
+            with self._db() as db:
+                count = db.execute(
+                    "SELECT COUNT(*) FROM elastic_queue WHERE permanent=1"
+                ).fetchone()[0]
+                db.execute("DELETE FROM elastic_queue WHERE permanent=1")
+            return count
+        with self._lock:
+            keys = [key for key, value in self._memory.items() if value["permanent"]]
+            for key in keys:
+                value = self._memory.pop(key)
+                self._memory_bytes -= len(value["payload"])
+            return len(keys)
 
     def _pending(self, limit: int) -> list[tuple[str, dict, int]]:
         if limit <= 0:
@@ -465,7 +561,23 @@ class ElasticPublisher:
                 return None
             return event_id, document, value["attempts"]
 
-    def _deliver(self, event_id: str, document: dict, attempts: int) -> bool:
+    def _refresh_credentials(self) -> bool:
+        reloader = getattr(self._transport, "reload_api_key", None)
+        if not callable(reloader):
+            return False
+        try:
+            changed = bool(reloader())
+        except (OSError, ValueError, PermissionError):
+            self._count("credential_reload_failures")
+            log.error("elastic_credential_reload_failed")
+            return False
+        if changed:
+            self._count("credential_reloads")
+            log.warning("elastic_credentials_reloaded")
+        return changed
+
+    def _deliver(self, event_id: str, document: dict, attempts: int) -> str:
+        """Return delivered/deferred/permanent/auth; never loops on a bad key."""
         attempt = 0
         error = "unknown"
         while True:
@@ -480,18 +592,34 @@ class ElasticPublisher:
                 if 200 <= status < 300:
                     self._count("acked")
                     self._remove(event_id)
-                    return True
+                    return "delivered"
                 if status == 409:
                     # op_type=create already has this id; desired state reached.
                     self._count("duplicates")
                     self._remove(event_id)
-                    return True
-                if status in PERMANENT_STATUSES or (status < 500 and status not in {408, 429}):
+                    return "delivered"
+                if status in AUTH_STATUSES:
+                    self._count("errors")
+                    self._count("auth_failures")
+                    error = f"HTTP {status}"
+                    if self._refresh_credentials() and attempt < self.config.max_retries:
+                        self._count("retries")
+                        attempt += 1
+                        continue
+                    self._mark_auth(event_id, attempts + attempt + 1, error)
+                    log.error(
+                        "elastic_auth_blocked event_id=%s status=%d "
+                        "retry_after_rotation=true", event_id, status)
+                    return "auth"
+                if status in PERMANENT_STATUSES or (
+                        status < 500 and status not in TRANSIENT_STATUSES):
                     self._count("errors")
                     self._count("permanent_failures")
                     self._mark_failure(event_id, attempts + attempt + 1, 1, f"HTTP {status}")
-                    log.error("elastic_rejected event_id=%s status=%d", event_id, status)
-                    return False
+                    log.error(
+                        "elastic_rejected event_id=%s status=%d "
+                        "operator_action_required=true", event_id, status)
+                    return "permanent"
                 error = f"HTTP {status}"
                 self._count("errors")
             if attempt >= self.config.max_retries:
@@ -500,27 +628,97 @@ class ElasticPublisher:
                     "elastic_delivery_deferred event_id=%s error=%s",
                     event_id, error,
                 )
-                return False
+                return "deferred"
             self._count("retries")
             delay = min(self.config.max_backoff, self.config.backoff * (2 ** attempt))
             if delay > 0:
                 self._sleep(delay)
             attempt += 1
 
+    def _enforce_dead_letter_budget_db(self, db) -> int:
+        count, used = db.execute(
+            "SELECT COUNT(*),COALESCE(SUM(length(payload)),0) "
+            "FROM elastic_queue WHERE permanent=1").fetchone()
+        evicted = 0
+        while (count > self.config.dead_letter_events
+               or used > self.config.dead_letter_bytes):
+            row = db.execute(
+                "SELECT event_id,length(payload) FROM elastic_queue "
+                "WHERE permanent=1 ORDER BY queued LIMIT 1").fetchone()
+            if row is None:
+                break
+            db.execute("DELETE FROM elastic_queue WHERE event_id=?", (row[0],))
+            count -= 1
+            used -= row[1]
+            evicted += 1
+        if evicted:
+            self._count("dead_letter_evicted", evicted)
+            log.error("elastic_dead_letter_evicted events=%d operator_action_required=true",
+                      evicted)
+        return evicted
+
+    def _enforce_dead_letter_budget_memory(self) -> int:
+        evicted = 0
+        permanent = [
+            (key, value) for key, value in self._memory.items()
+            if value["permanent"]
+        ]
+        used = sum(len(value["payload"]) for _, value in permanent)
+        while (len(permanent) > self.config.dead_letter_events
+               or used > self.config.dead_letter_bytes):
+            key, value = min(permanent, key=lambda item: item[1]["queued"])
+            permanent = [item for item in permanent if item[0] != key]
+            self._memory.pop(key, None)
+            self._memory_bytes -= len(value["payload"])
+            used -= len(value["payload"])
+            evicted += 1
+        if evicted:
+            self._count("dead_letter_evicted", evicted)
+            log.error("elastic_dead_letter_evicted events=%d operator_action_required=true",
+                      evicted)
+        return evicted
+
     def _mark_failure(self, event_id: str, attempts: int, permanent: int, error: str) -> None:
         safe_error = error[:64]
         if self._database():
             with self._db() as db:
+                db.execute("BEGIN IMMEDIATE")
                 db.execute(
-                    "UPDATE elastic_queue SET attempts=?,permanent=?,last_error=? WHERE event_id=?",
+                    "UPDATE elastic_queue SET attempts=?,permanent=?,auth=0,last_error=? "
+                    "WHERE event_id=?",
                     (attempts, permanent, safe_error, event_id),
                 )
+                if permanent:
+                    self._enforce_dead_letter_budget_db(db)
+                db.execute("COMMIT")
         else:
             with self._lock:
                 value = self._memory.get(event_id)
                 if value is not None:
                     value["attempts"] = attempts
                     value["permanent"] = permanent
+                    value["auth"] = 0
+                    value["last_error"] = safe_error
+                if permanent:
+                    self._enforce_dead_letter_budget_memory()
+
+    def _mark_auth(self, event_id: str, attempts: int, error: str) -> None:
+        """Keep the row retryable; 401/403 must not become a permanent defect."""
+        safe_error = error[:64]
+        if self._database():
+            with self._db() as db:
+                db.execute(
+                    "UPDATE elastic_queue SET attempts=?,permanent=0,auth=1,last_error=? "
+                    "WHERE event_id=?",
+                    (attempts, safe_error, event_id),
+                )
+        else:
+            with self._lock:
+                value = self._memory.get(event_id)
+                if value is not None:
+                    value["attempts"] = attempts
+                    value["permanent"] = 0
+                    value["auth"] = 1
                     value["last_error"] = safe_error
 
     def _quarantine(self, event_id: str, attempts: int, error: str) -> None:
@@ -543,7 +741,8 @@ class ElasticPublisher:
         if not self.enabled:
             return {
                 "enabled": False, "queued": 0, "queued_bytes": 0, "lag_seconds": 0,
-                "permanent": 0, "operator_action_required": False,
+                "live": 0, "live_bytes": 0, "permanent": 0, "auth_blocked": 0,
+                "operator_action_required": False,
                 **{f"{key}_since_start": value for key, value in self._counters.items()},
             }
         try:
@@ -553,17 +752,32 @@ class ElasticPublisher:
                         "SELECT COUNT(*),COALESCE(SUM(length(payload)),0),"
                         "MIN(CASE WHEN permanent=0 THEN queued END) FROM elastic_queue"
                     ).fetchone()
-                    permanent = db.execute(
-                        "SELECT COUNT(*) FROM elastic_queue WHERE permanent=1"
+                    live, live_bytes = db.execute(
+                        "SELECT COUNT(*),COALESCE(SUM(length(payload)),0) "
+                        "FROM elastic_queue WHERE permanent=0"
+                    ).fetchone()
+                    permanent, dead_bytes = db.execute(
+                        "SELECT COUNT(*),COALESCE(SUM(length(payload)),0) "
+                        "FROM elastic_queue WHERE permanent=1"
+                    ).fetchone()
+                    auth_blocked = db.execute(
+                        "SELECT COUNT(*) FROM elastic_queue "
+                        "WHERE permanent=0 AND auth=1"
                     ).fetchone()[0]
             else:
                 with self._lock:
                     count, used = len(self._memory), self._memory_bytes
+                    live_values = [
+                        value for value in self._memory.values()
+                        if not value["permanent"]
+                    ]
+                    live = len(live_values)
+                    live_bytes = sum(len(value["payload"]) for value in live_values)
+                    permanent = count - live
+                    dead_bytes = used - live_bytes
+                    auth_blocked = sum(1 for value in live_values if value["auth"])
                     oldest = min(
-                        (v["queued"] for v in self._memory.values() if not v["permanent"]),
-                        default=None,
-                    )
-                    permanent = sum(1 for v in self._memory.values() if v["permanent"])
+                        (value["queued"] for value in live_values), default=None)
         except Exception:  # noqa: BLE001 - diagnostics must not crash the caller
             log.error("elastic_queue_health_unavailable")
             return {"enabled": True, "error": "queue unavailable"}
@@ -571,10 +785,16 @@ class ElasticPublisher:
             "enabled": True,
             "index": self.config.index,
             "queued": count,
+            "live": live,
             "queued_bytes": used,
+            "live_bytes": live_bytes,
             "lag_seconds": max(0, self._clock() - oldest) if oldest else 0,
             "permanent": permanent,
-            "operator_action_required": permanent > 0,
+            "dead_letter_bytes": dead_bytes,
+            "dead_letter_capacity": self.config.dead_letter_events,
+            "dead_letter_capacity_bytes": self.config.dead_letter_bytes,
+            "auth_blocked": auth_blocked,
+            "operator_action_required": permanent > 0 or auth_blocked > 0,
             "queue_persistent": self._database(),
             **{f"{key}_since_start": value for key, value in self._counters.items()},
         }

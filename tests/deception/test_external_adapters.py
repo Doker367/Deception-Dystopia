@@ -4,6 +4,7 @@ All fixtures are inline and synthetic. No service, honeypot, network or
 Elasticsearch instance is contacted.
 """
 
+import hashlib
 import json
 import logging
 import sys
@@ -43,7 +44,7 @@ def assert_contract(document):
     assert document["dystopia"]["instance_id"]
     assert isinstance(document["dystopia"]["decoy_credentials"], str)
     assert isinstance(document["dystopia"]["raw_reference"], str)
-    assert "sha256=" in document["dystopia"]["raw_reference"]
+    assert "hmac-sha256=" in document["dystopia"]["raw_reference"]
     allowed = {
         "schema_version", "device_id", "segment_id", "instance_id",
         "ingest_source", "persona", "decoy_credentials", "raw_reference",
@@ -180,6 +181,65 @@ def test_captured_secrets_and_payloads_stay_in_restricted_fields(caplog):
     )
     assert command["dystopia_restricted"]["payload"]["command"] == "CONFIG GET *"
     assert "payload" not in command["dystopia"]
+
+
+def test_raw_reference_is_not_an_unkeyed_password_oracle():
+    from app.services.deception.integrations import ecs
+
+    raw = dict(SAMPLES["cowrie"])
+    matching = adapters.normalize("cowrie", raw, default_device="srv-1")
+    wrong_guess = adapters.normalize(
+        "cowrie", dict(raw, password="not-the-password"), default_device="srv-1",
+    )
+    assert (
+        matching["dystopia"]["raw_reference"]
+        != wrong_guess["dystopia"]["raw_reference"]
+    )
+    canonical = json.dumps(
+        raw, sort_keys=True, ensure_ascii=True, separators=(",", ":"),
+        default=str, allow_nan=False,
+    ).encode("utf-8")
+    unkeyed = hashlib.sha256(canonical).hexdigest()
+    serialized = json.dumps(matching)
+    assert unkeyed not in serialized
+    key_hex = ecs._reference_key.hex()
+    assert key_hex not in serialized
+
+
+def test_raw_reference_depends_on_the_provisioned_key_only():
+    from app.services.deception.integrations import ecs
+
+    raw = dict(SAMPLES["cowrie"])
+    first = ecs.reference_digest(raw, key=b"a" * 32)
+    same = ecs.reference_digest(raw, key=b"a" * 32)
+    other = ecs.reference_digest(raw, key=b"b" * 32)
+    assert first == same
+    assert first != other
+
+
+def test_raw_reference_fails_closed_without_a_provisioned_key(monkeypatch):
+    from app.services.deception.integrations import ecs
+
+    monkeypatch.setattr(ecs, "_reference_key", None)
+    monkeypatch.delenv(ecs.REFERENCE_KEY_FILE_ENV, raising=False)
+    with pytest.raises(ecs.ReferenceKeyUnavailable):
+        adapters.normalize("cowrie", dict(SAMPLES["cowrie"]), default_device="srv-1")
+
+
+def test_reference_key_is_loaded_from_a_private_file(tmp_path, monkeypatch):
+    import secrets
+
+    from app.services.deception.integrations import ecs
+
+    key = secrets.token_bytes(32)
+    key_file = tmp_path / "event-reference.key"
+    key_file.write_bytes(key.hex().encode("ascii"))
+    key_file.chmod(0o600)
+    monkeypatch.setenv(ecs.REFERENCE_KEY_FILE_ENV, str(key_file))
+    monkeypatch.setattr(ecs, "_reference_key", None)
+    assert ecs.reference_digest({"probe": 1}) == ecs.reference_digest(
+        {"probe": 1}, key=key,
+    )
 
 
 def test_protocol_aliases_and_actions_are_normalised():

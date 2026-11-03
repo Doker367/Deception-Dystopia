@@ -14,6 +14,12 @@
 #   4. Exponer tráfico mediante la política de red/nft de la celda, nunca
 #      publicando puertos de gestión en el host.
 #
+# Imágenes: esta plantilla usa tags explícitos porque no hay `local_digest`
+# revisado para las imágenes construidas. Es material de laboratorio, no
+# producción. El render de `runtime.honeypots` exige `image_policy:
+# digest-required` y `repo@sha256:<digest>` para el camino de activación;
+# no sustituir los tags por digests inventados.
+#
 # Los límites son los recomendados en inventory.yaml.
 name: dystopia-honeypots
 
@@ -68,6 +74,8 @@ services:
       context: ../../docker/deception/opencanary
       dockerfile: Dockerfile
     image: dystopia/honeypot-opencanary:0.9.10
+    security_opt:
+      - no-new-privileges:true
     cap_add:
       - NET_BIND_SERVICE
     expose:
@@ -98,6 +106,8 @@ services:
       context: ../../docker/deception/dionaea
       dockerfile: Dockerfile
     image: dystopia/honeypot-dionaea:0.12.5
+    security_opt:
+      - no-new-privileges:true
     cap_add:
       - NET_BIND_SERVICE
     expose:
@@ -133,6 +143,8 @@ services:
       context: ../../docker/deception/heralding
       dockerfile: Dockerfile
     image: dystopia/honeypot-heralding:ac12724
+    security_opt:
+      - no-new-privileges:true
     cap_add:
       - NET_BIND_SERVICE
     expose:

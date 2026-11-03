@@ -254,6 +254,29 @@ def test_restore_never_overwrites_existing_state(tmp_path, state):
     assert existing.read_text() == "live state"
 
 
+def test_restore_rejects_a_writable_or_symlinked_state_root(tmp_path, state):
+    out = tmp_path / "backup-parent-trust"
+    export_backup(state, out)
+
+    shared = tmp_path / "shared-root"
+    shared.mkdir()
+    shared.chmod(0o777)
+    try:
+        with pytest.raises(PermissionError):
+            backup.restore(out, state_root=shared, control_env_dir=tmp_path / "etc-lax")
+        assert not (shared / "ingest").exists()
+    finally:
+        shared.chmod(0o700)
+
+    real = tmp_path / "real-root"
+    real.mkdir(mode=0o700)
+    link = tmp_path / "linked-root"
+    link.symlink_to(real, target_is_directory=True)
+    with pytest.raises(backup.BackupError):
+        backup.restore(out, state_root=link, control_env_dir=tmp_path / "etc-link")
+    assert not (real / "ingest").exists()
+
+
 def test_restore_rejects_manifest_paths_outside_the_fixed_table(tmp_path, state):
     out = tmp_path / "backup-rogue"
     export_backup(state, out)

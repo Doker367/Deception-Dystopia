@@ -110,6 +110,18 @@ def main(argv=None):
     sensor.add_argument("--endpoint", required=True)
     sensor.add_argument("--ca", type=Path, required=True)
     sensor.add_argument("--token", type=Path, required=True)
+    quarantine = sub.add_parser(
+        "sensor-quarantine",
+        help="export, drain or purge the bounded sensor quarantine")
+    quarantine.add_argument("--spool", type=Path, required=True)
+    quarantine.add_argument("--output", type=Path,
+                            help="JSON-lines destination for export/drain")
+    quarantine.add_argument("--limit", type=int)
+    quarantine_action = quarantine.add_mutually_exclusive_group()
+    quarantine_action.add_argument("--drain", action="store_true",
+                                   help="export durably and then delete exported rows")
+    quarantine_action.add_argument("--purge", action="store_true",
+                                   help="delete quarantined rows without exporting")
     dataplane = sub.add_parser(
         "dataplane", help="one-shot offline log collection; never a daemon or socket")
     dataplane.add_argument("--inventory", type=Path, default=HONEYPOT_INVENTORY)
@@ -233,6 +245,22 @@ def main(argv=None):
             # Metrics are numeric/boolean only; no captured payload or credentials.
             print(json.dumps(spool.health()), flush=True)
             time.sleep(5)
+    elif args.command == "sensor-quarantine":
+        from runtime.sensor import Spool
+        if not args.purge and args.output is None:
+            p.error("--output is required unless --purge is used")
+        spool = Spool(args.spool)
+        if args.purge:
+            handled = spool.purge_quarantine()
+            action = "purged"
+        elif args.drain:
+            handled = spool.drain_quarantine(args.output, args.limit)
+            action = "drained"
+        else:
+            handled = spool.export_quarantine(args.output, args.limit)
+            action = "exported"
+        print(json.dumps({"action": action, "events": handled,
+                          "health": spool.health()}, sort_keys=True))
     elif args.command == "dataplane":
         if args.cell is not None and args.data_root is None:
             p.error("--cell requires --data-root")
