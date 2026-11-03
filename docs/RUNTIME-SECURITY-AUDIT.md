@@ -443,14 +443,14 @@ No se encontró `pickle`, `marshal`, `eval`, `exec` ni carga YAML insegura en el
 Entorno: macOS (`Darwin 25.6.0 arm64`), Python 3.12.14, `HOME` en un directorio temporal, `PYTHONDONTWRITEBYTECODE=1`, sin caché de pytest. No se abrió ningún socket de escucha; los tests ASGI usan `TestClient` in-process y los transportes Elastic están inyectados.
 
 ```bash
-/Users/doker/Deception/.py312/bin/python -m pytest -q -p no:cacheprovider \
+python3.12 -m pytest -q -p no:cacheprovider \
   tests/hardening/test_backup.py tests/hardening/test_cell_gate.py \
   tests/hardening/test_honeypots.py tests/hardening/test_isolation.py \
   tests/deception/test_elastic_export.py \
   tests/deception/test_elasticsearch_publisher.py \
   tests/deception/test_external_adapters.py
 
-/Users/doker/Deception/.py312/bin/python -m pytest -q -p no:cacheprovider \
+python3.12 -m pytest -q -p no:cacheprovider \
   tests/hardening/test_telemetry.py tests/hardening/test_control.py \
   tests/hardening/test_install.py tests/hardening/test_supply_chain.py
 ```
