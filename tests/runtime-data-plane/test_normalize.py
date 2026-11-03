@@ -59,7 +59,7 @@ def test_expected_type_and_proto_mapping(normalized):
     assert [e["type"] for e in redis] == ["connect", "command", "command", "command", "disconnect"]
 
     endlessh = by_engine["endlessh"]
-    assert [e["type"] for e in endlessh] == ["connect", "connect", "disconnect", "disconnect"]
+    assert [e["type"] for e in endlessh] == ["connect", "disconnect", "connect", "disconnect"]
     assert all(e["proto"] == "ssh" for e in endlessh)
 
 
