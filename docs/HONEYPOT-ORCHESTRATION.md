@@ -181,8 +181,10 @@ duplicadas, alias YAML, puertos publicados fuera de `127.0.0.1`, nombres
 - **Las imágenes están fijadas por tag, no por digest.** El inventario
   documenta el digest de la base, no el de la imagen construida. Fijar
   `a@sha256:…` antes de cualquier activación.
-- **No hay colector de logs.** Los binds escriben en el host, pero la ingesta,
-  rotación y cuota no forman parte de esta ola.
+- **Colector offline, no operativo.** `runtime.dataplane` lee fixtures y, con
+  `--data-root`, los binds renderizados; no es un daemon ni sustituye la
+  supervisión, rotación y cuota que siguen pendientes. Ver
+  [`RUNTIME-DATAPLANE.md`](RUNTIME-DATAPLANE.md).
 - **Modo `loopback-lab`**: publica en `127.0.0.1` para pruebas manuales. No es
   un modo de producción y no debe usarse para exponer una celda a tráfico
   real; la exposición legítima es DNAT/nft revisado en la celda.

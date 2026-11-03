@@ -236,6 +236,7 @@ No se comparten contraseñas, API keys ni secretos entre entornos.
 - [Handoff al servidor Linux](docs/LINUX-HANDOFF.md)
 - [Validación de builds de honeypots](docs/HONEYPOT-BUILDS.md)
 - [Orquestador de honeypots por celda](docs/HONEYPOT-ORCHESTRATION.md)
+- [Plano de datos runtime: colector offline](docs/RUNTIME-DATAPLANE.md)
 - [Bundle offline y locks](docs/OFFLINE-BUNDLE.md)
 - [SBOM](docs/SBOM.md)
 - [TLS y reverse proxy de Kibana](deploy/tls-proxy/README.md)

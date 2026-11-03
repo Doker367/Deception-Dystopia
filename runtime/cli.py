@@ -110,6 +110,15 @@ def main(argv=None):
     sensor.add_argument("--endpoint", required=True)
     sensor.add_argument("--ca", type=Path, required=True)
     sensor.add_argument("--token", type=Path, required=True)
+    dataplane = sub.add_parser(
+        "dataplane", help="one-shot offline log collection; never a daemon or socket")
+    dataplane.add_argument("--inventory", type=Path, default=HONEYPOT_INVENTORY)
+    dataplane.add_argument("--spool", type=Path, required=True)
+    dataplane.add_argument("--data-root", type=Path,
+                           help="per-cell host root; omit to read the shipped fixtures")
+    dataplane.add_argument("--cell", type=int,
+                           help="cell number when --data-root is the host storage root")
+    dataplane.add_argument("--max-steps", type=int)
     status = sub.add_parser("status")
     status.add_argument("--events", type=Path)
     status.add_argument("--spool", type=Path)
@@ -216,6 +225,20 @@ def main(argv=None):
             # Metrics are numeric/boolean only; no captured payload or credentials.
             print(json.dumps(spool.health()), flush=True)
             time.sleep(5)
+    elif args.command == "dataplane":
+        if args.cell is not None and args.data_root is None:
+            p.error("--cell requires --data-root")
+        from runtime.dataplane import build
+        from runtime.sensor import Spool
+        try:
+            plane = build(args.inventory, Spool(args.spool),
+                          data_root=args.data_root, cell=args.cell)
+            steps = plane.run(max_steps=args.max_steps)
+        except (OSError, ValueError) as exc:
+            print(json.dumps({"error": type(exc).__name__, "detail": str(exc)},
+                             sort_keys=True), file=sys.stderr)
+            return 2
+        print(json.dumps({"steps": steps, **plane.stats()}, sort_keys=True))
     elif args.command == "status":
         if bool(args.events) == bool(args.spool):
             p.error("select exactly one store")
