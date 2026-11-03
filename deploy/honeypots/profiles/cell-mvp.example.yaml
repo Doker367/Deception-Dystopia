@@ -18,10 +18,22 @@
 #       - {container: 2222, proto: tcp, host: 12222}
 #     endlessh:
 #       - {container: 2222, proto: tcp, host: 12223}
+#
+# Imágenes (RT-10):
+#   digest-required  (por defecto) exige `local_digest` revisado en el
+#                    inventario y renderiza `repo@sha256:<digest>`. Si falta,
+#                    el render falla cerrado.
+#   tag-lab-only     permite tags explícitos del inventario, pero marca el
+#                    documento como no productivo. Este perfil lo declara
+#                    porque todavía no existe un digest revisado de las
+#                    imágenes locales. Nunca usar tags mutables en producción.
+# Para producción, añadir `local_digest` a cada motor y poner aquí
+# `image_policy: digest-required`.
 
 schema: dystopia.honeypots.cell/v1
 cell: 1
 mode: internal
+image_policy: tag-lab-only
 data_root: /var/lib/dystopia/honeypots
 engines:
   - cowrie

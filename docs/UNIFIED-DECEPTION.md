@@ -227,6 +227,11 @@ usan `received_at` del receptor.
 El nivel superior es `dynamic: false`: lo no declarado —incluido
 `dystopia_restricted`— se conserva en `_source` pero no se indexa ni agrega.
 
+`dystopia.raw_reference` es un HMAC-SHA-256 con una clave provisionada fuera
+del documento (`DYSTOPIA_EVENT_REFERENCE_KEY_FILE`), no un hash verificable del
+registro crudo. Sin clave, el normalizador falla cerrado en vez de publicar un
+oráculo de credenciales de baja entropía.
+
 ### 5.3 Identidad e idempotencia
 
 - `event_id` del transporte es un **UUID4** generado por el sensor. Su
@@ -351,10 +356,12 @@ Notas de operación y seguridad:
 
 - Los límites son cotas de laboratorio, no una garantía bajo ataque. Ajustar
   tras medir en la celda autorizada.
-- OpenCanary, Dionaea y Heralding escuchan en puertos < 1024 y usan la file
-  capability `NET_BIND_SERVICE`; por eso su perfil no lleva
-  `no-new-privileges` (esa opción anula las file capabilities). Si la política
-  exige NNP, remapear a puertos altos y hacer DNAT en la celda.
+- OpenCanary, Dionaea y Heralding escuchan en puertos < 1024 y usan la
+  capability `NET_BIND_SERVICE`. Todos los servicios mantienen
+  `no-new-privileges:true`: NNP bloquea la elevación por setuid/file
+  capabilities de la imagen, no la capability concedida al contenedor. Falta
+  verificar en Linux que sigue efectiva para el UID no-root; si no, remapear a
+  puertos altos y hacer DNAT en la celda.
 - Dionaea carga el módulo `curl` y puede intentar conexiones salientes al
   procesar URLs de atacantes. La celda debe denegar egress; no se probó.
 - Cowrie usa `AuthRandom`: no produce `login_success` por defecto.
@@ -365,6 +372,10 @@ Notas de operación y seguridad:
   Kibana sin redacción y mapping aprobados.
 - Las imágenes base y los digests se observaron el 2026-10-29, pero **no** se
   verificó firma, attestation ni reproducibilidad. Los builds no se ejecutaron.
+- No existe `local_digest` de las imágenes construidas: el perfil de referencia
+  declara `image_policy: tag-lab-only` (no productivo). El render por defecto
+  exige digest y falla cerrado; para activar hay que construir, anotar el
+  digest y cambiar el perfil a `digest-required`.
 
 Procedencia y licencias completas: [PROVENANCE.md](../deploy/honeypots/PROVENANCE.md).
 Estado de los adaptadores y diferencias nativo/fixture:

@@ -6,6 +6,14 @@
 #
 # Las rutas de log son rutas dentro del contenedor. Para el adaptador se
 # montan en el host bajo ${DYSTOPIA_HONEYPOT_DATA:-/var/lib/dystopia/honeypots}.
+#
+# Imágenes (RT-10): `base_digest` fija la imagen base del build, pero no la
+# imagen local `dystopia/honeypot-*` que se renderiza. Este inventario no
+# inventa digests locales: no se ha construido ninguna imagen en este
+# entorno. Mientras no exista `local_digest` revisado por motor, el perfil
+# debe declarar `image_policy: tag-lab-only` (modo de laboratorio no
+# productivo). El render con `image_policy: digest-required` exige
+# `local_digest` y emite `repo@sha256:<digest>`; si falta, falla cerrado.
 schema: dystopia.honeypots/v1
 revision: "2026-10-29"
 status: static-reference-only

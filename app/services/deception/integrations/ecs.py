@@ -11,14 +11,24 @@ forbids credential values there, so ``CredentialReference`` exposes captured
 values only to trusted in-process callers while JSON serialisation (and every
 log line) contains a non-secret identifier. Hostile payloads live in the
 top-level, non-indexed ``dystopia_restricted`` object.
+
+The published ``dystopia.raw_reference`` is a **keyed** HMAC, never an unkeyed
+digest of the raw record (RT-09). An unkeyed hash over a record that contains
+a captured password is a confirmation oracle for low-entropy credentials.
+The HMAC key is provisioned by the operator in a private file pointed to by
+``DYSTOPIA_EVENT_REFERENCE_KEY_FILE``; it is never stored in the document, the
+inventory or the repository. If no key is provisioned the module fails closed
+instead of publishing a verifiable digest.
 """
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import hashlib
+import hmac
 import ipaddress
 import json
 import math
+import os
 import re
 from typing import Any, Callable, Mapping, Optional, Protocol
 from uuid import NAMESPACE_URL, uuid5
@@ -274,8 +284,90 @@ def iso_timestamp(value: datetime) -> str:
     )
 
 
-def fingerprint(raw: Any) -> str:
-    """Stable digest of a raw log record; digest, never the content, is stored."""
+REFERENCE_KEY_FILE_ENV = "DYSTOPIA_EVENT_REFERENCE_KEY_FILE"
+MIN_REFERENCE_KEY_BYTES = 32
+MAX_REFERENCE_KEY_BYTES = 4096
+REFERENCE_ALGORITHM = "hmac-sha256"
+
+_reference_key: Optional[bytes] = None
+
+
+class ReferenceKeyUnavailable(RuntimeError):
+    """No operator-provisioned reference key exists; refuse to build an oracle."""
+
+
+def _reference_key_bytes(value: Any) -> bytes:
+    if isinstance(value, str):
+        try:
+            raw = bytes.fromhex(value.strip())
+        except ValueError:
+            raw = value.encode("utf-8")
+    elif isinstance(value, (bytes, bytearray, memoryview)):
+        raw = bytes(value)
+    else:
+        raise TypeError("reference key must be bytes or a hexadecimal string")
+    if not MIN_REFERENCE_KEY_BYTES <= len(raw) <= MAX_REFERENCE_KEY_BYTES:
+        raise ValueError(
+            "reference key must contain "
+            f"{MIN_REFERENCE_KEY_BYTES}..{MAX_REFERENCE_KEY_BYTES} bytes"
+        )
+    return raw
+
+
+def configure_reference_key(key: Any) -> None:
+    """Install the process-wide HMAC key for raw-reference digests.
+
+    Keys come from a provisioned private file, never from this repository. The
+    function deliberately accepts bytes/hex only: there is no built-in default
+    and no value that could end up in a document.
+    """
+    global _reference_key
+    _reference_key = _reference_key_bytes(key)
+
+
+def clear_reference_key() -> None:
+    """Forget the current key (tests and explicit process teardown only)."""
+    global _reference_key
+    _reference_key = None
+
+
+def reference_key_configured() -> bool:
+    return _reference_key is not None or bool(os.environ.get(REFERENCE_KEY_FILE_ENV))
+
+
+def _load_reference_key_file() -> bytes:
+    path = os.environ.get(REFERENCE_KEY_FILE_ENV)
+    if not path:
+        raise ReferenceKeyUnavailable(
+            f"{REFERENCE_KEY_FILE_ENV} is not configured; refusing to publish an "
+            "unkeyed credential-confirmation oracle"
+        )
+    # Imported lazily so the event contract stays standard-library only until a
+    # deployment actually provisions a key file.
+    from runtime.localfiles import read_private
+
+    data = read_private(path, max_bytes=MAX_REFERENCE_KEY_BYTES)
+    try:
+        # Accept hexadecimal text (operator-friendly) or raw key bytes. Only
+        # the text form is stripped: arbitrary key bytes must stay intact.
+        text = data.strip()
+        if re.fullmatch(rb"[0-9a-fA-F]{64,8192}", text):
+            return _reference_key_bytes(text.decode("ascii"))
+        return _reference_key_bytes(data)
+    except (TypeError, ValueError) as error:
+        raise ReferenceKeyUnavailable(
+            f"invalid reference key in {REFERENCE_KEY_FILE_ENV}"
+        ) from error
+
+
+def _active_reference_key() -> bytes:
+    global _reference_key
+    if _reference_key is None:
+        _reference_key = _load_reference_key_file()
+    return _reference_key
+
+
+def _canonical_bytes(raw: Any) -> bytes:
     try:
         canonical = json.dumps(
             raw, sort_keys=True, ensure_ascii=True, separators=(",", ":"),
@@ -283,7 +375,28 @@ def fingerprint(raw: Any) -> str:
         )
     except (TypeError, ValueError):
         canonical = repr(raw)
-    return hashlib.sha256(canonical.encode("utf-8", "replace")).hexdigest()
+    return canonical.encode("utf-8", "replace")
+
+
+def reference_digest(raw: Any, *, key: Any = None) -> str:
+    """Return a keyed, non-reversible reference for a raw log record.
+
+    The key lives outside the published document, so an attacker who can read
+    ``_source``/snapshots/backups cannot test a password guess offline. The
+    digest remains stable for the same key and record, preserving correlation
+    and idempotent ``event.id`` generation.
+    """
+    secret = _reference_key_bytes(key) if key is not None else _active_reference_key()
+    return hmac.new(secret, _canonical_bytes(raw), hashlib.sha256).hexdigest()
+
+
+def fingerprint(raw: Any) -> str:
+    """Deprecated alias for :func:`reference_digest`.
+
+    Kept for callers that imported the old name, but it can never return an
+    unkeyed digest of the raw record: doing so would rebuild the RT-09 oracle.
+    """
+    return reference_digest(raw)
 
 
 def stable_event_id(
@@ -465,7 +578,7 @@ def _raw_reference(
     extra: Any,
 ) -> str:
     """Keyword-safe provenance string; never contains the raw record."""
-    parts = [f"sensor={observer}", f"sha256={raw_fingerprint}"]
+    parts = [f"sensor={observer}", f"{REFERENCE_ALGORITHM}={raw_fingerprint}"]
     if native_id:
         parts.append(f"native_id={bounded_text(native_id, 256)}")
     if isinstance(extra, Mapping):
@@ -550,7 +663,10 @@ def build_event(
     inferred_persona = _persona(persona) or _persona(resolved.get("persona"))
     session = bounded_text(session_id, 256)
     native = bounded_text(native_id, 256)
-    raw_hash = raw_fingerprint or fingerprint(raw)
+    # Caller-supplied identity material is re-keyed too: trusting an unkeyed
+    # digest here would reintroduce the RT-09 oracle through event.id and
+    # raw_reference. The key never enters the document.
+    raw_hash = reference_digest(raw if not raw_fingerprint else raw_fingerprint)
     action = bounded_text(mapping["action"], 128) or normalized_type
     id_suffix = stable_event_id(
         observer=observer,

@@ -190,6 +190,7 @@ Generación de secretos de Elastic:
 | `DYSTOPIA_ELASTIC_URL` | Si el publicador está activo | Endpoint HTTPS de Elasticsearch. |
 | `DYSTOPIA_ELASTIC_INDEX` | No | Data stream destino; por defecto `deception-events`. |
 | `DYSTOPIA_ELASTIC_API_KEY_FILE` | Si el publicador está activo | Fichero privado con la API key. |
+| `DYSTOPIA_EVENT_REFERENCE_KEY_FILE` | Sí para publicar eventos ECS | Fichero privado (0600, sin symlink) con la clave HMAC que produce `dystopia.raw_reference`. Nunca su valor. Sin clave, el normalizador falla cerrado. |
 | `DYSTOPIA_ELASTIC_CA_FILE` | Si el publicador está activo | CA para validar Elasticsearch. |
 | `DYSTOPIA_ELASTIC_TIMEOUT`, `_RETRIES`, `_BACKOFF`, `_MAX_BACKOFF`, `_BATCH` | No | Límites de entrega y reintentos. |
 | `DYSTOPIA_ELASTIC_QUEUE`, `_QUEUE_MAX`, `_QUEUE_BYTES` | No | Cola durable y sus cuotas. Sin ruta, la cola es en memoria. |
@@ -503,7 +504,7 @@ distinto es conflicto; no se sobrescribe.
 | `dystopia.device_id`, `segment_id`, `instance_id`, `persona` | topología declarativa |
 | `dystopia.decoy_credentials` | **identificadores** de credenciales señuelo, nunca valores |
 | `dystopia.decoy_credential_matches`, `decoy_credential_realm` | coincidencias y realm |
-| `dystopia.raw_reference` | referencia opaca al origen |
+| `dystopia.raw_reference` | referencia HMAC keyed al origen (`hmac-sha256=…`); no verificable sin la clave del servicio |
 | `dystopia.ingest_source`, `control_version` | procedencia y versión |
 
 Mapeo: `config/elasticsearch/templates/deception-events-template.json` y
