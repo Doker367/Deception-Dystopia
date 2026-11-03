@@ -249,6 +249,7 @@ No se comparten contraseñas, API keys ni secretos entre entornos.
 - [Informe de validación](docs/UNIFIED-VALIDATION.md)
 - [Roadmap](docs/ROADMAP.md)
 - [Consola operativa](docs/CONSOLE-OPERATIONS.md)
+- [Integración operativa offline](docs/OPS-INTEGRATION.md)
 - [Puente de consulta Unix](docs/QUERY-BRIDGE.md)
 - [Migración](MIGRATION.md)
 - [Procedencia de dependencias](docs/DEPENDENCY-PROVENANCE.md)

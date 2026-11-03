@@ -21,8 +21,10 @@ from runtime.isolation.policy import CellPolicy
 
 
 SCHEMA = "dystopia.cell-verification/v1"
+GATE_REPORT_SCHEMA = "dystopia.cell-verification.report/v1"
 MANIFEST_LIMIT = 64 * 1024
 ARTIFACT_LIMIT = 16 * 1024 * 1024
+POLICY_LIMIT = 16 * 1024
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _KEY_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
 _BOOT_ID = re.compile(r"[0-9a-fA-F-]{36}\Z")
@@ -77,6 +79,25 @@ def _unique_object(pairs):
             raise ValueError("duplicate JSON key")
         result[key] = value
     return result
+
+
+def load_policy(path):
+    """Read and validate a cell policy file without applying anything.
+
+    The policy is parsed from a bounded regular file and validated by the
+    strict isolation contracts. A container policy is recognised by its
+    ``workload`` field; anything else is read as a KVM cell policy. This
+    helper only reads: it never renders, applies or starts anything.
+    """
+    raw = Path(path).read_bytes()
+    if len(raw) > POLICY_LIMIT:
+        raise ValueError("policy exceeds 16 KiB")
+    document = json.loads(raw, object_pairs_hook=_unique_object)
+    if type(document) is not dict:
+        raise ValueError("policy object required")
+    if document.get("workload") == "container":
+        return ContainerCellPolicy.from_mapping(document)
+    return CellPolicy.from_mapping(document)
 
 
 def _canonical(value):
@@ -295,7 +316,49 @@ def evaluate_cell_gate(policy: CellPolicy | ContainerCellPolicy,
     )
 
 
+def gate_report(policies, *, artifacts_path=None):
+    """Read-only activation-gate report for one or more cells.
+
+    ``policies`` maps a cell id to an already validated ``CellPolicy`` or
+    ``ContainerCellPolicy``. Every entry is produced by
+    :func:`evaluate_cell_gate`, so this helper inherits its fail-closed
+    behaviour: it never activates a cell, never inspects the host, never
+    runs a command and never applies a firewall rule.
+
+    The report is deterministic: cells are ordered by id and no state is
+    mutated. ``activation_performed`` is always ``False``.
+    """
+    if type(policies) is not dict:
+        raise TypeError("mapping of cell id to validated policy required")
+    cells = []
+    for cell in sorted(policies):
+        if type(cell) is not int or not 1 <= cell <= 254:
+            raise ValueError("cell id must be an integer in 1..254")
+        policy = policies[cell]
+        if type(policy) not in (CellPolicy, ContainerCellPolicy):
+            raise TypeError("validated CellPolicy or ContainerCellPolicy required")
+        result = evaluate_cell_gate(policy, CellGateContext(cell=cell),
+                                    artifacts_path)
+        entry = result.as_dict()
+        entry["cell"] = cell
+        entry["workload"] = "container" if type(policy) is ContainerCellPolicy else "kvm"
+        cells.append(entry)
+    allowed = bool(cells) and all(item["activation_allowed"] for item in cells)
+    return {
+        "schema": GATE_REPORT_SCHEMA,
+        "action": "gate-report",
+        "dry_run": True,
+        "host_operations": [],
+        "activation_performed": False,
+        "activation_allowed": allowed,
+        "containment_verified": allowed,
+        "trusted_verifier_keys": len(TRUSTED_VERIFIER_KEYS),
+        "cells": cells,
+        "required_artifacts": list(REQUIRED_ARTIFACTS),
+    }
+
+
 __all__ = [
-    "CellGateContext", "CellGateResult", "REQUIRED_ARTIFACTS", "SCHEMA",
-    "evaluate_cell_gate", "policy_sha256",
+    "CellGateContext", "CellGateResult", "GATE_REPORT_SCHEMA", "REQUIRED_ARTIFACTS",
+    "SCHEMA", "evaluate_cell_gate", "gate_report", "load_policy", "policy_sha256",
 ]

@@ -15,6 +15,7 @@ from runtime.localfiles import create_private, read_private
 REPO_ROOT = Path(__file__).resolve().parent.parent
 HONEYPOT_INVENTORY = REPO_ROOT / "deploy/honeypots/inventory.yaml"
 HONEYPOT_PROFILE = REPO_ROOT / "deploy/honeypots/profiles/cell-mvp.example.yaml"
+SYSTEMD_UNITS = REPO_ROOT / "deploy/systemd"
 _CREATE_AT = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\Z")
 
 
@@ -41,6 +42,39 @@ def _backup_common(parser):
 
 def _backup_report(payload, file=None):
     print(json.dumps(payload, sort_keys=True), file=file or sys.stdout, flush=True)
+
+
+def _ops_common(parser):
+    """Offline integration options shared by every ops subcommand."""
+    from runtime import backup
+    parser.add_argument("--state-root", type=Path, default=backup.STATE_ROOT)
+    parser.add_argument("--control-env-dir", type=Path, default=backup.CONTROL_ENV_DIR)
+    parser.add_argument("--elastic-env", type=Path)
+    parser.add_argument("--inventory", type=Path, default=HONEYPOT_INVENTORY)
+    parser.add_argument("--profile", type=Path, default=HONEYPOT_PROFILE)
+    parser.add_argument("--policy", action="append", default=[], metavar="CELL=PATH",
+                        help="validated cell policy file; repeatable")
+    parser.add_argument("--artifacts", type=Path,
+                        help="directory holding cell verification evidence")
+    parser.add_argument("--units-dir", type=Path, default=SYSTEMD_UNITS)
+    return parser
+
+
+def _ops_policies(entries, parser):
+    """Parse ``CELL=PATH`` policy arguments into a deterministic tuple."""
+    policies = []
+    for entry in entries:
+        cell, separator, path = entry.partition("=")
+        if not separator or not path:
+            parser.error(f"--policy must use CELL=PATH: {entry}")
+        try:
+            number = int(cell)
+        except ValueError:
+            parser.error(f"--policy cell must be an integer: {entry}")
+        if not 1 <= number <= 254:
+            parser.error(f"--policy cell must be in 1..254: {entry}")
+        policies.append((number, Path(path)))
+    return tuple(policies)
 
 
 def main(argv=None):
@@ -102,36 +136,26 @@ def main(argv=None):
     brestore = _backup_common(sub.add_parser(
         "backup-restore", help="verify a backup completely, then restore; never overwrites"))
     brestore.add_argument("--backup", type=Path, required=True)
+    ops = sub.add_parser(
+        "ops", help="offline integration report: control, backup, honeypots and runtime")
+    ops_sub = ops.add_subparsers(dest="ops_action", required=True)
+    _ops_common(ops_sub.add_parser(
+        "status", help="read-only integrated operations report"))
+    _ops_common(ops_sub.add_parser(
+        "verify", help="offline verification; exits 2 when a check fails"))
 
     args = p.parse_args(argv)
-    # The offline gate is read-only; do not even change process umask on that path.
-    if args.command != "cells":
+    # The offline gate and the offline report are read-only; do not even change
+    # the process umask on those paths.
+    if args.command not in {"cells", "ops"}:
         os.umask(0o077)
     if args.command == "cells":
         from runtime.cell_gate import (
-            REQUIRED_ARTIFACTS, CellGateContext, evaluate_cell_gate,
+            REQUIRED_ARTIFACTS, CellGateContext, evaluate_cell_gate, load_policy,
         )
-        from runtime.isolation.containers import ContainerCellPolicy
-        from runtime.isolation.policy import CellPolicy
-
-        def unique_object(pairs):
-            document = {}
-            for key, value in pairs:
-                if key in document:
-                    raise ValueError("duplicate JSON key")
-                document[key] = value
-            return document
 
         try:
-            raw = args.policy.read_bytes()
-            if len(raw) > 16384:
-                raise ValueError("policy exceeds 16 KiB")
-            document = json.loads(raw, object_pairs_hook=unique_object)
-            if type(document) is not dict:
-                raise ValueError("policy object required")
-            policy = (ContainerCellPolicy.from_mapping(document)
-                      if document.get("workload") == "container"
-                      else CellPolicy.from_mapping(document))
+            policy = load_policy(args.policy)
             result = evaluate_cell_gate(
                 policy, CellGateContext(cell=args.cell), artifacts_path=args.artifacts,
             )
@@ -234,6 +258,22 @@ def main(argv=None):
                                  indent=2, sort_keys=True))
         except honeypots.HoneypotError as exc:
             p.error(str(exc))
+    elif args.command == "ops":
+        from runtime import ops
+        context = ops.OpsContext(
+            state_root=args.state_root,
+            control_env_dir=args.control_env_dir,
+            elastic_env=args.elastic_env,
+            inventory=args.inventory,
+            profile=args.profile,
+            policies=_ops_policies(args.policy, p),
+            artifacts_path=args.artifacts,
+            units_dir=args.units_dir,
+        )
+        report = ops.verify(context) if args.ops_action == "verify" else ops.status(context)
+        print(json.dumps(report, indent=2, sort_keys=True))
+        if args.ops_action == "verify" and not report["ok"]:
+            return 2
     elif args.command in {"backup-plan", "backup-export", "backup-restore"}:
         from runtime import backup as contract
         try:

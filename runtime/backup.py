@@ -23,6 +23,11 @@ Design rules
   SHA-256) before anything is written, existing target files are never
   overwritten, and destinations are re-derived from the fixed artifact
   table instead of trusting manifest paths.
+
+The module also exposes an integrated, read-only view of the runtime state
+that sits behind the same table (:func:`runtime_state`). It reuses the fixed
+artifact table and the runtime health snapshots: it never writes, never
+starts a service and never materializes a secret value.
 """
 import hashlib
 import json
@@ -35,6 +40,7 @@ import time
 from dataclasses import dataclass
 
 SCHEMA = "dystopia.backup/v1"
+RUNTIME_STATE_SCHEMA = "dystopia.backup.runtime-state/v1"
 STATE_ROOT = Path("/var/lib/dystopia")
 CONTROL_ENV_DIR = Path("/etc/dystopia")
 INSTALLED_RELEASE = Path("/opt/dystopia/current")
@@ -79,6 +85,64 @@ class ArtifactSpec:
 
 ROLES = ("control", "manager", "ingest", "analytics")
 KINDS = ("file", "sqlite", "env")
+
+
+@dataclass(frozen=True)
+class UncoveredArtifact:
+    """Runtime state a provisioned host owns but the backup table omits.
+
+    ``base`` selects the root the relative path hangs from: ``"state"`` for
+    the Dystopia state root and ``"control_env"`` for the control
+    environment directory. ``runtime_key`` names the runtime snapshot the
+    integrated report exposes for it, if any.
+    """
+
+    role: str
+    relpath: str
+    base: str
+    kind: str
+    reason: str
+    runtime_key: str | None = None
+    health_role: str | None = None
+
+    def __post_init__(self):
+        if self.base not in ("state", "control_env"):
+            raise BackupError(f"unknown uncovered artifact base: {self.base}")
+        if self.kind not in KINDS and self.kind != "directory":
+            raise BackupError(f"unknown uncovered artifact kind: {self.kind}")
+
+
+# Declared, reviewed gaps: runtime state that exists on a provisioned host
+# and is deliberately NOT part of the control-plane backup table. They are
+# reported (read-only) so an operator sees the gap instead of assuming that
+# a backup covers the whole host.
+UNCOVERED_RUNTIME_STATE = (
+    UncoveredArtifact(
+        "sensor", "sensor/spool.db", "state", "sqlite",
+        "queued sensor telemetry is drained, never restored; identities are "
+        "re-emitted with rotate-sensor",
+        runtime_key="sensor_spool", health_role="sensor"),
+    UncoveredArtifact(
+        "sensor", "sensor/token", "state", "file",
+        "sensor bearer token is a secret and is never exported"),
+    UncoveredArtifact(
+        "sensor", "sensor/ca.crt", "state", "file",
+        "sensor trust anchor belongs to the host TLS material"),
+    UncoveredArtifact(
+        "sensor", "sensor.env", "control_env", "file",
+        "sensor environment file carries the ingestion endpoint, not "
+        "control-plane state"),
+    UncoveredArtifact(
+        "ingest", "ingest.env", "control_env", "file",
+        "ingest environment file carries the bind address; the TLS material "
+        "it points to is covered, the file itself is not"),
+    UncoveredArtifact(
+        "cell", "cells", "state", "directory",
+        "cell data roots are operator-provisioned workloads, not control-plane state"),
+    UncoveredArtifact(
+        "honeypot", "honeypots", "state", "directory",
+        "honeypot cell logs are workload data, not control-plane state"),
+)
 
 # Reviewed allowlist of non-secret settings exported from environment files.
 # Deny by default: keys not listed here (plus ILM_* retention days) must not
@@ -253,6 +317,137 @@ def plan(specs=None, *, state_root=STATE_ROOT, control_env_dir=CONTROL_ENV_DIR,
             "operator-reviewed offline storage, root-only permissions",
             "restore drill against a disposable copy, never the live host first",
         ],
+    }
+
+
+# --------------------------------------------------------------------------
+# Integrated runtime state (read-only)
+# --------------------------------------------------------------------------
+
+
+def exported_setting_names(spec):
+    """Names (never values) of the allowlisted non-secret settings of an env artifact.
+
+    The values are deliberately dropped: the integrated report states *which*
+    reviewed settings are configured, never what they contain.
+    """
+    allowlist, prefixes = _env_policy_for(spec)
+    settings = parse_exportable_settings(spec.source, allowlist=allowlist,
+                                         prefixes=prefixes)
+    return sorted(settings)
+
+
+def _runtime_snapshot(path, role) -> dict[str, object]:
+    """Read-only runtime snapshot; never writes and never creates a database."""
+    from runtime.health import snapshot
+    try:
+        return {"status": "available", **snapshot(path, role)}
+    except (FileNotFoundError, OSError, ValueError, sqlite3.Error) as exc:
+        return {"status": "unavailable", "detail": f"{type(exc).__name__}: {exc}"}
+
+
+def uncovered_sources(state_root=STATE_ROOT, control_env_dir=CONTROL_ENV_DIR):
+    """Resolve the declared runtime state that the backup table does not cover."""
+    roots = {"state": Path(state_root), "control_env": Path(control_env_dir)}
+    resolved: list[dict[str, object]] = []
+    for item in UNCOVERED_RUNTIME_STATE:
+        source = roots[item.base] / item.relpath
+        entry: dict[str, object] = {
+            "role": item.role,
+            "relpath": item.relpath,
+            "base": item.base,
+            "path": str(source),
+            "kind": item.kind,
+            "reason": item.reason,
+        }
+        if item.kind == "directory":
+            present = source.is_dir() and not source.is_symlink()
+        else:
+            present = source.is_file() and not source.is_symlink()
+        entry["status"] = "present" if present else "missing"
+        if present and item.kind != "directory":
+            try:
+                entry["bytes"] = source.stat().st_size
+            except OSError as exc:
+                entry["status"] = "unreadable"
+                entry["detail"] = f"{type(exc).__name__}: {exc}"
+        if present and entry["status"] == "present" and item.health_role:
+            entry["runtime"] = _runtime_snapshot(source, item.health_role)
+        resolved.append(entry)
+    return resolved
+
+
+def runtime_state(specs=None, *, state_root=STATE_ROOT, control_env_dir=CONTROL_ENV_DIR,
+                  elastic_env=None):
+    """Integrated, read-only report of the runtime state behind the backup table.
+
+    The report reuses the fixed artifact table and the runtime health
+    snapshots (``runtime.health``). It never writes, never starts a service,
+    never opens a socket and never materializes a secret value: environment
+    artifacts are described by the names of their allowlisted settings only.
+
+    The result is a report, not an action: it states what is present, what is
+    readable and what the backup contract deliberately does not carry.
+    """
+    if specs is None:
+        specs = default_artifact_specs(state_root, control_env_dir, elastic_env)
+    artifacts: list[dict[str, object]] = []
+    missing_required: list[str] = []
+    for spec in specs:
+        present = spec.source.is_file() and not spec.source.is_symlink()
+        entry: dict[str, object] = {
+            "role": spec.role,
+            "path": spec.relpath,
+            "source_path": str(spec.source),
+            "kind": spec.kind,
+            "required": spec.required,
+            "status": "present" if present else "missing",
+        }
+        if present:
+            try:
+                entry["bytes"] = spec.source.stat().st_size
+                if spec.kind == "env":
+                    entry["settings_exported"] = exported_setting_names(spec)
+            except (OSError, UnicodeDecodeError) as exc:
+                # A report must not crash, nor read a secret, just because an
+                # artifact is unreadable for the reporting user.
+                entry["status"] = "unreadable"
+                entry["detail"] = f"{type(exc).__name__}: {exc}"
+                if spec.kind == "env":
+                    entry["settings_exported"] = []
+        elif spec.required:
+            missing_required.append(str(spec.source))
+        artifacts.append(entry)
+    artifacts.sort(key=lambda item: (item["path"], item["source_path"]))
+
+    runtime: dict[str, object] = {}
+    by_path = {spec.relpath: spec for spec in specs}
+    ingest = by_path.get("artifacts/ingest/events.db")
+    if ingest is None:
+        runtime["ingest"] = {"status": "undeclared"}
+    elif ingest.source.is_file() and not ingest.source.is_symlink():
+        runtime["ingest"] = _runtime_snapshot(ingest.source, "ingest")
+    else:
+        runtime["ingest"] = {"status": "missing"}
+
+    uncovered = uncovered_sources(state_root, control_env_dir)
+    for declared, item in zip(UNCOVERED_RUNTIME_STATE, uncovered):
+        if declared.runtime_key:
+            runtime[declared.runtime_key] = item.get("runtime", {"status": "missing"})
+
+    return {
+        "schema": RUNTIME_STATE_SCHEMA,
+        "action": "runtime-state",
+        "dry_run": True,
+        "host_operations": [],
+        "state_root": str(Path(state_root)),
+        "control_env_dir": str(Path(control_env_dir)),
+        "artifacts": artifacts,
+        "runtime": runtime,
+        "uncovered": uncovered,
+        "missing_required": sorted(missing_required),
+        "ready_for_backup": not missing_required,
+        "secrets": "excluded",
     }
 
 
@@ -526,7 +721,9 @@ __all__ = [
     "ANALYTICS_EXPORT_KEYS", "ArtifactSpec", "BackupError", "CONTROL_ENV_DIR",
     "CONTROL_EXPORT_KEYS",
     "INSTALLED_RELEASE", "KINDS", "MAX_DB_BYTES", "MAX_FILE_BYTES", "REPO_ROOT",
-    "ROLES", "SCHEMA", "STATE_ROOT", "backup_id", "create_backup",
-    "default_artifact_specs", "default_elastic_env", "file_digest",
-    "manifest_bytes", "parse_exportable_settings", "plan", "restore",
+    "ROLES", "RUNTIME_STATE_SCHEMA", "SCHEMA", "STATE_ROOT",
+    "UNCOVERED_RUNTIME_STATE", "UncoveredArtifact", "backup_id", "create_backup",
+    "default_artifact_specs", "default_elastic_env", "exported_setting_names",
+    "file_digest", "manifest_bytes", "parse_exportable_settings", "plan",
+    "restore", "runtime_state", "uncovered_sources",
 ]
