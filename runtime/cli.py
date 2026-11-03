@@ -134,6 +134,10 @@ def main(argv=None):
     gate.add_argument("--cell", type=int, required=True)
     gate.add_argument("--policy", type=Path, required=True)
     gate.add_argument("--artifacts", type=Path)
+    gate.add_argument("--host-id", help="expected provisioned host identity")
+    gate.add_argument("--boot-id", help="expected kernel boot id for this host")
+    gate.add_argument("--now", help="evaluation time (YYYY-MM-DDTHH:MM:SSZ)")
+    gate.add_argument("--challenge", help="expected verifier challenge/nonce")
     _backup_common(sub.add_parser(
         "backup-plan", help="read-only backup plan; fails if state artifacts are missing"))
     bexport = _backup_common(sub.add_parser(
@@ -166,7 +170,11 @@ def main(argv=None):
         try:
             policy = load_policy(args.policy)
             result = evaluate_cell_gate(
-                policy, CellGateContext(cell=args.cell), artifacts_path=args.artifacts,
+                policy,
+                CellGateContext(cell=args.cell, host_id=args.host_id,
+                                boot_id=args.boot_id, now=args.now,
+                                challenge=args.challenge),
+                artifacts_path=args.artifacts,
             )
             payload = result.as_dict()
         except (OSError, ValueError, TypeError) as exc:
@@ -308,6 +316,8 @@ def main(argv=None):
                                 "artifact_count": len(report["artifacts"]),
                                 "required_count": report["required_count"],
                                 "optional_count": report["optional_count"],
+                                "classification": report["classification"],
+                                "secret_artifacts": report["secret_artifacts"],
                                 "artifacts": report["artifacts"]})
             elif args.command == "backup-export":
                 if args.created_at is not None \
@@ -321,6 +331,8 @@ def main(argv=None):
                                 "backup_id": contract.backup_id(manifest),
                                 "created_at": manifest["created_at"],
                                 "artifact_count": manifest["artifact_count"],
+                                "classification": manifest["policy"]["classification"],
+                                "secret_artifacts": manifest["policy"]["secret_artifacts"],
                                 "manifest_bytes": len(data)})
             else:
                 report = contract.restore(args.backup, state_root=args.state_root,
@@ -328,6 +340,7 @@ def main(argv=None):
                 _backup_report({"schema": report["schema"], "action": report["action"],
                                 "backup_dir": report["backup_dir"],
                                 "created_at": report["created_at"],
+                                "classification": report["classification"],
                                 "restored": sorted(report["restored"]),
                                 "overwrites": report["overwrites"]})
         except (contract.BackupError, FileExistsError, FileNotFoundError,

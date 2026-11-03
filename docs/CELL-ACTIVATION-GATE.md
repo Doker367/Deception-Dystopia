@@ -5,13 +5,16 @@
 **Estado:** bloqueado por defecto. Este comando no activa celdas.
 
 `runtime.cell_gate.evaluate_cell_gate()` recibe una `CellPolicy` o
-`ContainerCellPolicy` ya validada, el ID esperado mediante `CellGateContext` y,
-opcionalmente, un directorio de evidencias. Produce un resultado determinista con
-`activation_allowed`, `containment_verified`, `blocking_reasons`,
-`required_artifacts` y `detail`. La CLI equivalente es:
+`ContainerCellPolicy` ya validada, el ID esperado y las identidades/ventana de
+observación mediante `CellGateContext` y, opcionalmente, un directorio de
+evidencias. Produce un resultado determinista con `activation_allowed`,
+`containment_verified`, `blocking_reasons`, `required_artifacts` y `detail`.
+La CLI equivalente es:
 
 ```text
-python -m runtime.cli cells gate --cell N --policy PATH [--artifacts DIR]
+python -m runtime.cli cells gate --cell N --policy PATH [--artifacts DIR] \
+    [--host-id HOST_ID] [--boot-id BOOT_ID] [--now YYYY-MM-DDTHH:MM:SSZ] \
+    [--challenge NONCE]
 ```
 
 El gate solo lee la política y los artefactos; no ejecuta `nft`, Docker, KVM,
@@ -24,6 +27,14 @@ Compose. Un resultado bloqueado devuelve código de salida `2` y JSON en stdout.
   la representación JSON canónica de esa política.
 - El manifiesto `cell-N.attestation.json`, con esquema exacto v1, identidad de
   Ubuntu 24.04/kernel/boot y registros para los ocho artefactos requeridos.
+- **Frescura:** `issued_at` y `expires_at` en UTC (`YYYY-MM-DDTHH:MM:SSZ`),
+  `issued_at < expires_at`, ventana máxima de una hora y evaluación dentro de
+  la ventana con el margen de reloj configurado.
+- **Identidad del host:** `host_id` del manifiesto debe coincidir con
+  `CellGateContext.host_id`; `platform.boot_id` debe coincidir con
+  `CellGateContext.boot_id`. Si el contexto no aporta esas identidades, el
+  gate falla cerrado. Un `challenge` opcional se compara cuando el contexto
+  lo exige.
 - Que cada archivo de evidencia sea regular, acotado, único, coincida con su SHA-256
   declarado y tenga resultado `pass`.
 - Una firma Ed25519 sobre el manifiesto, hecha por una clave pública confiable
@@ -34,9 +45,10 @@ Compose. Un resultado bloqueado devuelve código de salida `2` y JSON en stdout.
 Los archivos de una carpeta de evidencias son referenciados por nombre de archivo
 (sin subdirectorios) por el manifiesto. Cada registro tiene exactamente `file`,
 `sha256` y `result`. El manifiesto incluye `schema`, `cell`, `workload`,
-`policy_sha256`, `verification`, `platform`, `verifier_key_id`, `artifacts` y
-`signature`. La firma cubre todos los campos salvo `signature`; los archivos se
-ligan al manifiesto mediante sus hashes.
+`policy_sha256`, `verification`, `platform`, `verifier_key_id`, `artifacts`,
+`issued_at`, `expires_at`, `host_id`, `challenge` y `signature`. La firma cubre
+todos los campos salvo `signature`; los archivos se ligan al manifiesto mediante
+sus hashes.
 
 El trust store v1 (`TRUSTED_VERIFIER_KEYS`) empieza intencionalmente vacío. Por
 tanto, **este commit siempre bloquea**, incluso ante informes bien formados. Solo
@@ -46,10 +58,30 @@ No se incluye una clave privada, un generador de evidencia ni un camino para
 saltarse esa revisión. `apply_succeeded=True` no altera la decisión: la aceptación
 de una transacción no es prueba independiente ni puede omitir el gate.
 
+## Frescura, host y replay
+
+La firma prueba origen e integridad del paquete, no que la contención se haya
+observado en este host y en este arranque. Por eso el contrato exige que el
+manifiesto incluya:
+
+- `issued_at`/`expires_at`: ventana UTC con duración máxima de una hora;
+- `host_id`: identidad aprovisionada del host que consumiría la celda;
+- `platform.boot_id`: arranque observado que debe coincidir con el esperado;
+- `challenge` opcional: nonce que el contexto puede exigir.
+
+El contexto (`CellGateContext`) aporta `host_id`, `boot_id`, `now`,
+`challenge` y `clock_skew_seconds`; **nunca** se confía en esos valores si solo
+aparecen en el bundle. Un bundle reutilizado en otro arranque, fuera de la
+ventana, con otro host o con otro challenge se rechaza. Esto reduce el replay,
+pero no sustituye la revisión del verificador ni una prueba E3 en Linux.
+
 ## Qué no valida ni hace
 
-- No observa el kernel, no descubre topología, no ejecuta pruebas de paquetes ni
-  comprueba que la evidencia siga vigente en el host que consumiría la celda.
+- No observa el kernel, no descubre topología, no ejecuta pruebas de paquetes,
+  no verifica que `host_id`/`boot_id` aportados por el operador sean los reales
+  del host y no sustituye la verificación de vigencia en el host por parte del
+  verificador independiente. El contrato valida la ventana y la coincidencia,
+  no la calidad de la observación.
 - No instala ni evalúa reglas nftables, no arranca/paraliza workload, y no otorga
   autorización operativa. Es un verificador de contrato de evidencia, no una
   frontera de seguridad ni un activador.
@@ -122,11 +154,14 @@ de producción. Mantener la activación bloqueada durante la toma de evidencias.
 - [ ] Probar enlace cerrado y barrera de arranque, parada/cuarentena, caída del
       verificador, reinicio y persistencia; comprobar que cualquier incertidumbre
       conserva el bloqueo.
-- [ ] Guardar artefactos brutos, generar manifiesto v1 ligado a celda y hash de
-      política, revisar resultados y firmar con una clave de verificador protegida.
+- [ ] Guardar artefactos brutos, generar manifiesto v1 ligado a celda, hash de
+      política, `host_id`, `boot_id`, `issued_at`/`expires_at` y, si aplica,
+      challenge; revisar resultados y firmar con una clave de verificador
+      protegida.
 - [ ] Revisar el paquete fuera del workload. Fijar la clave pública confiable en un
-      cambio separado y revisado; ejecutar el gate offline y conservar JSON, hashes,
-      capturas, aprobación y decisión operativa.
+      cambio separado y revisado; ejecutar el gate offline con el contexto real de
+      host/boot/ventana y conservar JSON, hashes, capturas, aprobación y decisión
+      operativa. Probar replay en otro boot, expiración y host incorrecto.
 - [ ] No usar este gate como comando de arranque: una aprobación futura solo sería
       un prerrequisito para un camino de activación separado, revisado y autorizado.
 

@@ -38,6 +38,10 @@ Esta es una revisión acotada, no una auditoría exhaustiva del repositorio ni u
 | RV-01 | SHA-256 del backup no autentica contra un escritor malicioso | Decisión de custodia | E1 |
 | RV-02 | `no-new-privileges` no es una invariante universal de Compose | Endurecimiento | E1 + E2 (render) |
 
+**Estado de remediación:** la rama `wave/security-fixes` cierra RT-01 a RT-05 en
+el contrato offline (código, docs y tests); el detalle y los límites E3 están en
+la sección 7. RT-06 a RT-10 y RV-01/RV-02 siguen abiertos.
+
 ## 1. Fronteras de confianza y flujo de datos
 
 ```text
@@ -569,10 +573,52 @@ Scripts efímeros fuera del repositorio, con directorios temporales y fixtures i
 - [ ] Ningún backup se publica como “sin secretos” mientras contenga `server.key` o estado de credenciales.
 - [ ] Todas las pruebas P0/P1 anteriores pasan offline; las E3 se ejecutan en un laboratorio Linux desechable y autorizado, con resultados registrados sin secretos.
 
-## 7. Conclusión
+## 7. Estado de remediación (rama `wave/security-fixes`)
+
+**Fecha:** 2026-11-02. **Base:** `feature/runtime-wave`. **Entorno de prueba:**
+macOS arm64, Python 3.12.14, sin red, sin Docker/KVM/systemd/nftables y sin
+datos reales. Nada se activó: `TRUSTED_VERIFIER_KEYS` sigue vacío y
+`honeypots apply/up/down` y `LocalCellBackend.activate()` siguen bloqueados.
+
+| ID | Estado en contrato offline | Cambios principales | Evidencia offline | Límite / pendiente |
+|---|---|---|---|---|
+| RT-01 | **Cerrado** | El backup se declara `secret-bearing`; cada entrada lleva `secret`; `server.key` y `sensors.db` se clasifican como secretos; CLI, manifest y runbook dejan de afirmar “secrets excluded”. | `test_backup_is_declared_secret_bearing`, `test_environment_secrets_never_land_in_any_backup_file`, `test_plan_and_runtime_state_never_claim_a_secret_free_backup` recorren todos los archivos. | El cifrado en reposo del almacén offline es obligación operativa; el código no lo implementa. |
+| RT-02 | **Cerrado** | `load_inventory`, `render_cell` y `assert_safe` resuelven el contexto, abren el leaf con `O_NOFOLLOW`, exigen archivo regular no symlink y comprueban que el resuelto queda dentro del contexto revisado. | Tests con symlink absoluto, relativo, cadena y `/etc/passwd`; `assert_safe` rechaza binds fuera del contexto y symlinks. | Validación Compose real y Docker quedan para E3. |
+| RT-03 | **Cerrado** | Restore exige conjunto exacto, `artifact_count`, esquema por entrada, estados válidos y todos los `required`; preflight de destinos/padres; staging privado; publicación sin overwrite y rollback. | Tests de required `missing`, conjunto incompleto, `artifact_count` erróneo, estado inválido, colisión tardía y fallo de publicación con cero archivos finales. | No se promete atomicidad entre filesystems distintos; el caso normal queda todo-o-nada con rollback. |
+| RT-04 | **Cerrado en contrato; E3 pendiente** | Manifiesto con `issued_at`, `expires_at`, `host_id`, `challenge`; contexto con host, boot, ahora, challenge y skew; ventana máxima de una hora; rechazo de replay en otro boot, expirado, futuro, host/challenge incorrectos. | Tests con clave Ed25519 efímera fijada solo en el proceso de prueba; el trust store real sigue vacío. | Falta el verificador Linux independiente y la custodia/fijación de su clave; no se ejecutó en Linux. |
+| RT-05 | **Cerrado** | Archivos `0600` y directorios `0700` desde el nacimiento; `umask 077` durante toda la exportación; directorio de salida endurecido antes de la primera escritura. | Tests con `umask 022` y directorio preexistente `0755`: modos observados en el momento del digest y del primer copiado. | La verificación de propietario/ancestros reales sigue siendo E3 (RT-06). |
+
+Los hallazgos **RT-06 a RT-10 y RV-01/RV-02 no se corrigen en esta rama** y
+mantienen su estado original. En particular, RT-06 (confianza en padres),
+RT-07/RT-08 (presupuestos de cuarentena/cola), RT-09 (fingerprint), RT-10
+(imágenes por digest) y RV-02 (NNP) siguen abiertos.
+
+**Suites offline ejecutadas para este cierre** (sin Docker, sin red, sin
+servicios; el test de Compose se omite si falta el plugin):
+
+```bash
+python3.12 -m pytest -q -p no:cacheprovider \
+  tests/hardening/test_backup.py tests/hardening/test_cell_gate.py \
+  tests/hardening/test_honeypots.py \
+  tests/ops-integration/test_backup_runtime_state.py \
+  tests/ops-integration/test_cell_gate_report.py \
+  tests/ops-integration/test_ops_report.py
+```
+
+Resultado: **144 passed**. Estas pruebas no demuestran contención Linux,
+comportamiento de Docker/Compose, TLS real ni permisos de kernel; no
+sustituyen las validaciones E3 de la sección 5.
+
+## 8. Conclusión
 
 El diseño tiene controles valiosos y bien delimitados: contrato v1 estricto, autenticación por sensor con doble autorización, transporte sin redirects/proxy, parser YAML endurecido, límites de tamaño, colas acotadas, bloqueo incondicional de activación y un helper `nft` de argv fijo. Esos controles **no** equivalen a contención demostrada.
 
-Los riesgos que deben cerrarse primero son de **clasificación y confianza**, no de explotación remota: un backup que se declara sin secretos pero los contiene, una configuración que puede escapar del contexto revisado, un restore que puede quedar incompleto o parcial, y una evidencia de gate que no está ligada al host ni al momento. Después vienen las ventanas de permisos, la confianza no verificada en directorios padre, los presupuestos de cuarentena y la higiene del hash de credenciales.
+Los riesgos que debían cerrarse primero eran de **clasificación y confianza**,
+no de explotación remota: un backup que se declara sin secretos pero los contiene,
+una configuración que puede escapar del contexto revisado, un restore que puede
+quedar incompleto o parcial, y una evidencia de gate que no está ligada al host ni
+al momento. En la rama `wave/security-fixes` esos cuatro bloques y RT-05 quedaron
+cerrados **a nivel de contrato offline** (sección 7); RT-06 a RT-10 y RV-01/RV-02
+siguen abiertos.
 
 Nada de lo anterior autoriza a activar un workload. La regla sigue siendo: **un render, un hash, un mock, un `nft --check` o un test unitario no son evidencia de contención**. La evidencia válida es la del verificador Linux independiente, y todavía no existe en este commit.

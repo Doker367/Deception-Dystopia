@@ -7,6 +7,7 @@ independent review; the trust store intentionally starts empty.
 """
 from dataclasses import dataclass, fields, is_dataclass
 import base64
+from datetime import datetime, timedelta, timezone
 import hashlib
 import ipaddress
 import json
@@ -28,6 +29,11 @@ POLICY_LIMIT = 16 * 1024
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _KEY_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
 _BOOT_ID = re.compile(r"[0-9a-fA-F-]{36}\Z")
+_HOST_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
+_CHALLENGE = re.compile(r"[A-Za-z0-9_-]{16,128}\Z")
+_TIMESTAMP = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\Z")
+MAX_BUNDLE_LIFETIME_SECONDS = 3600
+DEFAULT_CLOCK_SKEW_SECONDS = 300
 
 # Public Ed25519 keys, keyed by verifier_key_id. Add a key only after the
 # independent Linux verifier and its key custody have been reviewed. Never
@@ -48,10 +54,21 @@ REQUIRED_ARTIFACTS = (
 
 @dataclass(frozen=True)
 class CellGateContext:
-    """Expected cell identity and non-authoritative administrative state."""
+    """Expected cell identity and the observation window of this evaluation.
+
+    ``host_id`` and ``boot_id`` are the identities provisioned for the host
+    that would consume the cell. ``now``/``clock_skew_seconds`` define the
+    freshness check; ``challenge`` optionally binds a verifier nonce. The
+    context is supplied by the operator/activator, never by the bundle.
+    """
 
     cell: int
     apply_succeeded: bool = False
+    host_id: str | None = None
+    boot_id: str | None = None
+    now: datetime | str | None = None
+    challenge: str | None = None
+    clock_skew_seconds: int = DEFAULT_CLOCK_SKEW_SECONDS
 
 
 @dataclass(frozen=True)
@@ -79,6 +96,23 @@ def _unique_object(pairs):
             raise ValueError("duplicate JSON key")
         result[key] = value
     return result
+
+
+def _utc_timestamp(value):
+    if type(value) is not str or _TIMESTAMP.fullmatch(value) is None:
+        raise ValueError("timestamp must use YYYY-MM-DDTHH:MM:SSZ")
+    return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(
+        tzinfo=timezone.utc)
+
+
+def _context_now(context):
+    if context.now is None:
+        return datetime.now(timezone.utc)
+    if type(context.now) is datetime:
+        if context.now.tzinfo is None:
+            raise ValueError("CellGateContext.now must be timezone-aware")
+        return context.now.astimezone(timezone.utc)
+    return _utc_timestamp(context.now)
 
 
 def load_policy(path):
@@ -174,7 +208,7 @@ def _verify_signature(document: dict, key_id: str) -> bool:
 
 
 def _manifest_blockers(document: dict, policy, context: CellGateContext,
-                       directory: Path) -> list[str]:
+                       directory: Path, now: datetime) -> list[str]:
     reasons = []
     if document.get("verification") in ("mock", "self-check"):
         reasons.append("verification mode is not independent Linux evidence")
@@ -183,7 +217,8 @@ def _manifest_blockers(document: dict, policy, context: CellGateContext,
 
     expected_keys = {
         "schema", "cell", "workload", "policy_sha256", "verification", "platform",
-        "verifier_key_id", "artifacts", "signature",
+        "verifier_key_id", "artifacts", "signature", "issued_at", "expires_at",
+        "host_id", "challenge",
     }
     if set(document) != expected_keys:
         reasons.append("attestation manifest has missing or unknown fields")
@@ -203,6 +238,7 @@ def _manifest_blockers(document: dict, policy, context: CellGateContext,
             reasons.append("verification mode must be linux-live-independent")
 
     platform_info = document["platform"]
+    platform_valid = False
     if type(platform_info) is not dict or set(platform_info) != {
             "distribution", "version_id", "kernel_release", "boot_id"}:
         reasons.append("Linux host identity is incomplete")
@@ -213,6 +249,48 @@ def _manifest_blockers(document: dict, policy, context: CellGateContext,
           or type(platform_info["boot_id"]) is not str
           or _BOOT_ID.fullmatch(platform_info["boot_id"]) is None):
         reasons.append("evidence must identify Ubuntu 24.04 and the observed kernel boot")
+    else:
+        platform_valid = True
+
+    if type(document["host_id"]) is not str \
+            or _HOST_ID.fullmatch(document["host_id"]) is None:
+        reasons.append("attestation host identity is invalid")
+    elif context.host_id is None:
+        reasons.append("expected host identity is missing from the gate context "
+                       "(fail-closed)")
+    elif document["host_id"] != context.host_id:
+        reasons.append("attestation host does not match the expected host")
+
+    if context.boot_id is None:
+        reasons.append("expected boot id is missing from the gate context "
+                       "(fail-closed)")
+    elif platform_valid and platform_info["boot_id"] != context.boot_id:
+        reasons.append("attestation boot id does not match the expected boot")
+
+    challenge = document["challenge"]
+    if challenge is not None and (type(challenge) is not str
+                                  or _CHALLENGE.fullmatch(challenge) is None):
+        reasons.append("attestation challenge is invalid")
+    elif context.challenge is not None and challenge != context.challenge:
+        reasons.append("attestation challenge does not match the expected challenge")
+
+    try:
+        issued_at = _utc_timestamp(document["issued_at"])
+        expires_at = _utc_timestamp(document["expires_at"])
+    except ValueError:
+        reasons.append("attestation issue/expiry timestamps are invalid")
+    else:
+        lifetime = (expires_at - issued_at).total_seconds()
+        if lifetime <= 0:
+            reasons.append("attestation expires_at must be after issued_at")
+        elif lifetime > MAX_BUNDLE_LIFETIME_SECONDS:
+            reasons.append("attestation validity window exceeds the accepted "
+                           "maximum lifetime")
+        skew = timedelta(seconds=context.clock_skew_seconds)
+        if now + skew < issued_at:
+            reasons.append("attestation is not valid yet")
+        if now - skew >= expires_at:
+            reasons.append("attestation has expired")
 
     key_id = document["verifier_key_id"]
     if type(key_id) is not str or _KEY_ID.fullmatch(key_id) is None:
@@ -275,6 +353,22 @@ def evaluate_cell_gate(policy: CellPolicy | ContainerCellPolicy,
     if type(context) is not CellGateContext or type(context.cell) is not int \
             or not 1 <= context.cell <= 254 or type(context.apply_succeeded) is not bool:
         raise ValueError("valid CellGateContext required")
+    if context.host_id is not None and (
+            type(context.host_id) is not str
+            or _HOST_ID.fullmatch(context.host_id) is None):
+        raise ValueError("CellGateContext.host_id is invalid")
+    if context.boot_id is not None and (
+            type(context.boot_id) is not str
+            or _BOOT_ID.fullmatch(context.boot_id) is None):
+        raise ValueError("CellGateContext.boot_id is invalid")
+    if context.challenge is not None and (
+            type(context.challenge) is not str
+            or _CHALLENGE.fullmatch(context.challenge) is None):
+        raise ValueError("CellGateContext.challenge is invalid")
+    if type(context.clock_skew_seconds) is not int \
+            or not 0 <= context.clock_skew_seconds <= 3600:
+        raise ValueError("CellGateContext.clock_skew_seconds must be 0..3600")
+    now = _context_now(context)
 
     reasons = []
     if policy.cell != context.cell:
@@ -292,7 +386,8 @@ def evaluate_cell_gate(policy: CellPolicy | ContainerCellPolicy,
             if not stat.S_ISDIR(info.st_mode):
                 raise ValueError("artifact path must be a non-symlink directory")
             document = _decode_manifest(manifest_path)
-            reasons.extend(_manifest_blockers(document, policy, context, directory))
+            reasons.extend(_manifest_blockers(document, policy, context, directory,
+                                              now))
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             reasons.append(f"verification artifacts unavailable or invalid: {exc}")
 
