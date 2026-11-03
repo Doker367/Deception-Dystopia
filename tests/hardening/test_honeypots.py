@@ -6,6 +6,7 @@ network, port or host path is created or changed.
 """
 import copy
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -27,6 +28,22 @@ def raw_inventory():
 
 def raw_profile():
     return yaml.safe_load(PROFILE.read_text())
+
+
+def synthetic_repo(tmp_path):
+    """Copy the reviewed inventory into a scratch repo with synthetic files."""
+    repo = tmp_path / "repo"
+    inventory_dir = repo / "deploy/honeypots"
+    inventory_dir.mkdir(parents=True)
+    data = raw_inventory()
+    for engine in data["engines"]:
+        context = (inventory_dir / engine["build"]["context"]).resolve()
+        context.mkdir(parents=True, exist_ok=True)
+        (context / engine["build"]["dockerfile"]).write_text("FROM scratch\n")
+        (context / engine["config"]["file"]).write_text("synthetic config\n")
+    path = inventory_dir / "inventory.yaml"
+    path.write_text(yaml.safe_dump(data))
+    return path, data, inventory_dir
 
 
 def rendered(cell=1):
@@ -91,6 +108,81 @@ def test_config_binds_are_read_only_files_from_the_reviewed_context():
         assert Path(config[0]["source"]).is_file()
         assert config[0]["source"] == str((INVENTORY.parent / engine.context
                                            / engine.config_file).resolve())
+
+
+@pytest.mark.parametrize("link_kind", ["absolute", "relative", "chain"])
+def test_config_symlink_outside_the_context_is_rejected(tmp_path, link_kind):
+    path, data, inventory_dir = synthetic_repo(tmp_path)
+    engine = data["engines"][0]
+    config = (inventory_dir / engine["build"]["context"]).resolve() \
+        / engine["config"]["file"]
+    outside = tmp_path / "outside.cfg"
+    outside.write_text("host material that must never be mounted\n")
+    config.unlink()
+    if link_kind == "absolute":
+        config.symlink_to(outside)
+    elif link_kind == "relative":
+        config.symlink_to(os.path.relpath(outside, config.parent))
+    else:
+        inner = config.parent / "inner.cfg"
+        inner.symlink_to(outside)
+        config.symlink_to(inner.name)
+    with pytest.raises(honeypots.HoneypotError):
+        honeypots.load_inventory(path)
+
+
+def test_config_symlink_to_a_host_file_is_rejected(tmp_path):
+    path, data, inventory_dir = synthetic_repo(tmp_path)
+    engine = data["engines"][0]
+    config = (inventory_dir / engine["build"]["context"]).resolve() \
+        / engine["config"]["file"]
+    config.unlink()
+    config.symlink_to("/etc/passwd")
+    with pytest.raises(honeypots.HoneypotError):
+        honeypots.load_inventory(path)
+
+
+def test_render_rechecks_the_context_even_for_a_hand_built_inventory(tmp_path):
+    path, data, inventory_dir = synthetic_repo(tmp_path)
+    engine = data["engines"][0]
+    context = (inventory_dir / engine["build"]["context"]).resolve()
+    config = context / engine["config"]["file"]
+    outside = tmp_path / "outside.cfg"
+    outside.write_text("not reviewed\n")
+    config.unlink()
+    config.symlink_to(outside)
+    inventory = honeypots.Inventory.from_mapping(data, inventory_dir)
+    cell = honeypots.Cell.from_mapping(raw_profile())
+    with pytest.raises(honeypots.HoneypotError):
+        honeypots.render_cell(inventory, cell)
+
+
+def test_assert_safe_rejects_a_config_bind_outside_the_build_context(tmp_path):
+    inventory, cell = render_cell_objects()
+    clean = honeypots.render_cell(inventory, cell)
+    tampered = copy.deepcopy(clean)
+    tampered["services"]["cowrie"]["volumes"][0]["source"] = str(
+        (tmp_path / "outside.cfg").resolve())
+    (tmp_path / "outside.cfg").write_text("outside\n")
+    with pytest.raises(honeypots.HoneypotError):
+        honeypots.assert_safe(tampered, cell)
+
+
+def test_assert_safe_rejects_a_symlink_config_bind(tmp_path):
+    inventory, cell = render_cell_objects()
+    clean = honeypots.render_cell(inventory, cell)
+    context = (tmp_path / "context").resolve()
+    context.mkdir()
+    (context / "Dockerfile").write_text("FROM scratch\n")
+    outside = tmp_path / "outside.cfg"
+    outside.write_text("outside\n")
+    (context / "cowrie.cfg").symlink_to(outside)
+    tampered = copy.deepcopy(clean)
+    service = tampered["services"]["cowrie"]
+    service["build"]["context"] = str(context)
+    service["volumes"][0]["source"] = str(context / "cowrie.cfg")
+    with pytest.raises(honeypots.HoneypotError):
+        honeypots.assert_safe(tampered, cell)
 
 
 def test_logs_are_mounted_per_cell_and_inside_declared_volumes():

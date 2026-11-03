@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 import sqlite3
+import stat
 import subprocess
 import sys
 
@@ -28,6 +29,8 @@ PLANTED_SECRETS = (
     "CHANGEME_openssl_rand_hex_32",
     "synthetic-api-key-never-in-backup",
 )
+TLS_KEY_MARKER = "-----BEGIN SYNTHETIC SERVER.KEY-----"
+REGISTRY_MARKER = "synthetic-auth-registry-digest"
 ANALYTICS_ENV = (
     "# generated fixture for the allowlist test\n"
     "ELASTIC_VERSION=9.3.5\n"
@@ -48,10 +51,10 @@ CONTROL_ENV = ("DYSTOPIA_CONTROL_STATE=/var/lib/dystopia/control\n"
                f"ELASTIC_PASSWORD={PLANTED_SECRETS[0]}\n")
 
 
-def _make_db(path):
+def _make_db(path, note="synthetic ingest state"):
     db = sqlite3.connect(path)
     db.executescript("CREATE TABLE events (id INTEGER PRIMARY KEY, note TEXT);"
-                     "INSERT INTO events VALUES (1,'synthetic ingest state')")
+                     f"INSERT INTO events VALUES (1,'{note}')")
     db.commit()
     db.close()
 
@@ -70,7 +73,7 @@ def state(tmp_path):
         marker = state / "ingest" / name
         marker.write_text(f"-----BEGIN SYNTHETIC {name.upper()}-----\n" + "ab" * 16 + "\n")
     _make_db(state / "ingest/events.db")
-    _make_db(state / "ingest/sensors.db")
+    _make_db(state / "ingest/sensors.db", REGISTRY_MARKER)
     (etc / "install.json").write_text(json.dumps({"version": 1}))
     (etc / "control.env").write_text(CONTROL_ENV)
     elastic = tmp_path / "deploy" / "elastic" / ".env"
@@ -88,6 +91,19 @@ def export_backup(state, out):
     specs = backup.default_artifact_specs(state["state"], state["etc"],
                                           state["elastic"])
     return backup.create_backup(specs, out, created_at=CREATED, repo_root=None)
+
+
+def reseal(out, manifest=None):
+    """Rewrite a tampered manifest so its sealed digest is internally valid."""
+    manifest = manifest if manifest is not None \
+        else json.loads((out / "manifest.json").read_text())
+    sealed = hashlib.sha256()
+    for item in manifest["artifacts"]:
+        if item["sha256"] is not None:
+            sealed.update(item["sha256"].encode())
+    manifest["artifacts_sha256"] = sealed.hexdigest()
+    (out / "manifest.json").write_text(json.dumps(manifest))
+    return manifest
 
 
 def spec_count():
@@ -120,8 +136,8 @@ def test_manifest_shape_is_oracle_free(tmp_path, state):
     assert manifest["artifact_count"] == spec_count()
     paths = [item["path"] for item in manifest["artifacts"]]
     assert paths == sorted(paths)
-    assert all(set(item) == {"role", "path", "kind", "required", "bytes",
-                             "sha256", "status"}
+    assert all(set(item) == {"role", "path", "kind", "required", "secret",
+                             "bytes", "sha256", "status"}
                for item in manifest["artifacts"])
 
 
@@ -130,15 +146,18 @@ def test_manifest_shape_is_oracle_free(tmp_path, state):
 # --------------------------------------------------------------------------
 
 
-def test_no_secret_lands_in_any_backup_file(tmp_path, state):
+def test_environment_secrets_never_land_in_any_backup_file(tmp_path, state):
     out = tmp_path / "backup-secrets"
     manifest, _ = export_backup(state, out)
-    dumps = (out / "manifest.json").read_text()
-    dumps += (out / "artifacts/analytics/elastic.env.json").read_text()
-    dumps += (out / "artifacts/manager/control.env.json").read_text()
-    dumps += json.dumps(manifest["artifacts"])
+    # Scan every produced file, not only the two env snapshots. The backup
+    # intentionally carries the TLS key and registry, so the assertion here is
+    # about secrets that the env allowlist promised to exclude.
+    blob = b"".join(path.read_bytes() for path in sorted(out.rglob("*"))
+                    if path.is_file())
     for secret in PLANTED_SECRETS:
-        assert secret not in dumps
+        assert secret.encode() not in blob
+    for secret in PLANTED_SECRETS:
+        assert secret not in json.dumps(manifest["artifacts"])
     settings = json.loads(
         (out / "artifacts/analytics/elastic.env.json").read_text())["settings"]
     assert set(settings) == {
@@ -155,10 +174,40 @@ def test_no_secret_lands_in_any_backup_file(tmp_path, state):
         "NETPULSE_ENV": "production"}
 
 
-def test_manifest_declares_the_secrets_policy(tmp_path, state):
+def test_backup_is_declared_secret_bearing(tmp_path, state):
+    out = tmp_path / "backup-classification"
+    manifest, _ = export_backup(state, out)
+    policy = manifest["policy"]
+    assert policy["classification"] == "secret-bearing"
+    assert policy["secrets"] == "secret-bearing"
+    assert policy["secret_artifacts"] == sorted(backup.SECRET_BEARING_ARTIFACTS)
+    assert "encrypted" in policy["custody"]
+    secret_entries = {item["path"] for item in manifest["artifacts"]
+                      if item["secret"] is True}
+    assert secret_entries == set(backup.SECRET_BEARING_ARTIFACTS)
+    # These artifacts are intentionally present and must be named as secret.
+    assert TLS_KEY_MARKER.encode() in (out / "artifacts/ingest/server.key").read_bytes()
+    assert REGISTRY_MARKER.encode() in (out / "artifacts/ingest/sensors.db").read_bytes()
+
+
+def test_plan_and_runtime_state_never_claim_a_secret_free_backup(tmp_path, state):
+    specs = backup.default_artifact_specs(state["state"], state["etc"], state["elastic"])
+    planned = backup.plan(specs)
+    assert planned["classification"] == "secret-bearing"
+    assert planned["secret_artifacts"] == sorted(backup.SECRET_BEARING_ARTIFACTS)
+    assert all("secret" in item for item in planned["artifacts"])
+    report = backup.runtime_state(specs, state_root=state["state"],
+                                  control_env_dir=state["etc"],
+                                  elastic_env=state["elastic"])
+    assert report["classification"] == "secret-bearing"
+    assert report["secret_artifacts"] == sorted(backup.SECRET_BEARING_ARTIFACTS)
+    assert "excluded" not in json.dumps(report)
+
+
+def test_manifest_declares_the_restore_policy(tmp_path, state):
     manifest, _ = export_backup(state, tmp_path / "backup-policy")
-    assert manifest["policy"]["secrets"] == "excluded"
     assert manifest["policy"]["restore_overwrite"] == "refused"
+    assert manifest["policy"]["env_export"] == "non-secret allowlist only"
 
 
 # --------------------------------------------------------------------------
@@ -247,6 +296,145 @@ def test_restore_rejects_a_manifest_without_a_sealed_digest(tmp_path, state):
         backup.restore(out, state_root=tmp_path / "into", control_env_dir=tmp_path / "etc4")
 
 
+def test_restore_rejects_a_required_artifact_marked_missing(tmp_path, state):
+    out = tmp_path / "backup-required-missing"
+    export_backup(state, out)
+    manifest = json.loads((out / "manifest.json").read_text())
+    entry = next(item for item in manifest["artifacts"]
+                 if item["path"] == "artifacts/ingest/sensors.db")
+    entry.update(status="missing", sha256=None, bytes=None)
+    reseal(out, manifest)
+    with pytest.raises(backup.BackupError, match="required artifact is missing"):
+        backup.restore(out, state_root=tmp_path / "into",
+                       control_env_dir=tmp_path / "etc-required")
+    assert not (tmp_path / "into").exists()
+    assert not (tmp_path / "etc-required").exists()
+
+
+def test_restore_rejects_an_incomplete_artifact_set(tmp_path, state):
+    out = tmp_path / "backup-incomplete-set"
+    export_backup(state, out)
+    manifest = json.loads((out / "manifest.json").read_text())
+    manifest["artifacts"] = [
+        item for item in manifest["artifacts"]
+        if item["path"] != "artifacts/ingest/sensors.db"]
+    manifest["artifact_count"] = len(manifest["artifacts"])
+    reseal(out, manifest)
+    with pytest.raises(backup.BackupError):
+        backup.restore(out, state_root=tmp_path / "into",
+                       control_env_dir=tmp_path / "etc-incomplete")
+    assert not (tmp_path / "into").exists()
+
+
+def test_restore_rejects_a_wrong_artifact_count(tmp_path, state):
+    out = tmp_path / "backup-count"
+    export_backup(state, out)
+    manifest = json.loads((out / "manifest.json").read_text())
+    manifest["artifact_count"] += 1
+    reseal(out, manifest)
+    with pytest.raises(backup.BackupError, match="artifact_count"):
+        backup.restore(out, state_root=tmp_path / "into",
+                       control_env_dir=tmp_path / "etc-count")
+
+
+def test_restore_rejects_an_unknown_artifact_status(tmp_path, state):
+    out = tmp_path / "backup-status"
+    export_backup(state, out)
+    manifest = json.loads((out / "manifest.json").read_text())
+    entry = next(item for item in manifest["artifacts"]
+                 if item["path"] == "artifacts/control/export-cursor.db")
+    entry["status"] = "skipped"
+    reseal(out, manifest)
+    with pytest.raises(backup.BackupError, match="unsupported artifact status"):
+        backup.restore(out, state_root=tmp_path / "into",
+                       control_env_dir=tmp_path / "etc-status")
+
+
+def test_late_destination_collision_writes_nothing(tmp_path, state):
+    out = tmp_path / "backup-late-collision"
+    export_backup(state, out)
+    root = tmp_path / "into"
+    etc = tmp_path / "etc-late"
+    etc.mkdir()
+    existing = etc / "install.json"
+    existing.write_text("live state")
+    with pytest.raises(FileExistsError):
+        backup.restore(out, state_root=root, control_env_dir=etc)
+    assert existing.read_text() == "live state"
+    assert not root.exists()
+
+
+def test_publish_failure_rolls_back_every_written_target(tmp_path, state, monkeypatch):
+    out = tmp_path / "backup-rollback"
+    export_backup(state, out)
+    original = backup._publish_staged
+    calls = []
+
+    def fail_second(staged, target):
+        calls.append(target)
+        if len(calls) == 2:
+            raise RuntimeError("injected publish failure")
+        return original(staged, target)
+
+    monkeypatch.setattr(backup, "_publish_staged", fail_second)
+    root = tmp_path / "into"
+    etc = tmp_path / "etc-rollback"
+    with pytest.raises(RuntimeError):
+        backup.restore(out, state_root=root, control_env_dir=etc)
+    assert calls
+    assert not root.exists()
+    assert not etc.exists()
+
+
+# --------------------------------------------------------------------------
+# Permissions from birth (umask independent)
+# --------------------------------------------------------------------------
+
+
+def test_backup_files_are_private_from_birth_under_umask_022(tmp_path, state,
+                                                             monkeypatch):
+    out = tmp_path / "umask-backup"
+    out.mkdir()
+    os.chmod(out, 0o755)
+    observed = []
+    original = backup.file_digest
+
+    def checking_digest(path):
+        observed.append((Path(path), stat.S_IMODE(Path(path).stat().st_mode)))
+        return original(path)
+
+    monkeypatch.setattr(backup, "file_digest", checking_digest)
+    previous = os.umask(0o022)
+    try:
+        export_backup(state, out)
+    finally:
+        os.umask(previous)
+    assert observed
+    assert all(mode & 0o077 == 0 for _, mode in observed)
+    assert stat.S_IMODE(out.stat().st_mode) == 0o700
+    for path in out.rglob("*"):
+        mode = stat.S_IMODE(path.stat().st_mode)
+        assert mode & 0o077 == 0, (path, oct(mode))
+
+
+def test_output_directory_is_hardened_before_the_first_artifact(tmp_path, state,
+                                                               monkeypatch):
+    out = tmp_path / "prehardened"
+    out.mkdir()
+    os.chmod(out, 0o755)
+    observed = []
+    original = backup._copy_regular
+
+    def checking_copy(source, destination):
+        observed.append(stat.S_IMODE(out.stat().st_mode))
+        return original(source, destination)
+
+    monkeypatch.setattr(backup, "_copy_regular", checking_copy)
+    export_backup(state, out)
+    assert observed
+    assert set(observed) == {0o700}
+
+
 # --------------------------------------------------------------------------
 # CLI contract
 # --------------------------------------------------------------------------
@@ -266,6 +454,7 @@ def test_cli_plan_export_and_restore_on_clean_targets(tmp_path, state, capsys):
     assert code == 0
     plan = json.loads(plan_text)
     assert plan["dry_run"] is True
+    assert plan["classification"] == "secret-bearing"
     code, export_text, _ = run_cli([
         "backup-export", "--output", str(out), "--state-root", str(state["state"]),
         "--control-env-dir", str(state["etc"]), "--created-at", CREATED], capsys)
@@ -273,6 +462,7 @@ def test_cli_plan_export_and_restore_on_clean_targets(tmp_path, state, capsys):
     payload = json.loads(export_text)
     assert payload["backup_id"] == backup.backup_id(
         json.loads((out / "manifest.json").read_bytes()))
+    assert payload["classification"] == "secret-bearing"
     code, restore_text, err = run_cli([
         "backup-restore", "--backup", str(out), "--state-root",
         str(tmp_path / "cli-restored"), "--control-env-dir",
@@ -359,6 +549,7 @@ def test_backup_control_script_end_to_end(tmp_path, state):
             capture_output=True, text=True, cwd=REPO_ROOT, env=env, timeout=120)
         assert proc.returncode == 0, proc.stderr
         assert "backup_complete" in proc.stdout
+        assert "classification: secret-bearing" in proc.stdout
     # Same state and same --created-at → byte-identical manifests.
     first = (out / "manifest.json").read_bytes()
     second = (tmp_path / "script-backup-2" / "manifest.json").read_bytes()

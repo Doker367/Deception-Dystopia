@@ -16,7 +16,9 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from types import MappingProxyType
 from typing import NoReturn
+import os
 import re
+import stat
 
 import yaml
 
@@ -137,6 +139,71 @@ def _load_yaml(path, limit):
         raise
     except yaml.YAMLError as exc:
         raise HoneypotError(f"invalid YAML in {stream.name}") from exc
+
+
+def _reviewed_context(context, repository=None):
+    """Resolve a build context and require a real directory inside the repo."""
+    context = Path(context)
+    try:
+        info = context.lstat()
+    except OSError as exc:
+        raise HoneypotError(f"missing build context: {context}") from exc
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+        raise HoneypotError(f"build context must be a real directory: {context}")
+    resolved = context.resolve()
+    if repository is not None \
+            and not resolved.is_relative_to(Path(repository).resolve()):
+        raise HoneypotError("build context must stay inside the repository")
+    return resolved
+
+
+def _reviewed_file(context, name, label):
+    """Open a context file without symlinks and prove it stays in the context."""
+    context = _reviewed_context(context)
+    if Path(name).name != name or name in (".", ".."):
+        raise HoneypotError(f"{label} must be a direct file name: {name}")
+    leaf = context / name
+    try:
+        info = leaf.lstat()
+    except OSError as exc:
+        raise HoneypotError(f"missing reviewed {label}: {leaf}") from exc
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+        raise HoneypotError(f"reviewed {label} must be a regular non-symlink "
+                            f"file: {leaf}")
+    try:
+        descriptor = os.open(leaf, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    except OSError as exc:
+        raise HoneypotError(f"reviewed {label} cannot be opened safely: "
+                            f"{leaf}") from exc
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise HoneypotError(f"reviewed {label} must be a regular file: {leaf}")
+    finally:
+        os.close(descriptor)
+    resolved = leaf.resolve()
+    if not resolved.is_relative_to(context):
+        raise HoneypotError(f"reviewed {label} escapes its build context: {leaf}")
+    return resolved
+
+
+def _reviewed_absolute_file(source, context):
+    """Re-check an already absolute bind source against a reviewed context."""
+    source = Path(source)
+    if not source.is_absolute():
+        raise HoneypotError(f"reviewed bind source must be absolute: {source}")
+    context = _reviewed_context(context)
+    try:
+        info = source.lstat()
+    except OSError as exc:
+        raise HoneypotError(f"missing reviewed bind source: {source}") from exc
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+        raise HoneypotError(f"reviewed bind source must be a regular non-symlink "
+                            f"file: {source}")
+    resolved = source.resolve()
+    if not resolved.is_relative_to(context):
+        raise HoneypotError(f"reviewed bind source escapes its build context: "
+                            f"{source}")
+    return resolved
 
 
 @dataclass(frozen=True)
@@ -526,14 +593,9 @@ def load_inventory(path):
     inventory = Inventory.from_mapping(data, path.parent)
     repository = path.resolve().parent.parent.parent
     for engine in inventory.engines.values():
-        context = (path.parent / engine.context).resolve()
-        if not context.is_dir():
-            raise HoneypotError(f"missing build context for {engine.name}: {context}")
-        if not context.is_relative_to(repository):
-            raise HoneypotError("build context must stay inside the repository")
-        for candidate in (context / engine.dockerfile, context / engine.config_file):
-            if not candidate.is_file():
-                raise HoneypotError(f"missing reviewed file for {engine.name}: {candidate}")
+        context = _reviewed_context(path.parent / engine.context, repository)
+        for name in (engine.dockerfile, engine.config_file):
+            _reviewed_file(context, name, "file")
     return inventory
 
 
@@ -547,12 +609,16 @@ def load_cell(path, inventory):
 
 def _service(inventory, cell, engine):
     resources = engine.resources
+    repository = inventory.base.resolve().parent.parent.parent
+    context = _reviewed_context(inventory.base / engine.context, repository)
+    dockerfile = _reviewed_file(context, engine.dockerfile, "dockerfile")
+    config_source = _reviewed_file(context, engine.config_file, "config file")
     service = {
         "container_name": cell.container(engine.name),
         "image": engine.image,
         "build": {
-            "context": str((inventory.base / engine.context).resolve()),
-            "dockerfile": engine.dockerfile,
+            "context": str(context),
+            "dockerfile": dockerfile.name,
         },
         "user": engine.user,
         "read_only": True,
@@ -565,9 +631,10 @@ def _service(inventory, cell, engine):
         "expose": [port.expose for port in engine.ports],
         "tmpfs": [f"/tmp:rw,noexec,nosuid,size={resources.tmpfs_mib}m"],
         "volumes": [
-            # Reviewed configuration is always a read-only bind.
+            # Reviewed configuration is always a read-only bind, and always a
+            # regular non-symlink file resolved inside its reviewed context.
             {"type": "bind",
-             "source": str((inventory.base / engine.context / engine.config_file).resolve()),
+             "source": str(config_source),
              "target": engine.config_target, "read_only": True},
             # Only logs are writable, and only inside the per-cell data root.
             *({"type": "bind", "source": cell.data_dir(engine.name, source),
@@ -654,6 +721,17 @@ def assert_safe(document, cell):
             raise HoneypotError("unexpected service name")
         if type(service) is not dict or set(service) & forbidden:
             raise HoneypotError(f"forbidden compose key for {name}")
+        build = service.get("build")
+        if type(build) is not dict or set(build) != {"context", "dockerfile"}:
+            raise HoneypotError(f"{name} must declare a reviewed build context")
+        context_path = Path(build["context"])
+        if not context_path.is_absolute():
+            raise HoneypotError(f"{name} build context must be absolute")
+        reviewed_context = _reviewed_context(context_path)
+        if str(reviewed_context) != build["context"]:
+            raise HoneypotError(f"{name} build context must be canonical and "
+                                "non-symlink")
+        _reviewed_file(reviewed_context, build["dockerfile"], "dockerfile")
         if service.get("container_name") != cell.container(name) \
                 or service["container_name"] in container_names:
             raise HoneypotError(f"{name} container name must be unique per cell")
@@ -693,8 +771,12 @@ def assert_safe(document, cell):
             if "docker.sock" in source or source.startswith(FORBIDDEN_TARGET_PREFIXES) \
                     or target.startswith(FORBIDDEN_TARGET_PREFIXES):
                 raise HoneypotError(f"{name} bind mount reaches a host namespace")
-            if mount.get("read_only") is not True \
-                    and not source.startswith(cell.data_dir(name, "")):
+            if mount.get("read_only") is True:
+                resolved = _reviewed_absolute_file(source, reviewed_context)
+                if str(resolved) != source:
+                    raise HoneypotError(f"{name} config bind must be a canonical "
+                                        "reviewed context path")
+            elif not source.startswith(cell.data_dir(name, "")):
                 raise HoneypotError(f"{name} writable mount escapes the cell data root")
         if "ports" in service:
             if cell.mode != "loopback-lab":

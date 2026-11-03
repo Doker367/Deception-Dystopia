@@ -21,6 +21,10 @@
 # Output layout (created with mode 0700/0600):
 #   <output-dir>/manifest.json
 #   <output-dir>/artifacts/...
+#
+# Classification: secret-bearing. The table includes sensors.db and server.key,
+# so the complete backup must be stored root-only and encrypted at rest. It is
+# never a "secrets excluded" copy.
 set -euo pipefail
 
 umask 077
@@ -104,8 +108,10 @@ else
     exit 1
 fi
 BACKUP_ID=$("$PYTHON" -c 'import json,sys;import hashlib;data=open(sys.argv[1],"rb").read();print(hashlib.sha256(data).hexdigest()[:16])' "$MANIFEST")
+CLASSIFICATION=$("$PYTHON" -c 'import json,sys;print(json.load(open(sys.argv[1]))["policy"]["classification"])' "$MANIFEST")
 echo "backup_complete: $OUT"
 echo "created_at: $CREATED_AT"
 echo "backup_id: $BACKUP_ID"
 echo "manifest_sha256: $DIGEST"
+echo "classification: $CLASSIFICATION"
 echo "next: store offline, verify the digest at the storage site and schedule a restore drill"

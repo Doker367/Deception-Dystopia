@@ -16,6 +16,15 @@ rutas arbitrarias. Un backup solo puede contener artefactos declarados, y el
 restore re-deriva cada destino de esa misma tabla (nunca de las rutas del
 manifest). diseño fail-closed.
 
+**Clasificación del backup: `secret-bearing`.** La tabla incluye por diseño
+`sensors.db` (estado de autenticación de sensores) y `server.key` (clave
+privada TLS del receptor). Por tanto **ningún backup de este contrato es una
+copia “sin secretos”**: el manifest lo declara, la CLI lo imprime y el almacén
+offline debe custodiarse como material secreto (root-only y cifrado en reposo
+con una identidad de recuperación independiente). Lo que sí queda excluido por
+la allowlist son los secretos de los ficheros `env` (contraseñas, tokens y
+claves de cifrado de Elastic/Kibana y `NETPULSE_JWT_SECRET`).
+
 | rol        | artefacto                                       | fuente en el host                       | tipo     | obligatorio |
 |------------|-------------------------------------------------|------------------------------------------|----------|-------------|
 | `control`  | `artifacts/control/config/users.yaml`           | `/var/lib/dystopia/control/config/users.yaml` | `file`   | sí |
@@ -42,10 +51,11 @@ Tipos de artefacto:
   `ANALYTICS_EXPORT_KEYS` + `ILM_*` para `deploy/elastic/.env`, y
   `CONTROL_EXPORT_KEYS` (`DYSTOPIA_CONTROL_STATE`, `DYSTOPIA_CONTROL_CONFIG`,
   `NETPULSE_ENV`) para `/etc/dystopia/control.env`. Las claves de
-  contraseñas, tokens y claves de cifrado quedan fuera por diseño
-  (`deny-by-default`), incluido `NETPULSE_JWT_SECRET`. El resultado es un
-  JSON `dystopia.analytics.settings/v1`; el secret real nunca se materializa
-  en el backup.
+  contraseñas, tokens y claves de cifrado quedan fuera de estos artefactos
+  `env` (`deny-by-default`), incluido `NETPULSE_JWT_SECRET`. El resultado es
+  un JSON `dystopia.analytics.settings/v1`; esos secretos de entorno nunca se
+  materializan. La clasificación global del backup sigue siendo
+  `secret-bearing` por `server.key` y `sensors.db`.
 
 El estado del sensor (`/var/lib/dystopia/sensor`) no se restaura desde el
 plano de control: su spool es efímero y su identidad se re-emite con
@@ -77,14 +87,30 @@ Cada backup queda cerrado por `manifest.json`:
 
 - `schema`, `label`, `created_at` (UTC), `artifact_count`;
 - `artifacts`: lista ordenada por `path`, cada entrada con `role`, `path`,
-  `kind`, `required`, `bytes`, `sha256` y `status` (`present`/`missing`);
+  `kind`, `required`, `secret`, `bytes`, `sha256` y `status`
+  (`present`/`missing`). El conjunto debe ser **exactamente** la tabla fija;
+  todos los `required` deben estar en `present`;
 - `artifacts_sha256`: digest sellado sobre los `sha256` de los artefactos
   presentes, en orden; el restore lo recalcula y compara;
-- `policy`: memoria del contrato (`secrets: excluded`,
-  `env_export: non-secret allowlist only`, `restore_overwrite: refused`).
+- `policy`: memoria del contrato (`classification: secret-bearing`,
+  `secrets: secret-bearing`, `secret_artifacts`, `env_export: non-secret
+  allowlist only`, `custody`, `restore_overwrite: refused`).
 
 El identificador corto del backup es el SHA-256 de los bytes canónicos del
 manifest (`backup_id()`, 16 caracteres hex).
+
+### 1.4 Clasificación y custodia
+
+- `server.key` y `sensors.db` son **obligatorios** y se copian: el backup es
+  material secreto. Nunca se etiqueta, documenta ni entrega como “sin
+  secretos”.
+- El almacén offline debe ser root-only, fuera del repositorio y cifrado en
+  reposo con una identidad de recuperación independiente del host. El código
+  crea los artefactos `0600` y los directorios `0700` desde su nacimiento,
+  pero **no implementa el cifrado del medio**: es una obligación del operador.
+- Una copia filtrada por la allowlist de `env` no cambia la clasificación
+  global: mientras existan `server.key` o `sensors.db`, el conjunto completo
+  sigue siendo `secret-bearing`.
 
 ## 2. Rutas
 
@@ -104,10 +130,17 @@ manifest (`backup_id()`, 16 caracteres hex).
 
 - `schema: dystopia.backup/v1` — manifest versionado; un restore rechaza
   cualquier otro valor.
-- Cada entrada registró la tabla fija (`role`/`kind`/`required`); si el
-  manifest no coincide con la tabla compilada del host de restore, se aborta.
-- Los artefactos nunca se sobreescriben en el host: `restore` falla con
-  `FileExistsError` si el destino existe y pide moverlo a cuarentena primero.
+- Cada entrada registró la tabla fija (`role`/`kind`/`required`/`secret`); el
+  restore exige el **conjunto exacto** de la tabla, `artifact_count`
+  correcto, todos los `required` en `present` y un esquema exacto por
+  entrada. Si el manifest no coincide con la tabla compilada del host de
+  restore, se aborta antes de escribir.
+- Los artefactos nunca se sobreescriben en el host: el restore hace preflight
+  de todos los destinos y padres antes de la primera escritura. Después copia
+  a un staging privado, re-verifica SHA-256/tamaño y publica con enlace duro
+  sin overwrite; si una publicación falla, elimina los ficheros publicados y
+  los directorios creados por ese restore. No se promete atomicidad entre
+  filesystems distintos, pero no queda una mezcla parcial en el caso normal.
 - Scripts de control de confirmación:
   - `restore-control.sh` exige `DYSTOPIA_RESTORE_CONFIRM=restore`;
   - `backup-elasticsearch.sh restore` exige `DYSTOPIA_ES_RESTORE_CONFIRM=restore`.
@@ -143,7 +176,11 @@ backup_complete: /var/backups/dystopia/control-2026-11-02
 created_at: 2026-11-02T10:00:00Z
 backup_id: 404873221f145323
 manifest_sha256: <sha256 del manifest.json>
+classification: secret-bearing
 ```
+
+> No etiquetar ni almacenar esta copia como “sin secretos”. El manifiesto,
+> la CLI y este runbook declaran `secret-bearing`.
 
 Snapshot de índices analíticos (solo Linux, contrato Docker):
 
@@ -178,9 +215,14 @@ python3 -m runtime.cli backup-restore --backup <backup-dir> \
     --state-root /var/lib/dystopia --control-env-dir /etc/dystopia
 ```
 
-- Falla si falta el manifest, si alguna discrepancia de digest/tamaño, si un
-  artefacto presente en el manifest no está en el backup o si falta un
-  artefacto requerido (`skipped_missing` leído del manifest).
+- Falla si falta el manifest, si alguna discrepancia de digest/tamaño, si el
+  conjunto de artefactos no es exactamente la tabla fija, si `artifact_count`
+  no cuadra, si falta un artefacto requerido (incluido `sensors.db` o
+  `server.key`) o si un destino/padre no supera el preflight.
+- Antes de escribir nada, comprueba todos los destinos y padres: no deben
+  existir destinos, no se aceptan symlinks en la cadena de padres y no se
+  permite que dos artefactos colisionen en el mismo destino. Después copia a
+  staging privado y publica con rollback ante fallo.
 - Los artefactos `env` son configuración derivada: **no** se escriben sobre la
   entrada viva; se listan en `not_restored_env_derived` para revisión manual.
 - 4) reiniciar servicio por servicio y comparar `python3 -m runtime.cli
@@ -247,11 +289,15 @@ manifest de `deploy/kibana-dashboards` cambió, y re-hacer el drill de restore.
 - El repo **nunca** contiene artefactos de backup reales ni secretos: los
   outputs rechazados si caen dentro del árbol versionado, `.gitignore` cubre
   `backups/` y los tests lo comprueban.
-- Los ficheros de entorno se exportan solo tras la allowlist no-secreta; un
-  valor `CHANGEME_*`, `*PASSWORD*`, `*KEY*`… jamás debe añadirse a
-  `ANALYTICS_EXPORT_KEYS` sin revisión.
-- El restore es idempotente a la contra: no toca nada si algo no encaja
-  (digest, tamaño, tabla fija, target existente) — primero se verifica todo,
-  después se escribe.
+- El backup completo es **secret-bearing** por `server.key` y `sensors.db`;
+  el manifest, la CLI y este runbook lo declaran. Un valor de la allowlist
+  `env` (`CHANGEME_*`, `*PASSWORD*`, `*KEY*`…) jamás debe añadirse a
+  `ANALYTICS_EXPORT_KEYS`/`CONTROL_EXPORT_KEYS` sin revisión.
+- Los ficheros se crean `0600` y los directorios `0700` desde el nacimiento,
+  con `umask 077` durante toda la exportación, antes de la primera escritura.
+- El restore es fail-closed: exige el conjunto exacto y todos los requeridos,
+  hace preflight de todos los destinos/padres, verifica SHA-256+tamaño y
+  publica desde staging con rollback; no deja una mezcla parcial en el caso
+  normal. No promete atomicidad entre filesystems distintos.
 - El plano analítico Docker no modifica contenedores ni host y no corre fuera
   de Linux: `exit 3` en cualquier otro `uname -s`.

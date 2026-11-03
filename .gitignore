@@ -75,6 +75,8 @@ logs/
 # Fixtures sintéticos usados por los tests de higiene (sin secretos reales)
 !tests/integration_unified/fixtures/logs/
 !tests/integration_unified/fixtures/logs/**
+# Fixtures sintéticos de logs de honeypots (sin datos reales)
+!deploy/honeypots/fixtures/*.log
 
 # Temp files
 /tmp/
