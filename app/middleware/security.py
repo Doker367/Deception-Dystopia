@@ -40,13 +40,24 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         # Permissions policy
         headers.setdefault("Permissions-Policy", "geolocation=(), camera=(), microphone=()")
 
-        # Console has external same-origin JS/CSS only; no inline execution.
-        if request.url.path == "/" or request.url.path.startswith("/static/console."):
+        # Legacy console has same-origin JS/CSS only; no inline execution.
+        if request.url.path.startswith("/static/console.") or request.url.path == "/console":
             headers.setdefault(
                 "Content-Security-Policy",
                 "default-src 'self'; script-src 'self'; style-src 'self'; "
                 "connect-src 'self'; img-src 'self' data:; font-src 'self'; "
                 "object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
+            )
+        # Dystopia Web is a React SPA. React and the chart/globe libraries set
+        # inline style attributes, and the bundled fonts may be data URLs.
+        # Scripts remain restricted to same-origin bundles.
+        elif request.url.path == "/" or request.url.path.startswith("/app") or request.url.path.startswith("/static/web"):
+            headers.setdefault(
+                "Content-Security-Policy",
+                "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+                "connect-src 'self'; img-src 'self' data: blob:; font-src 'self' data:; "
+                "worker-src 'self' blob:; object-src 'none'; base-uri 'none'; "
+                "frame-ancestors 'none'; form-action 'self'",
             )
         elif request.url.path.startswith("/api/"):
             headers.setdefault(
@@ -76,7 +87,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
         # No cachear el HTML/JS del dashboard (evita servir JS viejo tras
         # una actualización y que el usuario tenga que forzar recarga).
-        if request.url.path in ("/", "/favicon.svg"):
+        if request.url.path in ("/", "/app", "/favicon.svg"):
             headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
             headers["Pragma"] = "no-cache"
             headers["Expires"] = "0"

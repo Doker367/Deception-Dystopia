@@ -10,7 +10,7 @@ interface LoginDialogProps {
 }
 
 export function LoginDialog({ open, onClose, onSuccess }: LoginDialogProps) {
-  const [username, setUsername] = useState("deception_admin");
+  const [username, setUsername] = useState("admin");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);

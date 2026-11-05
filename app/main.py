@@ -80,6 +80,6 @@ def favicon():
 
 
 if WEB_DIST.is_dir():
-    app.mount("/static/web", StaticFiles(directory=WEB_DIST), name="web")
+    app.mount("/static/web", StaticFiles(directory=WEB_DIST, html=True), name="web")
 
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
