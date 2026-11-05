@@ -3,11 +3,11 @@
 # Built from a pinned upstream commit (no `latest`). Upstream 0.12.5 vendors
 # libemu, so the build no longer depends on archived Debian packages.
 #
-# Upstream: https://github.com/telekom-security/dionaea
+# Upstream: https://github.com/DinoTools/dionaea
 # Upstream license: GPL-2.0-or-later (see the upstream LICENSES directory).
 # The configuration files under dionaea/, services/ and ihandlers/ are
 # adapted from upstream dionaea conf/ (CC0-1.0).
-# License of this Dockerfile: follows the Dystopia repository; the resulting
+# License of this Dockerfile: MIT (Dystopia repository); the resulting
 # combined image is subject to the upstream GPL-2.0-or-later terms.
 
 FROM ubuntu:26.04@sha256:6a06111c3b0a8600feadb270aec771dc239bf407b25625f93f44ab00e11f4d3c AS builder
@@ -35,7 +35,7 @@ RUN apt-get update \
         python3-setuptools \
     && rm -rf /var/lib/apt/lists/*
 
-RUN git clone https://github.com/telekom-security/dionaea.git /src \
+RUN git clone https://github.com/DinoTools/dionaea.git /src \
     && cd /src \
     && git checkout "${DIONAEA_COMMIT}" \
     && test "$(git rev-parse HEAD)" = "${DIONAEA_COMMIT}"

@@ -2,6 +2,7 @@
   "name": "dystopia-web",
   "private": true,
   "version": "0.1.0",
+  "license": "MIT",
   "type": "module",
   "description": "Dystopia analytics interface inspired by Kibana dashboards and Discover.",
   "scripts": {

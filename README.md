@@ -216,13 +216,29 @@ No se comparten contraseñas, API keys ni secretos entre entornos.
 - [Puente de consulta Unix](docs/QUERY-BRIDGE.md)
 - [Migración](MIGRATION.md)
 - [Procedencia de dependencias](docs/DEPENDENCY-PROVENANCE.md)
+- [Licencia](LICENSE)
+- [Licencias de terceros](LICENSE-THIRD-PARTY.md)
 
 ## Atribución
 
-T-Pot es un proyecto de Telekom Security y su comunidad. Dystopia reutiliza
-conceptos y algunos honeypots, pero mantiene su propio contrato, almacén y
-modelo de control. Las licencias de cada componente pertenecen a sus proyectos
-originales; consulte sus repositorios y la documentación de T-Pot.
+Dystopia reutiliza conceptos y algunos honeypots del ecosistema T-Pot, pero
+mantiene su propio contrato, almacén y modelo de control. Las licencias de cada
+componente pertenecen a sus proyectos originales; consulte sus repositorios y
+la documentación de cada proyecto.
+
+## Licencia
+
+Dystopia se distribuye bajo la **Licencia MIT**. Consulta [`LICENSE`](LICENSE)
+para el texto completo.
+
+Los componentes de terceros que Dystopia compila, descarga o ejecuta conservan
+sus propias licencias (BSD, GPL, Unlicense, etc.). El detalle está en
+[`LICENSE-THIRD-PARTY.md`](LICENSE-THIRD-PARTY.md) y en
+[`deploy/honeypots/PROVENANCE.md`](deploy/honeypots/PROVENANCE.md).
+
+```text
+SPDX-License-Identifier: MIT
+```
 
 No ejecutes instalación, servicios o laboratorio sin autorización y
 prerrequisitos. `.env` no se carga automáticamente.
