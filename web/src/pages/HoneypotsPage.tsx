@@ -16,6 +16,8 @@ import { Panel } from "../components/Panel";
 import { Sparkline } from "../components/Sparkline";
 import { EChart } from "../components/EChart";
 import { HoneypotConfigDrawer } from "../components/HoneypotConfigDrawer";
+import { HoneypotLogDrawer } from "../components/HoneypotLogDrawer";
+import { useToast } from "../components/Toast";
 import { HONEYPOTS, HONEYPOT_CONFIGS, EVENTS } from "../data/mock";
 import type { Honeypot } from "../types";
 import { formatNumber } from "../lib/format";
@@ -75,13 +77,30 @@ function HoneypotCard({ honeypot, active, onSelect, onConfigure }: { honeypot: H
   );
 }
 
-export function HoneypotsPage() {
+interface HoneypotsPageProps {
+  onRefresh: () => void;
+  onOpenEvents: (query: string) => void;
+}
+
+export function HoneypotsPage({ onRefresh, onOpenEvents }: HoneypotsPageProps) {
+  const { notify } = useToast();
   const [selected, setSelected] = useState(HONEYPOTS[0].id);
   const [configId, setConfigId] = useState<string | null>(null);
+  const [logId, setLogId] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
   const active = HONEYPOTS.find((item) => item.id === selected) ?? HONEYPOTS[0];
   const configHoneypot = HONEYPOTS.find((item) => item.id === configId) ?? null;
   const config = configId ? HONEYPOT_CONFIGS[configId] ?? null : null;
+  const logHoneypot = HONEYPOTS.find((item) => item.id === logId) ?? null;
+  const logConfig = logId ? HONEYPOT_CONFIGS[logId] ?? null : null;
   const related = useMemo(() => EVENTS.filter((event) => event.sensor === active.id).slice(0, 5), [active.id]);
+
+  function refresh() {
+    setRefreshing(true);
+    onRefresh();
+    window.setTimeout(() => setRefreshing(false), 800);
+    notify("Estado de honeypots actualizado.", "success");
+  }
 
   return (
     <div className="page">
@@ -91,8 +110,8 @@ export function HoneypotsPage() {
         description="Estado de los seis sensores del MVP, volumen capturado y salud del contenedor. La activación real sigue protegida por el gate de Dystopia."
         actions={
           <>
-            <button className="button ghost"><RefreshCw size={15} /> Refrescar estado</button>
-            <button className="button primary"><TerminalSquare size={15} /> Ver logs</button>
+            <button className={`button ghost ${refreshing ? "spinning" : ""}`} onClick={refresh}><RefreshCw size={15} /> Refrescar estado</button>
+            <button className="button primary" onClick={() => setLogId(active.id)}><TerminalSquare size={15} /> Ver logs</button>
           </>
         }
         meta={
@@ -202,7 +221,7 @@ export function HoneypotsPage() {
               </div>
             ))}
           </div>
-          <div className="panel-footer-link"><button className="link-button">Abrir en explorador <ArrowUpRight size={14} /></button></div>
+          <div className="panel-footer-link"><button className="link-button" onClick={() => onOpenEvents(active.id)}>Abrir en explorador <ArrowUpRight size={14} /></button></div>
         </Panel>
 
         <Panel
@@ -242,6 +261,7 @@ export function HoneypotsPage() {
       </div>
 
       <HoneypotConfigDrawer honeypot={configHoneypot} config={config} onClose={() => setConfigId(null)} />
+      <HoneypotLogDrawer honeypot={logHoneypot} config={logConfig} onClose={() => setLogId(null)} />
     </div>
   );
 }

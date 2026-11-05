@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { Brand } from "./Brand";
 import type { PageId } from "../types";
+import type { DataMode } from "../data/useAnalytics";
 
 interface NavItem {
   id: PageId;
@@ -42,9 +43,10 @@ interface SidebarProps {
   onNavigate: (page: PageId) => void;
   mobileOpen: boolean;
   onCloseMobile: () => void;
+  dataMode: DataMode;
 }
 
-export function Sidebar({ active, onNavigate, mobileOpen, onCloseMobile }: SidebarProps) {
+export function Sidebar({ active, onNavigate, mobileOpen, onCloseMobile, dataMode }: SidebarProps) {
   let lastGroup: NavItem["group"] | null = null;
   return (
     <>
@@ -91,7 +93,7 @@ export function Sidebar({ active, onNavigate, mobileOpen, onCloseMobile }: Sideb
               <span className="status-dot live" />
               <strong>Entorno de laboratorio</strong>
             </div>
-            <p>SQLite local · datos de demostración</p>
+            <p>SQLite local · {dataMode === "live" ? "datos en vivo" : dataMode === "error" ? "BFF sin conexión" : "datos de demostración"}</p>
             <div className="system-meta">
               <span><ShieldCheck size={13} /> Sin cambios de red</span>
               <span className="mono">c1</span>

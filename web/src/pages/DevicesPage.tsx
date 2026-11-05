@@ -14,7 +14,13 @@ import {
 } from "lucide-react";
 import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
+import { EChart } from "../components/EChart";
+import { ActionDialog } from "../components/ActionDialog";
+import { DeviceDrawer } from "../components/DeviceDrawer";
+import { useToast } from "../components/Toast";
 import { DEVICES, SEGMENTS } from "../data/mock";
+import { horizontalBarOption } from "../lib/charts";
+import { downloadJson } from "../lib/download";
 
 const PROFILE_ICON = {
   server: Server,
@@ -37,8 +43,19 @@ const PROFILE_LABEL: Record<string, string> = {
 };
 
 export function DevicesPage() {
+  const { notify } = useToast();
   const [selected, setSelected] = useState("all");
+  const [deviceName, setDeviceName] = useState<string | null>(null);
+  const [editOpen, setEditOpen] = useState(false);
   const devices = useMemo(() => (selected === "all" ? DEVICES : DEVICES.filter((device) => device.segment === selected)), [selected]);
+  const selectedDevice = DEVICES.find((device) => device.name === deviceName) ?? null;
+  const topologyYaml = [
+    "cell: c1",
+    "segments:",
+    ...SEGMENTS.map((segment) => `  - id: ${segment.name}\n    cidr: ${segment.cidr}\n    exposure: ${segment.exposure}`),
+    "devices:",
+    ...DEVICES.map((device) => `  - id: ${device.name}\n    segment: ${device.segment}\n    address: ${device.ip}\n    profile: ${device.profile}`),
+  ].join("\n");
 
   return (
     <div className="page">
@@ -48,8 +65,11 @@ export function DevicesPage() {
         description="Topología declarativa de la red señuelo. Dystopia es la fuente de verdad; la analítica solo observa el resultado."
         actions={
           <>
-            <button className="button ghost"><HardDrive size={15} /> Exportar topología</button>
-            <button className="button primary"><Network size={15} /> Editar segmentos</button>
+            <button className="button ghost" onClick={() => {
+              downloadJson("dystopia-topology.json", { segments: SEGMENTS, devices: DEVICES });
+              notify("Topología exportada como JSON.", "success");
+            }}><HardDrive size={15} /> Exportar topología</button>
+            <button className="button primary" onClick={() => setEditOpen(true)}><Network size={15} /> Editar segmentos</button>
           </>
         }
         meta={
@@ -99,11 +119,11 @@ export function DevicesPage() {
                     {DEVICES.filter((device) => device.segment === segment.name).map((device) => {
                       const Icon = PROFILE_ICON[device.profile as keyof typeof PROFILE_ICON] ?? Boxes;
                       return (
-                        <div className="device-node" key={device.name}>
+                        <button type="button" className={`device-node ${deviceName === device.name ? "selected" : ""}`} key={device.name} onClick={() => setDeviceName(device.name)}>
                           <span className="device-icon"><Icon size={16} /></span>
                           <div><strong>{device.name}</strong><span className="mono">{device.ip}</span></div>
                           <span className={`device-status ${device.status}`} />
-                        </div>
+                        </button>
                       );
                     })}
                   </div>
@@ -140,7 +160,7 @@ export function DevicesPage() {
                 {devices.map((device) => {
                   const Icon = PROFILE_ICON[device.profile as keyof typeof PROFILE_ICON] ?? Boxes;
                   return (
-                    <tr key={device.name}>
+                    <tr key={device.name} onClick={() => setDeviceName(device.name)} className="clickable-row">
                       <td><span className="device-name"><Icon size={14} />{device.name}</span></td>
                       <td>{PROFILE_LABEL[device.profile] ?? device.profile}</td>
                       <td><span className="sensor-chip">{device.segment}</span></td>
@@ -164,6 +184,18 @@ export function DevicesPage() {
           </div>
         </Panel>
 
+        <Panel className="span-12" eyebrow="Distribución" title="Servicios por segmento" description="Servicios declarados agrupados por segmento de red.">
+          <EChart
+            option={horizontalBarOption(
+              SEGMENTS.map((segment) => segment.name),
+              SEGMENTS.map((segment) => DEVICES.filter((device) => device.segment === segment.name).reduce((sum, device) => sum + device.services, 0)),
+              SEGMENTS.map((segment) => segment.color),
+              " servicios",
+            )}
+            height={190}
+          />
+        </Panel>
+
         <Panel className="span-12" eyebrow="Capacidad" title="Estado de la celda" description="Límites operativos de la celda de laboratorio.">
           <div className="capacity-grid">
             <div><span>Dispositivos</span><strong>6 / 12</strong><div className="capacity-bar"><i style={{ width: "50%" }} /></div></div>
@@ -173,6 +205,19 @@ export function DevicesPage() {
           </div>
         </Panel>
       </div>
+
+      <DeviceDrawer device={selectedDevice} onClose={() => setDeviceName(null)} />
+      <ActionDialog
+        open={editOpen}
+        title="Topología declarativa"
+        description="La edición real se hace en config/deception/network.yaml y requiere el gate de activación. Esta vista permite revisar y copiar el bloque actual."
+        confirmLabel="Copiar YAML"
+        cancelLabel="Cerrar"
+        onConfirm={() => { navigator.clipboard?.writeText(topologyYaml); notify("Topología copiada al portapapeles.", "success"); setEditOpen(false); }}
+        onClose={() => setEditOpen(false)}
+      >
+        <pre className="device-yaml">{topologyYaml}</pre>
+      </ActionDialog>
     </div>
   );
 }

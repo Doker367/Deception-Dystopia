@@ -11,7 +11,8 @@ import {
   X,
 } from "lucide-react";
 import { PageHeader } from "../components/PageHeader";
-import { EventTable } from "../components/EventTable";
+import { EventTable, type EventColumn } from "../components/EventTable";
+import { ActionDialog } from "../components/ActionDialog";
 import { SeverityBadge } from "../components/SeverityBadge";
 import { HONEYPOTS } from "../data/mock";
 import type { EventRow, Severity } from "../types";
@@ -45,6 +46,8 @@ export function EventsPage({ search, range, events, total, mode }: EventsPagePro
   const [page, setPage] = useState(0);
   const [selected, setSelected] = useState<EventRow | null>(null);
   const [showFilters, setShowFilters] = useState(true);
+  const [columnsOpen, setColumnsOpen] = useState(false);
+  const [visibleColumns, setVisibleColumns] = useState<EventColumn[]>(["time", "severity", "event", "source", "sensor", "device", "proto"]);
 
   const filtered = useMemo(() => {
     const query = `${search} ${localQuery}`.trim().toLowerCase();
@@ -96,7 +99,7 @@ export function EventsPage({ search, range, events, total, mode }: EventsPagePro
         actions={
           <>
             <button className="button ghost" onClick={() => setShowFilters((value) => !value)}><SlidersHorizontal size={15} /> Filtros</button>
-            <button className="button ghost"><Columns3 size={15} /> Columnas</button>
+            <button className="button ghost" onClick={() => setColumnsOpen(true)}><Columns3 size={15} /> Columnas</button>
             <button className="button primary" onClick={exportCsv}><Download size={15} /> Exportar CSV</button>
           </>
         }
@@ -162,7 +165,7 @@ export function EventsPage({ search, range, events, total, mode }: EventsPagePro
               <button className="icon-button small" onClick={() => setPage(Math.min(pageCount - 1, safePage + 1))} disabled={safePage >= pageCount - 1} aria-label="Página siguiente"><ChevronRight size={15} /></button>
             </div>
           </div>
-          <EventTable events={pageEvents} onOpen={setSelected} />
+          <EventTable events={pageEvents} onOpen={setSelected} visibleColumns={visibleColumns} />
           <div className="discover-pagination">
             <span className="muted">Mostrando {PAGE_SIZE} por página</span>
             <div className="pagination-buttons">
@@ -219,6 +222,36 @@ export function EventsPage({ search, range, events, total, mode }: EventsPagePro
           </div>
         </aside>
       </div>
+
+      <ActionDialog
+        open={columnsOpen}
+        title="Columnas visibles"
+        description="Elige qué campos quieres mostrar en el explorador de eventos."
+        confirmLabel="Aplicar"
+        onConfirm={() => setColumnsOpen(false)}
+        onClose={() => setColumnsOpen(false)}
+      >
+        <div className="column-picker">
+          {([
+            ["time", "Hora"],
+            ["severity", "Severidad"],
+            ["event", "Evento"],
+            ["source", "Origen"],
+            ["sensor", "Sensor"],
+            ["device", "Dispositivo"],
+            ["proto", "Protocolo"],
+          ] as Array<[EventColumn, string]>).map(([key, label]) => (
+            <label key={key} className="column-option">
+              <input
+                type="checkbox"
+                checked={visibleColumns.includes(key)}
+                onChange={() => setVisibleColumns((current) => current.includes(key) ? current.filter((item) => item !== key) : [...current, key])}
+              />
+              <span>{label}</span>
+            </label>
+          ))}
+        </div>
+      </ActionDialog>
 
       {selected && (
         <div className="drawer-backdrop" onClick={() => setSelected(null)}>
