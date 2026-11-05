@@ -450,12 +450,20 @@ class AnalyticsService:
         return {"total": int(total.get("value", 0) or 0) if isinstance(total, dict) else int(total or 0), "items": items}
 
     def health(self) -> dict[str, Any]:
-        result = self._request("GET", "/_cluster/health")
+        # The analyst role has read + view_index_metadata, not cluster monitor.
+        # A bounded search is the least-privilege health signal.
+        result = self._search(
+            self.config.index,
+            {"size": 0, "track_total_hits": True, "query": {"match_all": {}}},
+        )
+        total = int(result.get("hits", {}).get("total", {}).get("value", 0) or 0)
+        shards = result.get("_shards", {}) if isinstance(result.get("_shards"), dict) else {}
+        failed = int(shards.get("failed", 0) or 0)
         return {
-            "status": result.get("status", "unknown"),
-            "cluster": result.get("cluster_name"),
-            "number_of_nodes": result.get("number_of_nodes"),
-            "active_shards": result.get("active_shards"),
+            "status": "healthy" if failed == 0 else "degraded",
+            "index": self.config.index,
+            "documents": total,
+            "failed_shards": failed,
         }
 
 
