@@ -1,6 +1,14 @@
 # Configuración de herramientas (ruff, pytest, pyright).
 # Las dependencias de runtime se declaran en requirements.txt.
 
+[project]
+name = "dystopia"
+version = "0.1.0"
+description = "Plataforma de deception y honeypots con plano de control propio"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.12"
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"

@@ -5,8 +5,6 @@ Honeypot Platform** y reutiliza su enfoque de contenedores y Elastic Stack, pero
 no es un clon ni pretende sustituirlo. Esta página deja claro qué se adopta, qué
 se sustituye y qué queda fuera del MVP.
 
-Referencia: <https://github.com/telekom-security/tpotce>
-
 ## Qué comparte Dystopia con T-Pot
 
 - Honeypots desplegados como contenedores Docker.
@@ -115,7 +113,13 @@ final depende de retención, número de sensores y volumen de eventos.
 
 ## Atribución
 
-T-Pot es un proyecto de Telekom Security y su comunidad. Dystopia reutiliza
-conceptos y algunos honeypots, pero mantiene su propio contrato, publicador y
-modelo de control. Las licencias de cada honeypot y herramienta pertenecen a sus
-proyectos originales; consulte sus repositorios y la documentación de T-Pot.
+Dystopia reutiliza conceptos y algunos honeypots del ecosistema T-Pot, pero
+mantiene su propio contrato, publicador y modelo de control. Las licencias de
+cada honeypot y herramienta pertenecen a sus proyectos originales; consulte sus
+repositorios y la documentación de cada proyecto.
+
+## Licencia
+
+Dystopia se distribuye bajo la Licencia MIT (ver [`../LICENSE`](../LICENSE)).
+Los componentes de terceros conservan sus licencias; consulta
+[`../LICENSE-THIRD-PARTY.md`](../LICENSE-THIRD-PARTY.md).

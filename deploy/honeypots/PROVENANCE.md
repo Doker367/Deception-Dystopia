@@ -12,7 +12,7 @@ Dystopia.
 |---|---|---|---|---|
 | Cowrie | `cowrie/cowrie` v3.1.4, commit `085ed091a84ae1cee7f15b6e8aa549d11826a0f7` | BSD-3-Clause | `cowrie/cowrie:3.1.4` @ `sha256:4e2d4067…54e55` | Config reducida y adaptada a la topología (`srv-files-01`), JSONL en volumen `var/`, sin claves ni usuarios reales; healthcheck de proceso. |
 | OpenCanary | `thinkst/opencanary` v0.9.10, commit `fb12e4fefbdb1b9acd1e5561a2614f827ab639ff` | BSD-3-Clause | `python:3.12.8-slim-bookworm` @ `sha256:2199a628…2a2f0` | Paquete PyPI fijado (`opencanary==0.9.10`), usuario 2000, `CAP_NET_BIND_SERVICE`, logger JSONL; persona ya existente en Dystopia revisada. |
-| Dionaea | `telekom-security/dionaea` v0.12.5, commit `78af2ff2a0f1b62ac7cc5858bac2ab46898c9cc0` | GPL-2.0-or-later | `ubuntu:26.04` @ `sha256:6a06111c…f4d3c` | Build multi-stage desde commit; configs `dionaea.cfg`, handlers y servicios adaptados de `conf/` (CC0-1.0). Sin paquetes Debian archivados ni scripts de T-Pot. |
+| Dionaea | `DinoTools/dionaea` v0.12.5, commit `78af2ff2a0f1b62ac7cc5858bac2ab46898c9cc0` | GPL-2.0-or-later | `ubuntu:26.04` @ `sha256:6a06111c…f4d3c` | Build multi-stage desde commit; configs `dionaea.cfg`, handlers y servicios adaptados de `conf/` (CC0-1.0). Sin paquetes Debian archivados. |
 | Heralding | `johnnykv/heralding`, commit `ac12724ab38c4e2fe78f07d1bc35e6e586ba69c0` | GPL-3.0 (declarada en `setup.py`; no hay fichero LICENSE) | `alpine:3.23.7` @ `sha256:ff7f0c72…03d63` | Build desde commit, dependencias del `requirements.txt` upstream; config reducida, sin ipify, HPFeeds, syslog ni hash cracking; usuario 2000. |
 | RedisHoneyPot | `cypwnpwnsocute/RedisHoneyPot`, commit `45adc622a423d12d76392c3a54274f6cff111d58` | GPL-3.0 | `golang:1.26.10-alpine3.23` + `alpine:3.23.7` | Build estático (`CGO_ENABLED=0`), usuario 2000, log JSONL a archivo; `redis.conf` con valores sintéticos. |
 | Endlessh | `skeeto/endlessh`, commit `dfe44eb2c5b6fc3c48a39ed826fe0e4459cdf6ef` | Unlicense (dominio público) | `alpine:3.23.7` @ `sha256:ff7f0c72…03d63` | Build desde commit, usuario 2000, `LogLevel 1`, `stdbuf` para línea a línea; `MaxClients 4096`. |
@@ -37,6 +37,7 @@ además de la licencia upstream correspondiente.
 
 ## Licencias y distribución
 
+- **Dystopia (código propio)**: MIT (ver [`../../LICENSE`](../../LICENSE)).
 - **Cowrie, OpenCanary**: BSD-3-Clause; conservar avisos de copyright.
 - **Endlessh**: Unlicense; sin obligaciones de atribución, se mantiene el aviso
   por cortesía.
