@@ -62,7 +62,7 @@ export function App() {
 
   return (
     <div className="app">
-      <Sidebar active={page} onNavigate={navigate} mobileOpen={mobileOpen} onCloseMobile={() => setMobileOpen(false)} />
+      <Sidebar active={page} onNavigate={navigate} mobileOpen={mobileOpen} onCloseMobile={() => setMobileOpen(false)} dataMode={analytics.mode} />
       <div className="workspace">
         <Topbar
           page={page}
