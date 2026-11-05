@@ -17,6 +17,7 @@ import {
 import { TIME_RANGES } from "../data/mock";
 import type { PageId } from "../types";
 import type { DataMode } from "../data/useAnalytics";
+import { useToast } from "./Toast";
 
 const PAGE_LABEL: Record<PageId, { section: string; title: string }> = {
   overview: { section: "Monitorización", title: "Resumen" },
@@ -67,6 +68,7 @@ export function Topbar({
   const userRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const label = PAGE_LABEL[page];
+  const { notify } = useToast();
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 30_000);
@@ -158,11 +160,11 @@ export function Topbar({
         <button className={`icon-button ${refreshing ? "spinning" : ""}`} onClick={onRefresh} aria-label="Actualizar datos" title="Actualizar">
           <RefreshCw size={17} />
         </button>
-        <button className="icon-button badge-button" aria-label="Avisos" title="Avisos">
+        <button className="icon-button badge-button" aria-label="Avisos" title="Avisos" onClick={() => notify("3 avisos operativos: 2 críticos y 1 de ingesta. El centro de alertas se conectará al backend en la siguiente fase.", "info")}>
           <Activity size={17} />
           <span className="badge">3</span>
         </button>
-        <button className="icon-button help-button" aria-label="Ayuda" title="Ayuda">
+        <button className="icon-button help-button" aria-label="Ayuda" title="Ayuda" onClick={() => notify("Dystopia Web: usa el menú lateral para navegar. El modo Demo no requiere sesión; Live consulta SQLite a través del BFF.", "info")}>
           <HelpCircle size={17} />
         </button>
 

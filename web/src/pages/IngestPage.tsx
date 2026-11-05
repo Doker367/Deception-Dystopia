@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import type { EChartsOption } from "echarts";
 import {
   Activity,
@@ -19,6 +19,9 @@ import { Panel } from "../components/Panel";
 import { EChart } from "../components/EChart";
 import { INGEST_SERIES, HONEYPOTS } from "../data/mock";
 import { formatNumber } from "../lib/format";
+import { ActionDialog } from "../components/ActionDialog";
+import { useToast } from "../components/Toast";
+import { apiGet, getToken } from "../lib/api";
 
 const AXIS_LABEL = { color: "#71849b", fontSize: 10, fontFamily: "JetBrains Mono, monospace" };
 
@@ -70,6 +73,39 @@ function ingestOption(): EChartsOption {
 
 export function IngestPage() {
   const option = useMemo(() => ingestOption(), []);
+  const { notify } = useToast();
+  const [metricsOpen, setMetricsOpen] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [health, setHealth] = useState<{ status: string; store: string; schema: string; documents: number; geoip?: boolean } | null>(null);
+
+  async function openMetrics() {
+    setMetricsOpen(true);
+    if (!getToken()) {
+      setHealth(null);
+      return;
+    }
+    try {
+      setHealth(await apiGet("/api/analytics/health"));
+    } catch {
+      setHealth(null);
+    }
+  }
+
+  async function testPipeline() {
+    if (!getToken()) {
+      notify("Inicia sesión para probar el pipeline contra el almacén local.", "error");
+      return;
+    }
+    setTesting(true);
+    try {
+      const result = await apiGet<{ status: string; documents: number; schema: string }>("/api/analytics/health");
+      notify(`Pipeline OK · ${result.status} · ${formatNumber(result.documents)} documentos · ${result.schema}`, "success");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "No se pudo probar el pipeline.", "error");
+    } finally {
+      setTesting(false);
+    }
+  }
 
   return (
     <div className="page">
@@ -79,8 +115,8 @@ export function IngestPage() {
         description="Salud del colector, normalización, deduplicación y persistencia en SQLite local. Todo en solo lectura."
         actions={
           <>
-            <button className="button ghost"><Gauge size={15} /> Ver métricas</button>
-            <button className="button primary"><Zap size={15} /> Probar pipeline</button>
+            <button className="button ghost" onClick={openMetrics}><Gauge size={15} /> Ver métricas</button>
+            <button className={`button primary ${testing ? "spinning" : ""}`} onClick={testPipeline} disabled={testing}><Zap size={15} /> {testing ? "Probando…" : "Probar pipeline"}</button>
           </>
         }
         meta={
@@ -165,6 +201,28 @@ export function IngestPage() {
           <div className="ingest-footnote"><Clock3 size={14} /> El colector no se inicia desde la interfaz. El gate de activación sigue cerrado.</div>
         </Panel>
       </div>
+
+      <ActionDialog
+        open={metricsOpen}
+        title="Métricas de ingesta"
+        description="Estado actual del pipeline y del almacén local. La lectura de salud usa el BFF autenticado."
+        confirmLabel="Cerrar"
+        cancelLabel="Cerrar"
+        onConfirm={() => setMetricsOpen(false)}
+        onClose={() => setMetricsOpen(false)}
+      >
+        <div className="action-metrics">
+          <div><span>Eventos / min</span><strong>234</strong></div>
+          <div><span>Lag de ingesta</span><strong>1.2 s</strong></div>
+          <div><span>Cola pendiente</span><strong>38</strong></div>
+          <div><span>Almacenamiento</span><strong>4.2 GB</strong></div>
+          <div><span>Store</span><strong>{health?.store ?? "sqlite"}</strong></div>
+          <div><span>Documentos</span><strong>{health ? formatNumber(health.documents) : "—"}</strong></div>
+          <div><span>Schema</span><strong>{health?.schema ?? "—"}</strong></div>
+          <div><span>GeoIP</span><strong>{health?.geoip ? "activo" : "no verificado"}</strong></div>
+        </div>
+        {!getToken() && <p className="action-note">Inicia sesión para consultar métricas reales del almacén SQLite.</p>}
+      </ActionDialog>
     </div>
   );
 }

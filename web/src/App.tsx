@@ -55,6 +55,11 @@ export function App() {
     window.setTimeout(() => setRefreshing(false), 900);
   }
 
+  function openEventsFor(query = "") {
+    if (query) setSearch(query);
+    navigate("events");
+  }
+
   return (
     <div className="app">
       <Sidebar active={page} onNavigate={navigate} mobileOpen={mobileOpen} onCloseMobile={() => setMobileOpen(false)} />
@@ -80,9 +85,9 @@ export function App() {
         />
         <main className="main">
           {page === "overview" && <OverviewPage search={search} range={range} data={analytics} onNavigate={navigate} />}
-          {page === "map" && <MapPage search={search} origins={analytics.origins} mode={analytics.mode} />}
+          {page === "map" && <MapPage search={search} origins={analytics.origins} mode={analytics.mode} onRefresh={analytics.refresh} onOpenEvents={(origin) => openEventsFor(origin.ip)} />}
           {page === "events" && <EventsPage search={search} range={range} events={analytics.events} total={analytics.totalEvents} mode={analytics.mode} />}
-          {page === "honeypots" && <HoneypotsPage />}
+          {page === "honeypots" && <HoneypotsPage onRefresh={analytics.refresh} onOpenEvents={openEventsFor} />}
           {page === "devices" && <DevicesPage />}
           {page === "ingest" && <IngestPage />}
           {page === "admin" && <AdminPage />}

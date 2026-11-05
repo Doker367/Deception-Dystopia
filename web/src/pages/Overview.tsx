@@ -21,6 +21,8 @@ import type { AnalyticsSnapshot, TimelinePoint } from "../data/useAnalytics";
 import type { PageId } from "../types";
 import { formatNumber } from "../lib/format";
 import { horizontalBarOption } from "../lib/charts";
+import { useToast } from "../components/Toast";
+import { downloadJson } from "../lib/download";
 
 const AXIS_LABEL = { color: "#71849b", fontSize: 10, fontFamily: "JetBrains Mono, monospace" };
 const GRID_LINE = { color: "rgba(108, 150, 177, 0.12)", type: "dashed" as const };
@@ -139,6 +141,7 @@ interface OverviewPageProps {
 }
 
 export function OverviewPage({ search, range, data, onNavigate }: OverviewPageProps) {
+  const { notify } = useToast();
   const { mode, overview, timeline, origins, events } = data;
   const filteredEvents = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -165,7 +168,10 @@ export function OverviewPage({ search, range, data, onNavigate }: OverviewPagePr
         description="Actividad agregada de la red señuelo, sensores y pipeline de ingesta en una sola vista."
         actions={
           <>
-            <button className="button ghost"><Download size={15} /> Exportar</button>
+            <button className="button ghost" onClick={() => {
+              downloadJson("dystopia-overview.json", { generatedAt: new Date().toISOString(), mode, overview, timeline, origins: origins.length, events });
+              notify("Resumen exportado como JSON.", "success");
+            }}><Download size={15} /> Exportar</button>
             <button className="button primary" onClick={() => onNavigate("map")}><Globe2 size={15} /> Abrir mapa global</button>
           </>
         }
