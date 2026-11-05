@@ -41,7 +41,9 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         headers.setdefault("Permissions-Policy", "geolocation=(), camera=(), microphone=()")
 
         # Legacy console has same-origin JS/CSS only; no inline execution.
-        if request.url.path.startswith("/static/console.") or request.url.path == "/console":
+        if (request.url.path.startswith("/static/console.")
+                or request.url.path == "/static/dashboard.html"
+                or request.url.path == "/console"):
             headers.setdefault(
                 "Content-Security-Policy",
                 "default-src 'self'; script-src 'self'; style-src 'self'; "
