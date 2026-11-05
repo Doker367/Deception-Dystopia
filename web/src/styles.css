@@ -4439,3 +4439,108 @@ pre {
 .button.spinning svg {
   animation: spin 900ms linear infinite;
 }
+
+/* ── Map workspace: full-width map, independently scrolling side ── */
+.page-map {
+  max-width: none;
+  padding-inline: 18px;
+  height: calc(100vh - var(--topbar));
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding-bottom: 16px;
+}
+
+.page-map .page-header {
+  flex: 0 0 auto;
+  margin-bottom: 12px;
+}
+
+.page-map .page-header p {
+  max-width: 980px;
+}
+
+.page-map .map-region-bar,
+.page-map .map-filter-bar {
+  flex: 0 0 auto;
+}
+
+.page-map .map-layout {
+  flex: 1 1 auto;
+  min-height: 0;
+  grid-template-columns: minmax(0, 1fr) 344px;
+  align-items: stretch;
+}
+
+.page-map .map-main {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.page-map .map-main > .panel-body {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+}
+
+.page-map .map-main .globe-shell {
+  height: auto !important;
+  min-height: 280px;
+  flex: 1 1 0;
+}
+
+.page-map .map-bottom-strip {
+  flex: 0 0 auto;
+}
+
+.page-map .map-side {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(111, 154, 180, 0.32) transparent;
+}
+
+.page-map .map-side::-webkit-scrollbar {
+  width: 6px;
+}
+
+.page-map .map-side::-webkit-scrollbar-thumb {
+  border-radius: 99px;
+  background: rgba(111, 154, 180, 0.28);
+}
+
+.page-map .map-side::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.page-map .map-side .panel {
+  flex: 0 0 auto;
+}
+
+@media (max-width: 1120px) {
+  .page-map {
+    height: auto;
+    overflow: visible;
+    padding-bottom: 50px;
+  }
+
+  .page-map .map-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .page-map .map-main .globe-shell {
+    height: 560px !important;
+  }
+
+  .page-map .map-side {
+    overflow: visible;
+    padding-right: 0;
+  }
+}
