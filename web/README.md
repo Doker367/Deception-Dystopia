@@ -95,3 +95,10 @@ sigue sirviendo la consola anterior.
 - El globo es la pieza visual principal del mapa de amenazas.
 - Los estados de activación de infraestructura siguen representados como
   bloqueados; la UI es de observación y control declarativo.
+
+
+## Capturas
+
+![Dystopia Web · resumen](../docs/images/dystopia-web-overview.jpg)
+
+![Dystopia Web · mapa global](../docs/images/dystopia-web-map.jpg)

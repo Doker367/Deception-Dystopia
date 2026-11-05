@@ -10,6 +10,12 @@ publicador, topología y modelo de permisos.
 
 ![Resumen del panel de deception](docs/images/overview.png)
 
+Interfaz propia **Dystopia Web**, con resumen, globo 3D y explorador de eventos:
+
+![Dystopia Web · resumen](docs/images/dystopia-web-overview.jpg)
+
+![Dystopia Web · mapa global](docs/images/dystopia-web-map.jpg)
+
 ## Estado
 
 - Integración de ingesta, contrato ECS/Dystopia y dashboards validada en
