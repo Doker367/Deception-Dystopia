@@ -96,6 +96,9 @@ config/.netbox_token.*
 
 # Credenciales iniciales rotadas (NEVER COMMIT)
 config/.initial_credentials
+# Store local de usuarios del plano de control (hashes, NEVER COMMIT)
+config/users.yaml
+config/users.yaml.*
 
 # Deception: host keys persistentes (secretos locales)
 config/deception/keys/
