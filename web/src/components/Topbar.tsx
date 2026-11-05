@@ -1,0 +1,172 @@
+import { useEffect, useRef, useState } from "react";
+import {
+  Bell,
+  ChevronDown,
+  Command,
+  HelpCircle,
+  Menu,
+  RefreshCw,
+  Search,
+  ShieldCheck,
+  UserRound,
+} from "lucide-react";
+import { TIME_RANGES } from "../data/mock";
+import type { PageId } from "../types";
+
+const PAGE_LABEL: Record<PageId, { section: string; title: string }> = {
+  overview: { section: "Monitorización", title: "Resumen" },
+  map: { section: "Monitorización", title: "Mapa global" },
+  events: { section: "Monitorización", title: "Eventos" },
+  honeypots: { section: "Operación", title: "Honeypots" },
+  devices: { section: "Operación", title: "Dispositivos" },
+  ingest: { section: "Operación", title: "Ingesta" },
+  admin: { section: "Gobierno", title: "Administración" },
+};
+
+interface TopbarProps {
+  page: PageId;
+  range: string;
+  onRangeChange: (range: string) => void;
+  search: string;
+  onSearchChange: (value: string) => void;
+  onRefresh: () => void;
+  refreshing: boolean;
+  onOpenMobile: () => void;
+}
+
+export function Topbar({
+  page,
+  range,
+  onRangeChange,
+  search,
+  onSearchChange,
+  onRefresh,
+  refreshing,
+  onOpenMobile,
+}: TopbarProps) {
+  const [rangeOpen, setRangeOpen] = useState(false);
+  const [userOpen, setUserOpen] = useState(false);
+  const [commandFocused, setCommandFocused] = useState(false);
+  const rangeRef = useRef<HTMLDivElement>(null);
+  const userRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const label = PAGE_LABEL[page];
+
+  useEffect(() => {
+    const onPointer = (event: MouseEvent) => {
+      if (rangeRef.current && !rangeRef.current.contains(event.target as Node)) setRangeOpen(false);
+      if (userRef.current && !userRef.current.contains(event.target as Node)) setUserOpen(false);
+    };
+    document.addEventListener("mousedown", onPointer);
+    return () => document.removeEventListener("mousedown", onPointer);
+  }, []);
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        inputRef.current?.focus();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  const activeRange = TIME_RANGES.find((item) => item.id === range) ?? TIME_RANGES[0];
+
+  return (
+    <header className="topbar">
+      <div className="topbar-left">
+        <button className="icon-button mobile-menu" onClick={onOpenMobile} aria-label="Abrir navegación">
+          <Menu size={19} />
+        </button>
+        <div className="breadcrumb">
+          <span>{label.section}</span>
+          <span className="breadcrumb-sep">/</span>
+          <strong>{label.title}</strong>
+        </div>
+      </div>
+
+      <div className={`global-search ${commandFocused ? "focused" : ""}`}>
+        <Search size={16} />
+        <input
+          ref={inputRef}
+          value={search}
+          onChange={(event) => onSearchChange(event.target.value)}
+          onFocus={() => setCommandFocused(true)}
+          onBlur={() => setCommandFocused(false)}
+          placeholder="Buscar IP, país, sensor o evento…"
+          aria-label="Buscar en Dystopia"
+        />
+        <span className="search-shortcut"><Command size={12} />K</span>
+      </div>
+
+      <div className="topbar-actions">
+        <div className="range-control" ref={rangeRef}>
+          <button className="range-button" onClick={() => setRangeOpen((open) => !open)} aria-expanded={rangeOpen}>
+            <span className="status-dot live" />
+            <span>{activeRange.label}</span>
+            <ChevronDown size={14} />
+          </button>
+          {rangeOpen && (
+            <div className="dropdown range-dropdown" role="menu">
+              <span className="dropdown-label">Rango de tiempo</span>
+              {TIME_RANGES.map((item) => (
+                <button
+                  key={item.id}
+                  className={item.id === range ? "active" : ""}
+                  onClick={() => {
+                    onRangeChange(item.id);
+                    setRangeOpen(false);
+                  }}
+                >
+                  <span>{item.label}</span>
+                  <span className="mono">{item.short}</span>
+                </button>
+              ))}
+              <div className="dropdown-foot">El dashboard guarda la ventana seleccionada.</div>
+            </div>
+          )}
+        </div>
+
+        <button className={`icon-button ${refreshing ? "spinning" : ""}`} onClick={onRefresh} aria-label="Actualizar datos" title="Actualizar">
+          <RefreshCw size={17} />
+        </button>
+        <button className="icon-button badge-button" aria-label="Avisos" title="Avisos">
+          <Bell size={17} />
+          <span className="badge">3</span>
+        </button>
+        <button className="icon-button help-button" aria-label="Ayuda" title="Ayuda">
+          <HelpCircle size={17} />
+        </button>
+
+        <div className="user-control" ref={userRef}>
+          <button className="user-button" onClick={() => setUserOpen((open) => !open)} aria-expanded={userOpen}>
+            <span className="avatar"><UserRound size={16} /></span>
+            <span className="user-copy">
+              <strong>deception_admin</strong>
+              <small>Administrador</small>
+            </span>
+            <ChevronDown size={14} />
+          </button>
+          {userOpen && (
+            <div className="dropdown user-dropdown" role="menu">
+              <div className="user-dropdown-head">
+                <span className="avatar large"><UserRound size={18} /></span>
+                <div>
+                  <strong>deception_admin</strong>
+                  <span>Rol administrador · sesión local</span>
+                </div>
+              </div>
+              <div className="user-dropdown-status">
+                <ShieldCheck size={14} />
+                <span>Control plane autorizado</span>
+              </div>
+              <button onClick={() => setUserOpen(false)}>Cerrar sesión</button>
+            </div>
+          )}
+        </div>
+      </div>
+    </header>
+  );
+}
