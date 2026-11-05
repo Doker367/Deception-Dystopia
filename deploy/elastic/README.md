@@ -97,3 +97,27 @@ Ejecutado en el laboratorio local con Colima, sin tocar KVM/nftables:
   de Kibana tras reverse proxy.
 - Backup/snapshots de Elasticsearch: `path.repo` existe en Compose, pero no hay
   repositorio registrado ni restauración probada.
+
+## Dystopia Web (BFF de solo lectura)
+
+La web propia consume `/api/analytics/*`. Para habilitarla:
+
+1. Crear la API key de lectura con el rol `deception-analyst`:
+
+   ```bash
+   ENV_FILE=deploy/elastic/.env ./deploy/elastic/scripts/create-analytics-key.sh
+   ```
+
+2. Configurar en el entorno del control plane:
+
+   ```bash
+   DYSTOPIA_ANALYTICS_ENABLED=true
+   DYSTOPIA_ANALYTICS_URL=https://127.0.0.1:9200
+   DYSTOPIA_ANALYTICS_INDEX=deception-events*
+   DYSTOPIA_ANALYTICS_ALERTS_INDEX=deception-alerts*
+   DYSTOPIA_ANALYTICS_API_KEY_FILE=/ruta/privada/dystopia-analytics-reader.api-key
+   DYSTOPIA_ANALYTICS_CA_FILE=/ruta/privada/ca.crt
+   ```
+
+La key es de solo lectura; no reutilizar la del writer de ingesta. El
+navegador nunca recibe ni la key ni la URL de Elasticsearch.

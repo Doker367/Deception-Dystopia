@@ -22,7 +22,9 @@ def client(monkeypatch):
 
 
 def test_dashboard_renders_safe_operator_entry_points(client):
-    response = client.get("/")
+    # The legacy console remains reachable at an explicit path while the
+    # Dystopia Web SPA owns "/".
+    response = client.get("/static/dashboard.html")
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/html")
     html = response.text
@@ -82,10 +84,28 @@ def test_console_assets_are_cohesive_and_do_not_fake_telemetry(client):
     assert '/static/console.js' in dashboard and '/static/console.css' in dashboard
     assert client.get('/static/console.js').status_code == 200
     assert client.get('/static/console.css').status_code == 200
-    assert "script-src 'self'" in client.get('/').headers['content-security-policy']
-    assert 'unsafe-inline' not in client.get('/').headers['content-security-policy']
+    assert "script-src 'self'" in client.get('/static/dashboard.html').headers['content-security-policy']
+    assert 'unsafe-inline' not in client.get('/static/dashboard.html').headers['content-security-policy']
     assert 'overflow-y:auto' in css
     assert '/api/console/activity' in js and '/api/console/events' in js
     assert 'alert(' not in js and 'window.confirm(' not in js
     assert "dialog.returnValue=''" in js  # Escape cannot reuse a previous confirmation
     assert 'No disponible' in js
+
+
+def test_legacy_console_route_redirects(client):
+    response = client.get("/console", follow_redirects=False)
+    assert response.status_code == 307
+    assert response.headers["location"] == "/static/dashboard.html"
+
+
+def test_dystopia_web_is_served_when_built(client):
+    if not (ROOT / "web" / "dist" / "index.html").is_file():
+        pytest.skip("Dystopia Web build is not present")
+    response = client.get("/")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
+    assert "Dystopia · Security Operations" in response.text
+    csp = response.headers["content-security-policy"]
+    assert "script-src 'self'" in csp
+    assert "style-src 'self' 'unsafe-inline'" in csp

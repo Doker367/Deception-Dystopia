@@ -1,0 +1,63 @@
+export type PageId =
+  | "overview"
+  | "map"
+  | "events"
+  | "honeypots"
+  | "devices"
+  | "ingest"
+  | "admin";
+
+export type Severity = "critical" | "high" | "medium" | "low" | "info";
+
+export interface AttackOrigin {
+  id: string;
+  country: string;
+  countryCode: string;
+  city: string;
+  ip: string;
+  lat: number;
+  lng: number;
+  events: number;
+  uniqueSources: number;
+  severity: Severity;
+  protocol: string;
+  sensor: string;
+  lastSeen: string;
+}
+
+export interface EventRow {
+  id: string;
+  timestamp: string;
+  sensor: string;
+  device: string;
+  source: string;
+  country: string;
+  countryCode: string;
+  kind: string;
+  proto: string;
+  port: number;
+  action: string;
+  severity: Severity;
+  message: string;
+}
+
+export interface Honeypot {
+  id: string;
+  name: string;
+  service: string;
+  status: "healthy" | "degraded" | "offline";
+  port: number;
+  events: number;
+  uniqueSources: number;
+  lastSeen: string;
+  uptime: string;
+  trend: number[];
+  color: string;
+}
+
+export interface TimeRangeOption {
+  id: string;
+  label: string;
+  short: string;
+  from: string;
+}
