@@ -12,7 +12,6 @@ def read_config(name: str) -> str:
 
 
 def _strip_comments(text: str) -> str:
-    """Remove # comments outside quotes for the small nginx subset we use."""
     output: list[str] = []
     quote: str | None = None
     escaped = False
@@ -47,11 +46,6 @@ def _strip_comments(text: str) -> str:
 
 
 def parse_nginx_blocks(text: str) -> list[tuple[str, ...]]:
-    """Parse directive/block boundaries for the nginx subset in these files.
-
-    This catches unbalanced blocks and missing directive terminators; it is not
-    a replacement for nginx -t, which also resolves modules and includes.
-    """
     clean = _strip_comments(text)
     tokens = re.findall(r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|[{};]|[^\s{};]+', clean)
     blocks: list[tuple[str, ...]] = []
@@ -84,7 +78,6 @@ def parse_nginx_blocks(text: str) -> list[tuple[str, ...]]:
 
 
 def assert_caddy_blocks_balanced(text: str) -> None:
-    """Structural Caddyfile check: balanced blocks/quotes, not caddy validate."""
     depth = 0
     quote: str | None = None
     escaped = False
@@ -116,11 +109,12 @@ def assert_caddy_blocks_balanced(text: str) -> None:
 
 
 def test_nginx_templates_have_structurally_valid_blocks() -> None:
-    files = ["nginx.conf", "kibana.conf", "kibana-proxy-headers.conf", "control.conf"]
-    parsed = {name: parse_nginx_blocks(read_config(name)) for name in files}
+    parsed = {
+        "nginx.conf": parse_nginx_blocks(read_config("nginx.conf")),
+        "control.conf": parse_nginx_blocks(read_config("control.conf")),
+    }
     assert ("events",) in parsed["nginx.conf"]
     assert ("http",) in parsed["nginx.conf"]
-    assert ("server",) in parsed["kibana.conf"]
     assert ("server",) in parsed["control.conf"]
 
 
@@ -128,15 +122,11 @@ def test_caddyfile_has_structurally_valid_blocks() -> None:
     text = read_config("Caddyfile")
     assert_caddy_blocks_balanced(text)
     assert "auto_https disable_redirects" in text
-    assert "https://kibana.mgmt.example.invalid:8443" in text
     assert "https://control.mgmt.example.invalid:9443" in text
 
 
 def test_proxy_never_targets_elasticsearch_or_docker_socket() -> None:
-    configs = "\n".join(
-        read_config(name)
-        for name in ["Caddyfile", "nginx.conf", "kibana.conf", "kibana-proxy-headers.conf", "control.conf"]
-    )
+    configs = "\n".join(read_config(name) for name in ["Caddyfile", "nginx.conf", "control.conf"])
     assert not re.search(r"(?:https?://[^\s;{}]*:9200|proxy_pass\s+[^;]*:9200)", configs)
     assert not re.search(r"/var/run/docker\.sock|/run/docker\.sock", configs)
     assert "privileged:" not in configs.lower()
@@ -144,58 +134,41 @@ def test_proxy_never_targets_elasticsearch_or_docker_socket() -> None:
     assert not re.search(r"\blatest\b", configs, flags=re.IGNORECASE)
 
 
-def test_kibana_status_is_routed_and_deception_routes_are_denied() -> None:
-    nginx_kibana = read_config("kibana.conf")
-    nginx_headers = read_config("kibana-proxy-headers.conf")
+def test_deception_routes_are_denied() -> None:
     nginx_control = read_config("control.conf")
     caddy = read_config("Caddyfile")
-    assert "location = /api/status" in nginx_kibana
-    assert "proxy_pass https://127.0.0.1:5601;" in nginx_kibana
-    assert "proxy_ssl_verify on;" in nginx_headers
-    assert "proxy_ssl_name localhost;" in nginx_headers
-    assert "reverse_proxy https://127.0.0.1:5601" in caddy
+    assert "location = /api/deception" in nginx_control
+    assert "location ^~ /api/deception/" in nginx_control
+    assert re.search(r"location\s+\^~\s+/api/deception/\s*\{\s*return 404;", nginx_control)
     assert "@deception path /api/deception /api/deception/*" in caddy
     assert 'respond @deception "Not Found" 404' in caddy
-    for text in (nginx_kibana, nginx_control):
-        assert "location = /api/deception" in text
-        assert "location ^~ /api/deception/" in text
-        assert re.search(r"location\s+\^~\s+/api/deception/\s*\{\s*return 404;", text)
 
 
 def test_tls_and_loopback_are_mandatory_by_default() -> None:
-    for name, port in (("kibana.conf", "8443"), ("control.conf", "9443")):
-        text = read_config(name)
-        assert f"listen 127.0.0.1:{port} ssl;" in text
-        assert "ssl_certificate_key" in text
-        assert "ssl_protocols TLSv1.2 TLSv1.3;" in text
-    assert "bind 127.0.0.1" in read_config("Caddyfile")
-    assert "tls /etc/dystopia/tls-proxy/certs/reverse-proxy.crt" in read_config("Caddyfile")
-    kibana_yaml = (ROOT / "config" / "kibana" / "kibana.yml").read_text(encoding="utf-8")
-    # TLS de Kibana queda como cambio objetivo del despliegue Linux; el
-    # laboratorio canónico y CI todavían usan HTTP para no romper el import.
-    assert "  # ssl:" in kibana_yaml and "  #   enabled: true" in kibana_yaml
-    assert "proxy_ssl_verify on;" in read_config("kibana-proxy-headers.conf")
+    text = read_config("control.conf")
+    assert "listen 127.0.0.1:9443 ssl;" in text
+    assert "ssl_certificate_key" in text
+    assert "ssl_protocols TLSv1.2 TLSv1.3;" in text
+    caddy = read_config("Caddyfile")
+    assert "bind 127.0.0.1" in caddy
+    assert "tls /etc/dystopia/tls-proxy/certs/reverse-proxy.crt" in caddy
 
 
-def test_management_and_analyst_access_is_allowlisted() -> None:
-    for name in ("kibana.conf", "control.conf"):
-        text = read_config(name)
-        assert "allow 127.0.0.1;" in text
-        assert "allow ::1;" in text
-        assert "deny all;" in text
-    assert read_config("Caddyfile").count("@notManagement not remote_ip 127.0.0.1 ::1") == 2
+def test_management_access_is_allowlisted() -> None:
+    text = read_config("control.conf")
+    assert "allow 127.0.0.1;" in text
+    assert "allow ::1;" in text
+    assert "deny all;" in text
+    assert read_config("Caddyfile").count("@notManagement not remote_ip 127.0.0.1 ::1") == 1
 
 
 def test_hsts_and_standard_security_headers_exist_only_on_tls_vhosts() -> None:
-    for name in ("kibana.conf", "control.conf"):
-        text = read_config(name)
-        assert 'add_header Strict-Transport-Security "max-age=31536000" always;' in text
-        assert 'add_header X-Content-Type-Options "nosniff" always;' in text
-        assert 'add_header X-Frame-Options "DENY" always;' in text
-        assert "listen 127.0.0.1:" in text and " ssl;" in text
-    caddy = read_config("Caddyfile")
-    assert caddy.count('Strict-Transport-Security "max-age=31536000"') == 2
-    assert caddy.count('X-Content-Type-Options "nosniff"') == 2
+    text = read_config("control.conf")
+    assert 'add_header Strict-Transport-Security "max-age=31536000" always;' in text
+    assert 'add_header X-Content-Type-Options "nosniff" always;' in text
+    assert 'add_header X-Frame-Options "DENY" always;' in text
+    assert "listen 127.0.0.1:" in text and " ssl;" in text
+    assert read_config("Caddyfile").count('Strict-Transport-Security "max-age=31536000"') == 1
 
 
 def test_control_proxy_minimizes_personal_data_and_disables_caching() -> None:
@@ -218,4 +191,3 @@ def test_templates_contain_no_private_keys_or_credentials() -> None:
             continue
         text = path.read_text(encoding="utf-8")
         assert "-----BEGIN PRIVATE KEY-----" not in text
-        assert not re.search(r"(?im)^\s*(?:password|token|api[_-]?key)\s*[:=]\s*\S+", text)

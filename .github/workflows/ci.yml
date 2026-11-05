@@ -33,7 +33,7 @@ jobs:
       - name: Tests
         run: pytest tests
 
-  artifact-contracts:
+  ui-contracts:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -47,11 +47,25 @@ jobs:
           pip install --upgrade pip
           pip install -r requirements-dev.txt
 
-      - name: Contratos de integración y UI
-        run: pytest -q tests/integration_unified tests/ui
+      - name: Contratos de UI y despliegue
+        run: pytest -q tests/ui tests/deploy
 
-      - name: Regenerar bundle canónico
-        run: python deploy/kibana-dashboards/tools/build_dashboards.py
+  web-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Instalar dependencias web
+        run: cd web && npm ci
+
+      - name: Build Dystopia Web
+        run: cd web && npm run build
 
   typecheck:
     runs-on: ubuntu-latest

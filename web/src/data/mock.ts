@@ -1,11 +1,11 @@
 import type { AttackOrigin, EventRow, Honeypot, TimeRangeOption } from "../types";
 
 export const DATACENTER = {
-  name: "Dystopia Core",
-  city: "CDMX",
-  country: "México",
-  lat: 19.4326,
-  lng: -99.1332,
+  name: "UNACH · FCFM",
+  city: "Tuxtla Gutiérrez",
+  country: "Chiapas, México",
+  lat: 16.75236,
+  lng: -93.15323,
 };
 
 export const TIME_RANGES: TimeRangeOption[] = [
@@ -258,59 +258,7 @@ export const ATTACK_ORIGINS: AttackOrigin[] = [
   },
 ];
 
-const EVENT_KINDS = [
-  "ssh.login.failed",
-  "ssh.command",
-  "http.request",
-  "http.login.failed",
-  "smb.connect",
-  "rdp.handshake",
-  "redis.command",
-  "telnet.connect",
-] as const;
-
-const ACTIONS = [
-  "Login fallido",
-  "Comando ejecutado",
-  "Sondeo HTTP",
-  "Credencial inválida",
-  "Conexión SMB",
-  "Negociación RDP",
-  "Comando Redis",
-  "Conexión Telnet",
-] as const;
-
-const SENSORS = ["cowrie", "opencanary", "dionaea", "heralding", "redishoneypot", "endlessh"] as const;
-const EVENT_DEVICES = ["srv-files-01", "sw-access-01", "print-01", "db-01", "edge-01"] as const;
-
-export const EVENTS: EventRow[] = Array.from({ length: 56 }, (_, index) => {
-  const origin = ATTACK_ORIGINS[index % ATTACK_ORIGINS.length];
-  const kind = EVENT_KINDS[index % EVENT_KINDS.length];
-  const sensor = SENSORS[index % SENSORS.length];
-  const minutes = index * 7 + 2;
-  return {
-    id: `evt_${String(48_200 - index).padStart(6, "0")}`,
-    timestamp: new Date(Date.now() - minutes * 60_000).toISOString(),
-    sensor,
-    device: EVENT_DEVICES[index % EVENT_DEVICES.length],
-    source: origin.ip,
-    country: origin.country,
-    countryCode: origin.countryCode,
-    kind,
-    proto: origin.protocol,
-    port: [22, 23, 80, 443, 445, 6379, 3389][index % 7],
-    action: ACTIONS[index % ACTIONS.length],
-    severity: (["critical", "high", "high", "medium", "medium", "low", "info"] as const)[
-      index % 7
-    ],
-    message:
-      index % 3 === 0
-        ? "Payload de autenticación con credenciales comunes detectado"
-        : index % 3 === 1
-          ? "Sesión interactiva con comandos de reconocimiento"
-          : "Sondeo de servicio y fingerprint del protocolo",
-  };
-});
+export const EVENTS: EventRow[] = [];
 
 export const HONEYPOTS: Honeypot[] = [
   {
@@ -426,9 +374,9 @@ export const USERS = [
 ];
 
 export const API_KEYS = [
-  { name: "dystopia-ingest-writer", role: "writer", created: "12 oct 2026", scope: "deception-events", status: "activa" },
-  { name: "dystopia-readonly", role: "viewer", created: "14 oct 2026", scope: "deception-*", status: "activa" },
-  { name: "kibana-service", role: "service", created: "02 nov 2026", scope: "kibana", status: "activa" },
+  { name: "dystopia-ingest-writer", role: "writer", created: "12 oct 2026", scope: "sqlite:deception_events", status: "activa" },
+  { name: "dystopia-readonly", role: "viewer", created: "14 oct 2026", scope: "sqlite:read", status: "activa" },
+  { name: "sensor-cowrie-c1", role: "sensor", created: "02 nov 2026", scope: "ingest:v1", status: "activa" },
 ];
 
 export const DEVICES = [
@@ -445,3 +393,136 @@ export const SEGMENTS = [
   { name: "c1-access", cidr: "10.20.2.0/24", devices: 2, exposure: "interna", color: "#5aa9ff" },
   { name: "c1-edge", cidr: "10.20.3.0/24", devices: 2, exposure: "perimetral", color: "#f5b75b" },
 ];
+
+export const HONEYPOT_CONFIGS: Record<string, import("../types").HoneypotConfig> = {
+  cowrie: {
+    id: "cowrie",
+    container: "dystopia-hp-c1-cowrie",
+    image: "dystopia/honeypot-cowrie:3.1.4",
+    device: "srv-files-01",
+    description: "SSH/Telnet medium-interaction honeypot",
+    user: "999:999",
+    configFile: "cowrie.cfg",
+    configTarget: "/etc/cowrie/cowrie.cfg",
+    logPath: "/cowrie/cowrie-git/var/log/cowrie/cowrie.json",
+    logFormat: "jsonl",
+    ports: [
+      { container: 2222, proto: "tcp", purpose: "ssh", host: 12222 },
+      { container: 2223, proto: "tcp", purpose: "telnet", host: 12223 },
+    ],
+    volumes: ["cowrie/var:/cowrie/cowrie-git/var"],
+    healthcheck: { type: "process", marker: "twistd", interval: "60s", startPeriod: "30s" },
+    resources: { memLimit: "512m", cpus: "0.50", pidsLimit: 256, nofile: 4096, tmpfsMib: 64 },
+  },
+  opencanary: {
+    id: "opencanary",
+    container: "dystopia-hp-c1-opencanary",
+    image: "dystopia/honeypot-opencanary:0.9.10",
+    device: "sw-access-01",
+    description: "Multi-protocol low-interaction honeypot",
+    user: "2000:2000",
+    configFile: "opencanary.conf",
+    configTarget: "/etc/opencanaryd/opencanary.conf",
+    logPath: "/var/log/opencanary/opencanary.log",
+    logFormat: "jsonl",
+    ports: [
+      { container: 21, proto: "tcp", purpose: "ftp" },
+      { container: 22, proto: "tcp", purpose: "ssh", host: 13022 },
+      { container: 23, proto: "tcp", purpose: "telnet" },
+      { container: 80, proto: "tcp", purpose: "http", host: 13080 },
+      { container: 3306, proto: "tcp", purpose: "mysql" },
+    ],
+    volumes: ["opencanary/log:/var/log/opencanary"],
+    healthcheck: { type: "process", marker: "opencanaryd", interval: "60s", startPeriod: "30s" },
+    resources: { memLimit: "256m", cpus: "0.25", pidsLimit: 128, nofile: 2048, tmpfsMib: 16 },
+  },
+  dionaea: {
+    id: "dionaea",
+    container: "dystopia-hp-c1-dionaea",
+    image: "dystopia/honeypot-dionaea:0.12.5",
+    device: "srv-files-01",
+    description: "SMB/FTP/TFTP/HTTP/database multi-protocol honeypot",
+    user: "2000:2000",
+    configFile: "dionaea.cfg",
+    configTarget: "/opt/dionaea/etc/dionaea/dionaea.cfg",
+    logPath: "/opt/dionaea/var/log/dionaea.json",
+    logFormat: "jsonl",
+    ports: [
+      { container: 21, proto: "tcp", purpose: "ftp" },
+      { container: 69, proto: "udp", purpose: "tftp" },
+      { container: 81, proto: "tcp", purpose: "http" },
+      { container: 135, proto: "tcp", purpose: "epmap" },
+      { container: 443, proto: "tcp", purpose: "https" },
+      { container: 445, proto: "tcp", purpose: "smb", host: 14021 },
+      { container: 1433, proto: "tcp", purpose: "mssql" },
+      { container: 1723, proto: "tcp", purpose: "pptp" },
+      { container: 1883, proto: "tcp", purpose: "mqtt" },
+      { container: 3306, proto: "tcp", purpose: "mysql" },
+      { container: 27017, proto: "tcp", purpose: "mongodb" },
+    ],
+    volumes: ["dionaea/var:/opt/dionaea/var"],
+    healthcheck: { type: "process", marker: "dionaea", interval: "60s", startPeriod: "45s" },
+    resources: { memLimit: "768m", cpus: "1.00", pidsLimit: 512, nofile: 4096, tmpfsMib: 128 },
+  },
+  heralding: {
+    id: "heralding",
+    container: "dystopia-hp-c1-heralding",
+    image: "dystopia/honeypot-heralding:ac12724",
+    device: "srv-db-01",
+    description: "Credential-capturing multi-protocol honeypot",
+    user: "2000:2000",
+    configFile: "heralding.yml",
+    configTarget: "/etc/heralding/heralding.yml",
+    logPath: "/var/log/heralding/sessions.jsonl",
+    logFormat: "jsonl",
+    ports: [
+      { container: 21, proto: "tcp", purpose: "ftp" },
+      { container: 22, proto: "tcp", purpose: "ssh" },
+      { container: 23, proto: "tcp", purpose: "telnet" },
+      { container: 25, proto: "tcp", purpose: "smtp" },
+      { container: 80, proto: "tcp", purpose: "http" },
+      { container: 110, proto: "tcp", purpose: "pop3" },
+      { container: 143, proto: "tcp", purpose: "imap" },
+      { container: 443, proto: "tcp", purpose: "https" },
+      { container: 3306, proto: "tcp", purpose: "mysql" },
+      { container: 3389, proto: "tcp", purpose: "rdp" },
+      { container: 5432, proto: "tcp", purpose: "postgresql" },
+      { container: 5900, proto: "tcp", purpose: "vnc", host: 15021 },
+    ],
+    volumes: ["heralding/log:/var/log/heralding"],
+    healthcheck: { type: "process", marker: "heralding", interval: "60s", startPeriod: "30s" },
+    resources: { memLimit: "512m", cpus: "0.50", pidsLimit: 256, nofile: 4096, tmpfsMib: 32 },
+  },
+  redishoneypot: {
+    id: "redishoneypot",
+    container: "dystopia-hp-c1-redishoneypot",
+    image: "dystopia/honeypot-redishoneypot:45adc62",
+    device: "srv-db-01",
+    description: "Redis protocol honeypot",
+    user: "2000:2000",
+    configFile: "redis.conf",
+    configTarget: "/opt/redishoneypot/redis.conf",
+    logPath: "/var/log/redishoneypot/redishoneypot.log",
+    logFormat: "jsonl",
+    ports: [{ container: 6379, proto: "tcp", purpose: "redis", host: 16379 }],
+    volumes: ["redishoneypot/log:/var/log/redishoneypot"],
+    healthcheck: { type: "process", marker: "RedisHoneyPot", interval: "60s", startPeriod: "15s" },
+    resources: { memLimit: "192m", cpus: "0.25", pidsLimit: 128, nofile: 2048, tmpfsMib: 32 },
+  },
+  endlessh: {
+    id: "endlessh",
+    container: "dystopia-hp-c1-endlessh",
+    image: "dystopia/honeypot-endlessh:dfe44eb",
+    device: "fw-edge-01",
+    description: "SSH tarpit",
+    user: "2000:2000",
+    configFile: "endlessh.conf",
+    configTarget: "/opt/endlessh/endlessh.conf",
+    logPath: "/var/log/endlessh/endlessh.log",
+    logFormat: "text",
+    ports: [{ container: 2222, proto: "tcp", purpose: "ssh-tarpit", host: 17222 }],
+    volumes: ["endlessh/log:/var/log/endlessh"],
+    healthcheck: { type: "process", marker: "endlessh", interval: "60s", startPeriod: "15s" },
+    resources: { memLimit: "64m", cpus: "0.10", pidsLimit: 64, nofile: 8192, tmpfsMib: 16 },
+  },
+};

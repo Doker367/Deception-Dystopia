@@ -16,10 +16,11 @@ import { Panel } from "../components/Panel";
 import { EChart } from "../components/EChart";
 import { AttackGlobe } from "../components/AttackGlobe";
 import { EventTable } from "../components/EventTable";
-import { HONEYPOTS } from "../data/mock";
+import { DATACENTER, HONEYPOTS } from "../data/mock";
 import type { AnalyticsSnapshot, TimelinePoint } from "../data/useAnalytics";
 import type { PageId } from "../types";
 import { formatNumber } from "../lib/format";
+import { horizontalBarOption } from "../lib/charts";
 
 const AXIS_LABEL = { color: "#71849b", fontSize: 10, fontFamily: "JetBrains Mono, monospace" };
 const GRID_LINE = { color: "rgba(108, 150, 177, 0.12)", type: "dashed" as const };
@@ -185,6 +186,14 @@ export function OverviewPage({ search, range, data, onNavigate }: OverviewPagePr
         </div>
       )}
 
+      {live && total === 0 && (
+        <div className="data-notice">
+          <Activity size={15} />
+          <span>El almacén SQLite local está vacío. Los honeypots aparecerán aquí cuando la ingesta escriba eventos.</span>
+          <span className="mono">deception_events / events</span>
+        </div>
+      )}
+
       <div className="metrics-grid">
         <MetricCard
           label="Eventos totales"
@@ -231,7 +240,7 @@ export function OverviewPage({ search, range, data, onNavigate }: OverviewPagePr
           className="span-7"
           eyebrow="Telemetría"
           title="Volumen de ataques"
-          description="Eventos normalizados y deduplicados en deception-events."
+          description="Eventos normalizados y deduplicados en SQLite local."
           actions={
             <div className="panel-tabs">
               {["24h", "7d", "30d"].map((item) => (
@@ -252,7 +261,7 @@ export function OverviewPage({ search, range, data, onNavigate }: OverviewPagePr
           className="span-5 panel-globe"
           eyebrow="Geolocalización"
           title="Origen global"
-          description="Arcos de ataque hacia Dystopia Core."
+          description="Arcos de ataque hacia UNACH · FCFM."
           actions={
             <button className="link-button" onClick={() => onNavigate("map")}>
               Ver mapa <ArrowRight size={14} />
@@ -263,7 +272,7 @@ export function OverviewPage({ search, range, data, onNavigate }: OverviewPagePr
           <AttackGlobe points={origins} minimal height={330} />
           <div className="globe-summary-row">
             <div><span>Top origen</span><strong>{origins[0]?.country ?? "—"} <small>{origins[0] ? formatNumber(origins[0].events) : "0"}</small></strong></div>
-            <div><span>Core</span><strong>CDMX <small>México</small></strong></div>
+            <div><span>Core</span><strong>{DATACENTER.city} <small>{DATACENTER.country}</small></strong></div>
             <div><span>Países</span><strong>{origins.length} <small>activos</small></strong></div>
           </div>
         </Panel>
@@ -334,9 +343,27 @@ export function OverviewPage({ search, range, data, onNavigate }: OverviewPagePr
 
         <Panel
           className="span-12"
+          eyebrow="Comparativa"
+          title="Actividad por honeypot"
+          description="Volumen capturado por cada sensor del MVP."
+          actions={<span className="signal-pill"><Activity size={13} /> 6 sensores</span>}
+        >
+          <EChart
+            option={horizontalBarOption(
+              HONEYPOTS.map((honeypot) => honeypot.name),
+              HONEYPOTS.map((honeypot) => honeypot.events),
+              HONEYPOTS.map((honeypot) => honeypot.color),
+              " eventos",
+            )}
+            height={250}
+          />
+        </Panel>
+
+        <Panel
+          className="span-12"
           eyebrow="Actividad reciente"
           title="Últimos eventos"
-          description="Vista compacta del flujo de deception-events."
+          description="Vista compacta del flujo del almacén local."
           actions={
             <button className="link-button" onClick={() => onNavigate("events")}>
               Abrir explorador <ArrowRight size={14} />

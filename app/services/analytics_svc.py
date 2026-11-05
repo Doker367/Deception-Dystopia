@@ -1,123 +1,115 @@
-"""Read-only Elasticsearch query service for the Dystopia analytics UI.
+"""Read-only analytics over Dystopia's local SQLite event stores.
 
-The browser never receives Elasticsearch credentials. This service is the only
-component that talks to the analytics cluster and it is intentionally limited
-to a small set of aggregate/search operations over the deception data streams.
+The browser never receives the database path or credentials. This service
+supports both local event schemas used in the laboratory:
 
-Configuration (disabled unless ``DYSTOPIA_ANALYTICS_ENABLED=true``):
+- ``events``: the runtime v1 store written by the independent ingest service
+  (sensor, device, observed_at, kind, source, payload).
+- ``deception_events``: the control-plane store used by the native engine and
+  the simulator.
 
-- ``DYSTOPIA_ANALYTICS_URL``: Elasticsearch base URL (literal IP).
-- ``DYSTOPIA_ANALYTICS_INDEX``: default ``deception-events*``.
-- ``DYSTOPIA_ANALYTICS_ALERTS_INDEX``: default ``deception-alerts*``.
-- ``DYSTOPIA_ANALYTICS_API_KEY_FILE``: private file containing the API key.
-- ``DYSTOPIA_ANALYTICS_CA_FILE``: optional CA bundle for TLS.
-- ``DYSTOPIA_ANALYTICS_TIMEOUT``: request timeout in seconds.
+Elasticsearch is not part of this path. GeoIP is local (MaxMind/GeoLite2); no
+external lookup service is used.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections import Counter, defaultdict
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-import ipaddress
+import json
 import os
 from pathlib import Path
-import re
-from typing import Any, Mapping
-from urllib.parse import urlsplit
+import sqlite3
+from typing import Any, Mapping, Optional
 
-import httpx
+from app.core.settings import DECEPTION_DB
+from app.services.deception import geoip_svc
 
-from runtime.localfiles import read_private
-
-INDEX_RE = re.compile(r"^[a-z0-9][a-z0-9._*-]{0,254}$")
 MAX_WINDOW = timedelta(days=90)
-DEFAULT_INDEX = "deception-events*"
-DEFAULT_ALERTS = "deception-alerts*"
-INTERVALS = {"1m", "5m", "15m", "30m", "1h", "3h", "6h", "12h", "1d", "7d"}
+DEFAULT_MAX_ROWS = 20_000
+INTERVALS = {"1m": 60, "5m": 300, "15m": 900, "30m": 1800, "1h": 3600, "3h": 10800, "6h": 21600, "12h": 43200, "1d": 86400, "7d": 604800}
+SEVERITY_ORDER = {"critical": 4, "high": 3, "medium": 2, "low": 1, "info": 0}
+KIND_SEVERITY = {
+    "login_success": "critical",
+    "file_download": "critical",
+    "command": "high",
+    "port_scan": "high",
+    "login_attempt": "medium",
+    "http_request": "medium",
+    "other": "medium",
+    "connect": "low",
+    "disconnect": "info",
+}
+KIND_ACTION = {
+    "connect": "Conexión",
+    "disconnect": "Desconexión",
+    "login_attempt": "Intento de acceso",
+    "login_success": "Acceso exitoso",
+    "command": "Comando ejecutado",
+    "file_download": "Descarga de archivo",
+    "port_scan": "Escaneo de puertos",
+    "http_request": "Petición HTTP",
+    "other": "Evento",
+}
 
 
 class AnalyticsError(RuntimeError):
-    """Base class for safe, non-leaking analytics failures."""
+    """Base class for safe analytics failures."""
 
 
 class AnalyticsDisabled(AnalyticsError):
-    """The analytics plane is not configured."""
+    """Compatibility error retained for the router contract."""
 
 
 class AnalyticsUnavailable(AnalyticsError):
-    """Elasticsearch is unreachable or returned an unexpected response."""
+    """The local event store could not be read."""
 
 
 @dataclass(frozen=True)
 class AnalyticsConfig:
-    enabled: bool = False
-    url: str = ""
-    index: str = DEFAULT_INDEX
-    alerts_index: str = DEFAULT_ALERTS
-    api_key_file: Path | None = None
-    ca_file: Path | None = None
-    timeout: float = 5.0
+    db_path: Path = DECEPTION_DB
+    max_rows: int = DEFAULT_MAX_ROWS
+    max_window_days: int = 90
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> "AnalyticsConfig":
         values = os.environ if env is None else env
-
-        def flag(name: str, default: bool = False) -> bool:
-            raw = values.get(name)
-            if raw is None:
-                return default
-            return raw.strip().lower() in {"1", "true", "yes", "on"}
-
-        def path(name: str) -> Path | None:
-            raw = values.get(name, "").strip()
-            return Path(raw) if raw else None
-
-        def number(name: str, default: float) -> float:
-            raw = values.get(name, "").strip()
-            if not raw:
-                return default
-            try:
-                return float(raw)
-            except ValueError as exc:
-                raise ValueError(f"invalid {name}") from exc
-
-        return cls(
-            enabled=flag("DYSTOPIA_ANALYTICS_ENABLED", False),
-            url=values.get("DYSTOPIA_ANALYTICS_URL", "").strip(),
-            index=values.get("DYSTOPIA_ANALYTICS_INDEX", DEFAULT_INDEX).strip(),
-            alerts_index=values.get("DYSTOPIA_ANALYTICS_ALERTS_INDEX", DEFAULT_ALERTS).strip(),
-            api_key_file=path("DYSTOPIA_ANALYTICS_API_KEY_FILE"),
-            ca_file=path("DYSTOPIA_ANALYTICS_CA_FILE"),
-            timeout=number("DYSTOPIA_ANALYTICS_TIMEOUT", 5.0),
-        )
+        raw_path = values.get("DYSTOPIA_ANALYTICS_DB", "").strip()
+        raw_rows = values.get("DYSTOPIA_ANALYTICS_MAX_ROWS", "").strip()
+        try:
+            max_rows = int(raw_rows) if raw_rows else DEFAULT_MAX_ROWS
+        except ValueError as exc:
+            raise ValueError("invalid DYSTOPIA_ANALYTICS_MAX_ROWS") from exc
+        if not 100 <= max_rows <= 200_000:
+            raise ValueError("DYSTOPIA_ANALYTICS_MAX_ROWS out of range")
+        return cls(db_path=Path(raw_path) if raw_path else DECEPTION_DB, max_rows=max_rows)
 
     def validate(self) -> "AnalyticsConfig":
-        if not self.enabled:
+        if not self.db_path.is_absolute():
             return self
-        if not self.url:
-            raise ValueError("analytics URL required when enabled")
-        parsed = urlsplit(self.url)
-        if parsed.scheme not in {"http", "https"}:
-            raise ValueError("unsupported analytics URL scheme")
-        if parsed.username or parsed.password or parsed.query or parsed.fragment:
-            raise ValueError("analytics URL must not contain credentials or query")
-        if not parsed.hostname:
-            raise ValueError("analytics URL requires a host")
-        try:
-            address = ipaddress.ip_address(parsed.hostname)
-        except ValueError:
-            raise ValueError("analytics host must be a literal IP address") from None
-        if parsed.scheme == "http" and not address.is_loopback:
-            raise ValueError("non-loopback analytics requires TLS")
-        if not address.is_loopback and self.api_key_file is None:
-            raise ValueError("non-loopback analytics requires an API key file")
-        if parsed.port is not None and not 1 <= parsed.port <= 65535:
-            raise ValueError("invalid analytics port")
-        if not INDEX_RE.fullmatch(self.index) or not INDEX_RE.fullmatch(self.alerts_index):
-            raise ValueError("invalid analytics index name")
-        if not 0.1 <= self.timeout <= 30:
-            raise ValueError("analytics timeout out of range")
         return self
+
+
+@dataclass
+class EventRecord:
+    id: str
+    timestamp: str
+    sensor: str
+    device: str
+    source: str
+    country: str
+    countryCode: str
+    city: str
+    lat: Optional[float]
+    lng: Optional[float]
+    kind: str
+    proto: str
+    port: Optional[int]
+    action: str
+    severity: str
+    message: str
+    detail: dict[str, Any] = field(default_factory=dict)
 
 
 def _parse_time(value: str | None, fallback: datetime) -> datetime:
@@ -144,213 +136,242 @@ def _window(from_time: str | None, to_time: str | None) -> tuple[datetime, datet
 
 
 def _iso(value: datetime) -> str:
-    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    return value.astimezone(timezone.utc).isoformat()
 
 
-def _severity(value: Any) -> str:
+def _severity(kind: str) -> str:
+    return KIND_SEVERITY.get(kind, "info")
+
+
+def _action(kind: str) -> str:
+    return KIND_ACTION.get(kind, kind.replace("_", " ").capitalize())
+
+
+def _json_object(raw: Any) -> dict[str, Any]:
+    if isinstance(raw, bytes):
+        try:
+            raw = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            return {}
+    if isinstance(raw, dict):
+        return raw
+    if not isinstance(raw, str) or not raw:
+        return {}
     try:
-        number = int(value)
+        parsed = json.loads(raw)
+    except (ValueError, TypeError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _num(value: Any) -> Optional[float]:
+    if isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
     except (TypeError, ValueError):
-        return "info"
-    if number >= 9:
-        return "critical"
-    if number >= 7:
-        return "high"
-    if number >= 4:
-        return "medium"
-    if number >= 1:
-        return "low"
-    return "info"
-
-
-def _bucket_count(bucket: Mapping[str, Any]) -> int:
-    return int(bucket.get("doc_count", 0) or 0)
-
-
-def _first_term(aggregation: Mapping[str, Any] | None) -> Any:
-    buckets = (aggregation or {}).get("buckets") or []
-    return buckets[0].get("key") if buckets else None
+        return None
+    return number if -90 <= number <= 180 else None
 
 
 class AnalyticsService:
     def __init__(self, config: AnalyticsConfig | None = None):
         self.config = (config or AnalyticsConfig.from_env()).validate()
+        self._geo_cache: dict[str, Optional[dict]] = {}
 
-    def _headers(self) -> dict[str, str]:
-        headers = {"Accept": "application/json", "Content-Type": "application/json"}
-        if self.config.api_key_file is not None:
-            key = read_private(self.config.api_key_file, max_bytes=8192).decode("utf-8").strip()
-            if not key:
-                raise AnalyticsDisabled("empty analytics API key")
-            headers["Authorization"] = f"ApiKey {key}"
-        return headers
+    def _geo(self, ip: str) -> Optional[dict]:
+        if ip not in self._geo_cache:
+            try:
+                self._geo_cache[ip] = geoip_svc.lookup(ip)
+            except Exception:  # noqa: BLE001
+                self._geo_cache[ip] = None
+        return self._geo_cache[ip]
 
-    def _request(self, method: str, path: str, *, json: Any = None) -> dict[str, Any]:
-        if not self.config.enabled:
-            raise AnalyticsDisabled("analytics plane disabled")
-        verify: bool | str = True
-        if self.config.ca_file is not None:
-            if not self.config.ca_file.is_file():
-                raise AnalyticsUnavailable("analytics CA bundle unavailable")
-            verify = str(self.config.ca_file)
+    def _connect(self) -> Optional[sqlite3.Connection]:
+        path = self.config.db_path
+        if not path.is_file():
+            return None
         try:
-            with httpx.Client(
-                base_url=self.config.url.rstrip("/"),
-                headers=self._headers(),
-                timeout=httpx.Timeout(self.config.timeout, connect=min(self.config.timeout, 3.0)),
-                verify=verify,
-                follow_redirects=False,
-            ) as client:
-                response = client.request(method, path, json=json)
-        except (httpx.HTTPError, OSError, ValueError) as exc:
-            raise AnalyticsUnavailable("analytics backend unavailable") from exc
-        if response.status_code >= 400:
-            raise AnalyticsUnavailable(f"analytics backend returned HTTP {response.status_code}")
-        try:
-            payload = response.json()
-        except ValueError as exc:
-            raise AnalyticsUnavailable("analytics backend returned invalid JSON") from exc
-        if not isinstance(payload, dict):
-            raise AnalyticsUnavailable("analytics backend returned an unexpected payload")
-        return payload
+            conn = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True, timeout=2)
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA query_only=ON")
+            conn.execute("PRAGMA temp_store=MEMORY")
+            return conn
+        except (OSError, sqlite3.Error) as exc:
+            raise AnalyticsUnavailable("local event store unavailable") from exc
 
-    def _search(self, index: str, body: dict[str, Any]) -> dict[str, Any]:
-        return self._request("POST", f"/{index}/_search?ignore_unavailable=true", json=body)
+    def _schema(self, conn: sqlite3.Connection) -> str:
+        tables = {
+            row[0]
+            for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+        }
+        if "events" in tables:
+            return "runtime"
+        if "deception_events" in tables:
+            return "control"
+        return "none"
+
+    def _rows(self, start: datetime, end: datetime) -> list[EventRecord]:
+        conn = self._connect()
+        if conn is None:
+            return []
+        try:
+            schema = self._schema(conn)
+            if schema == "runtime":
+                raw_rows = conn.execute(
+                    """SELECT sensor, event_id, device, observed_at, kind, source, payload
+                       FROM events WHERE observed_at >= ? AND observed_at <= ?
+                       ORDER BY observed_at DESC LIMIT ?""",
+                    (_iso(start), _iso(end), self.config.max_rows),
+                ).fetchall()
+                return [record for row in raw_rows if (record := self._runtime_record(row)) is not None]
+            if schema == "control":
+                raw_rows = conn.execute(
+                    """SELECT id, ts, device_id, src_ip, src_port, proto, event_type,
+                              username, success, detail
+                       FROM deception_events WHERE ts >= ? AND ts <= ?
+                       ORDER BY ts DESC LIMIT ?""",
+                    (_iso(start), _iso(end), self.config.max_rows),
+                ).fetchall()
+                return [record for row in raw_rows if (record := self._control_record(row)) is not None]
+            return []
+        except sqlite3.Error as exc:
+            raise AnalyticsUnavailable("local event store query failed") from exc
+        finally:
+            conn.close()
+
+    def _runtime_record(self, row: sqlite3.Row) -> Optional[EventRecord]:
+        payload = _json_object(row["payload"])
+        source = str(payload.get("src_ip") or row["source"] or "")
+        kind = str(payload.get("type") or row["kind"] or "other")
+        detail = _json_object(payload.get("detail"))
+        geo = self._geo(source) or {}
+        return EventRecord(
+            id=str(payload.get("event_id") or row["event_id"] or ""),
+            timestamp=str(row["observed_at"] or ""),
+            sensor=str(row["sensor"] or ""),
+            device=str(row["device"] or ""),
+            source=source,
+            country=str(geo.get("country") or ""),
+            countryCode=str(geo.get("country_code") or ""),
+            city=str(geo.get("city") or ""),
+            lat=_num(geo.get("lat")),
+            lng=_num(geo.get("lon")),
+            kind=kind,
+            proto=str(payload.get("proto") or "tcp"),
+            port=int(payload["src_port"]) if isinstance(payload.get("src_port"), int) else None,
+            action=_action(kind),
+            severity=_severity(kind),
+            message=str(detail.get("message") or detail.get("eventid") or _action(kind)),
+            detail=detail,
+        )
+
+    def _control_record(self, row: sqlite3.Row) -> Optional[EventRecord]:
+        detail = _json_object(row["detail"])
+        source = str(row["src_ip"] or "")
+        kind = str(row["event_type"] or "other")
+        geo = self._geo(source) or {}
+        sensor = str(detail.get("engine") or detail.get("sensor") or row["device_id"] or "")
+        return EventRecord(
+            id=f"evt_{row['id']}",
+            timestamp=str(row["ts"] or ""),
+            sensor=sensor,
+            device=str(row["device_id"] or ""),
+            source=source,
+            country=str(geo.get("country") or ""),
+            countryCode=str(geo.get("country_code") or ""),
+            city=str(geo.get("city") or ""),
+            lat=_num(geo.get("lat")),
+            lng=_num(geo.get("lon")),
+            kind=kind,
+            proto=str(row["proto"] or ""),
+            port=int(row["src_port"]) if row["src_port"] is not None else None,
+            action=_action(kind),
+            severity=_severity(kind),
+            message=str(detail.get("message") or detail.get("command") or _action(kind)),
+            detail=detail,
+        )
 
     def overview(self, from_time: str | None, to_time: str | None) -> dict[str, Any]:
         start, end = _window(from_time, to_time)
-        range_query = {"range": {"@timestamp": {"gte": _iso(start), "lte": _iso(end)}}}
-        body = {
-            "size": 0,
-            "track_total_hits": True,
-            "query": range_query,
-            "aggs": {
-                "unique_sources": {"cardinality": {"field": "source.ip"}},
-                "protocols": {"terms": {"field": "network.protocol", "size": 10}},
-                "datasets": {"terms": {"field": "event.dataset", "size": 10}},
-                "severity": {"max": {"field": "event.severity"}},
-                "last_event": {"max": {"field": "@timestamp"}},
-            },
-        }
-        result = self._search(self.config.index, body)
-        total = int(result.get("hits", {}).get("total", {}).get("value", 0) or 0)
-        aggregations = result.get("aggregations", {})
-        alerts = 0
-        try:
-            alert_result = self._search(
-                self.config.alerts_index,
-                {"size": 0, "track_total_hits": True, "query": range_query},
-            )
-            alerts = int(alert_result.get("hits", {}).get("total", {}).get("value", 0) or 0)
-        except AnalyticsUnavailable:
-            # An absent alerts stream is not a fatal condition for the overview.
-            alerts = 0
+        rows = self._rows(start, end)
+        sources = {row.source for row in rows if row.source}
+        protocols = Counter(row.proto or "tcp" for row in rows)
+        sensors = Counter(row.sensor or "unknown" for row in rows)
+        max_severity = max((row.severity for row in rows), key=lambda value: SEVERITY_ORDER.get(value, 0), default="info")
         return {
             "window": {"from": _iso(start), "to": _iso(end)},
-            "total_events": total,
-            "unique_sources": int(aggregations.get("unique_sources", {}).get("value", 0) or 0),
-            "alerts": alerts,
-            "max_severity": _severity(aggregations.get("severity", {}).get("value")),
-            "latest_event": aggregations.get("last_event", {}).get("value_as_string"),
-            "protocols": [
-                {"name": bucket.get("key"), "value": _bucket_count(bucket)}
-                for bucket in aggregations.get("protocols", {}).get("buckets", [])
-            ],
-            "datasets": [
-                {"name": bucket.get("key"), "value": _bucket_count(bucket)}
-                for bucket in aggregations.get("datasets", {}).get("buckets", [])
-            ],
+            "total_events": len(rows),
+            "unique_sources": len(sources),
+            "alerts": sum(1 for row in rows if row.severity == "critical"),
+            "max_severity": max_severity,
+            "latest_event": rows[0].timestamp if rows else None,
+            "protocols": [{"name": name, "value": value} for name, value in protocols.most_common(10)],
+            "datasets": [{"name": name, "value": value} for name, value in sensors.most_common(10)],
         }
 
     def timeline(self, from_time: str | None, to_time: str | None, interval: str = "1h") -> dict[str, Any]:
         if interval not in INTERVALS:
             raise ValueError("unsupported interval")
         start, end = _window(from_time, to_time)
-        body = {
-            "size": 0,
-            "query": {"range": {"@timestamp": {"gte": _iso(start), "lte": _iso(end)}}},
-            "aggs": {
-                "events": {
-                    "date_histogram": {
-                        "field": "@timestamp",
-                        "fixed_interval": interval,
-                        "min_doc_count": 0,
-                        "extended_bounds": {"min": _iso(start), "max": _iso(end)},
-                    }
-                }
-            },
-        }
-        result = self._search(self.config.index, body)
-        buckets = result.get("aggregations", {}).get("events", {}).get("buckets", [])
-        return {
-            "interval": interval,
-            "buckets": [
-                {"at": bucket.get("key_as_string"), "count": _bucket_count(bucket)}
-                for bucket in buckets
-            ],
-        }
+        step = INTERVALS[interval]
+        rows = self._rows(start, end)
+        counts: Counter[int] = Counter()
+        for row in rows:
+            try:
+                observed = datetime.fromisoformat(row.timestamp.replace("Z", "+00:00"))
+            except ValueError:
+                continue
+            counts[int(observed.timestamp()) // step * step] += 1
+        first = int(start.timestamp()) // step * step
+        last = int(end.timestamp()) // step * step
+        buckets = []
+        for stamp in range(first, last + step, step):
+            at = datetime.fromtimestamp(stamp, timezone.utc)
+            buckets.append({"at": _iso(at), "count": counts.get(stamp, 0)})
+        return {"interval": interval, "buckets": buckets}
 
     def origins(self, from_time: str | None, to_time: str | None, limit: int = 50) -> dict[str, Any]:
         start, end = _window(from_time, to_time)
-        body = {
-            "size": 0,
-            "query": {"range": {"@timestamp": {"gte": _iso(start), "lte": _iso(end)}}},
-            "aggs": {
-                "countries": {
-                    "terms": {"field": "source.geo.country_iso_code", "size": max(1, min(limit, 100))},
-                    "aggs": {
-                        "country_name": {"terms": {"field": "source.geo.country_name", "size": 1}},
-                        "city": {"terms": {"field": "source.geo.city_name", "size": 1}},
-                        "location": {
-                            "top_hits": {
-                                "size": 1,
-                                "_source": [
-                                    "source.geo.location",
-                                    "source.geo.city_name",
-                                    "source.geo.country_name",
-                                ],
-                            }
-                        },
-                        "top_ip": {"terms": {"field": "source.ip", "size": 1}},
-                        "protocol": {"terms": {"field": "network.protocol", "size": 1}},
-                        "dataset": {"terms": {"field": "event.dataset", "size": 1}},
-                        "sources": {"cardinality": {"field": "source.ip"}},
-                        "severity": {"max": {"field": "event.severity"}},
-                        "last_event": {"max": {"field": "@timestamp"}},
-                    },
-                }
-            },
-        }
-        result = self._search(self.config.index, body)
-        origins = []
-        for bucket in result.get("aggregations", {}).get("countries", {}).get("buckets", []):
-            hit_source = (
-                bucket.get("location", {})
-                .get("hits", {})
-                .get("hits", [{}])[0]
-                .get("_source", {})
-            )
-            geo = hit_source.get("source", {}).get("geo", {}) if isinstance(hit_source, dict) else {}
-            location = geo.get("location") if isinstance(geo, dict) else None
-            lat = location.get("lat") if isinstance(location, dict) else None
-            lng = location.get("lon") if isinstance(location, dict) else None
-            origins.append(
-                {
-                    "countryCode": bucket.get("key"),
-                    "country": _first_term(bucket.get("country_name")) or geo.get("country_name") or bucket.get("key"),
-                    "city": _first_term(bucket.get("city")) or geo.get("city_name") or "",
-                    "ip": _first_term(bucket.get("top_ip")) or "",
-                    "lat": lat,
-                    "lng": lng,
-                    "events": _bucket_count(bucket),
-                    "uniqueSources": int(bucket.get("sources", {}).get("value", 0) or 0),
-                    "severity": _severity(bucket.get("severity", {}).get("value")),
-                    "protocol": _first_term(bucket.get("protocol")) or "",
-                    "sensor": _first_term(bucket.get("dataset")) or "",
-                    "lastEvent": bucket.get("last_event", {}).get("value_as_string"),
-                }
-            )
-        return {"origins": origins}
+        rows = self._rows(start, end)
+        groups: dict[str, dict[str, Any]] = defaultdict(
+            lambda: {"events": 0, "sources": set(), "protocols": Counter(), "sensors": Counter(), "severity": "info", "last": ""}
+        )
+        for row in rows:
+            if not row.countryCode or row.lat is None or row.lng is None:
+                continue
+            group = groups[row.countryCode]
+            group["country"] = row.country or row.countryCode
+            group["city"] = group.get("city") or row.city
+            group["ip"] = group.get("ip") or row.source
+            group["lat"] = group.get("lat") if group.get("lat") is not None else row.lat
+            group["lng"] = group.get("lng") if group.get("lng") is not None else row.lng
+            group["events"] += 1
+            group["sources"].add(row.source)
+            group["protocols"][row.proto or "tcp"] += 1
+            group["sensors"][row.sensor or "unknown"] += 1
+            if SEVERITY_ORDER.get(row.severity, 0) > SEVERITY_ORDER.get(group["severity"], 0):
+                group["severity"] = row.severity
+            if row.timestamp > group["last"]:
+                group["last"] = row.timestamp
+        result = []
+        for code, group in groups.items():
+            result.append({
+                "countryCode": code,
+                "country": group.get("country") or code,
+                "city": group.get("city") or "",
+                "ip": group.get("ip") or "",
+                "lat": group.get("lat"),
+                "lng": group.get("lng"),
+                "events": group["events"],
+                "uniqueSources": len(group["sources"]),
+                "severity": group["severity"],
+                "protocol": group["protocols"].most_common(1)[0][0] if group["protocols"] else "",
+                "sensor": group["sensors"].most_common(1)[0][0] if group["sensors"] else "",
+                "lastEvent": group["last"] or None,
+            })
+        result.sort(key=lambda item: item["events"], reverse=True)
+        return {"origins": result[: max(1, min(limit, 100))]}
 
     def events(
         self,
@@ -365,106 +386,61 @@ class AnalyticsService:
         protocol: str = "",
     ) -> dict[str, Any]:
         start, end = _window(from_time, to_time)
-        must: list[dict[str, Any]] = [{"range": {"@timestamp": {"gte": _iso(start), "lte": _iso(end)}}}]
-        filters: list[dict[str, Any]] = []
-        if sensor:
-            filters.append({"term": {"event.dataset": sensor}})
-        if protocol:
-            filters.append({"term": {"network.protocol": protocol}})
-        severity_ranges = {
-            "critical": {"gte": 9},
-            "high": {"gte": 7, "lt": 9},
-            "medium": {"gte": 4, "lt": 7},
-            "low": {"gte": 1, "lt": 4},
-        }
-        if severity in severity_ranges:
-            filters.append({"range": {"event.severity": severity_ranges[severity]}})
-        if query_text:
-            must.append(
+        rows = self._rows(start, end)
+        query = query_text.strip().lower()
+        filtered = []
+        for row in rows:
+            if severity and row.severity != severity:
+                continue
+            if sensor and row.sensor != sensor:
+                continue
+            if protocol and row.proto != protocol:
+                continue
+            if query and query not in " ".join(
+                [row.id, row.source, row.country, row.sensor, row.device, row.kind, row.action, row.proto, row.message]
+            ).lower():
+                continue
+            filtered.append(row)
+        page = filtered[offset: offset + max(1, min(limit, 100))]
+        return {
+            "total": len(filtered),
+            "items": [
                 {
-                    "multi_match": {
-                        "query": query_text,
-                        "fields": [
-                            "source.ip",
-                            "source.geo.country_name",
-                            "event.dataset",
-                            "event.kind",
-                            "event.action",
-                            "dystopia.device_id",
-                            "network.protocol",
-                        ],
-                        "type": "best_fields",
-                    }
+                    "id": row.id,
+                    "timestamp": row.timestamp,
+                    "sensor": row.sensor,
+                    "device": row.device,
+                    "source": row.source,
+                    "country": row.country,
+                    "countryCode": row.countryCode,
+                    "kind": row.kind,
+                    "proto": row.proto,
+                    "port": row.port,
+                    "action": row.action,
+                    "severity": row.severity,
+                    "message": row.message,
                 }
-            )
-        body = {
-            "from": max(0, offset),
-            "size": max(1, min(limit, 100)),
-            "track_total_hits": True,
-            "sort": [{"@timestamp": {"order": "desc"}}],
-            "query": {"bool": {"must": must, "filter": filters}},
-            "_source": [
-                "@timestamp",
-                "event.id",
-                "event.kind",
-                "event.action",
-                "event.severity",
-                "event.dataset",
-                "source.ip",
-                "source.geo.country_name",
-                "source.geo.country_iso_code",
-                "destination.port",
-                "network.protocol",
-                "dystopia.device_id",
-                "dystopia.segment_id",
+                for row in page
             ],
         }
-        result = self._search(self.config.index, body)
-        hits = result.get("hits", {})
-        items = []
-        for hit in hits.get("hits", []):
-            source = hit.get("_source", {})
-            event = source.get("event", {}) if isinstance(source, dict) else {}
-            src = source.get("source", {}) if isinstance(source, dict) else {}
-            geo = src.get("geo", {}) if isinstance(src, dict) else {}
-            network = source.get("network", {}) if isinstance(source, dict) else {}
-            dystopia = source.get("dystopia", {}) if isinstance(source, dict) else {}
-            items.append(
-                {
-                    "id": event.get("id") or hit.get("_id", ""),
-                    "timestamp": source.get("@timestamp"),
-                    "sensor": str(event.get("dataset") or "").removeprefix("deception."),
-                    "device": dystopia.get("device_id") or "",
-                    "source": src.get("ip") or "",
-                    "country": geo.get("country_name") or "",
-                    "countryCode": geo.get("country_iso_code") or "",
-                    "kind": event.get("kind") or "",
-                    "proto": network.get("protocol") or "",
-                    "port": source.get("destination", {}).get("port") if isinstance(source.get("destination"), dict) else None,
-                    "action": event.get("action") or "",
-                    "severity": _severity(event.get("severity")),
-                    "message": "Evento normalizado de deception-events",
-                }
-            )
-        total = hits.get("total", {})
-        return {"total": int(total.get("value", 0) or 0) if isinstance(total, dict) else int(total or 0), "items": items}
 
     def health(self) -> dict[str, Any]:
-        # The analyst role has read + view_index_metadata, not cluster monitor.
-        # A bounded search is the least-privilege health signal.
-        result = self._search(
-            self.config.index,
-            {"size": 0, "track_total_hits": True, "query": {"match_all": {}}},
-        )
-        total = int(result.get("hits", {}).get("total", {}).get("value", 0) or 0)
-        shards = result.get("_shards", {}) if isinstance(result.get("_shards"), dict) else {}
-        failed = int(shards.get("failed", 0) or 0)
-        return {
-            "status": "healthy" if failed == 0 else "degraded",
-            "index": self.config.index,
-            "documents": total,
-            "failed_shards": failed,
-        }
+        conn = self._connect()
+        if conn is None:
+            return {"status": "empty", "store": "sqlite", "documents": 0, "schema": "none"}
+        try:
+            schema = self._schema(conn)
+            table = "events" if schema == "runtime" else "deception_events" if schema == "control" else None
+            documents = int(conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]) if table else 0
+            return {
+                "status": "healthy" if schema != "none" else "empty",
+                "store": "sqlite",
+                "schema": schema,
+                "documents": documents,
+                "geoip": geoip_svc.available(),
+            }
+        finally:
+            conn.close()
 
 
 _service: AnalyticsService | None = None
@@ -475,3 +451,9 @@ def service() -> AnalyticsService:
     if _service is None:
         _service = AnalyticsService()
     return _service
+
+
+def reset_service() -> None:
+    """Test helper: drop the cached service after changing configuration."""
+    global _service
+    _service = None

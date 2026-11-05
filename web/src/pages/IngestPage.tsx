@@ -76,7 +76,7 @@ export function IngestPage() {
       <PageHeader
         eyebrow="Operación / Data plane"
         title="Ingesta y pipeline"
-        description="Salud del colector, normalización ECS, deduplicación y publicación en Elasticsearch. Todo en solo lectura."
+        description="Salud del colector, normalización, deduplicación y persistencia en SQLite local. Todo en solo lectura."
         actions={
           <>
             <button className="button ghost"><Gauge size={15} /> Ver métricas</button>
@@ -87,7 +87,7 @@ export function IngestPage() {
           <>
             <span><i className="status-dot live" /> Pipeline operativo</span>
             <span>latencia 1.2 s</span>
-            <span className="mono">deception-events</span>
+            <span className="mono">sqlite:deception_events</span>
           </>
         }
       />
@@ -111,7 +111,7 @@ export function IngestPage() {
               { name: "Normalizador", value: "healthy", detail: "ECS + dystopia.*", icon: ShieldCheck },
               { name: "Deduplicador", value: "healthy", detail: "event.id idempotente", icon: CheckCircle2 },
               { name: "Publicador", value: "healthy", detail: "batch 200", icon: Database },
-              { name: "Elasticsearch", value: "healthy", detail: "9.3.5 · 3 shards", icon: Server },
+              { name: "SQLite local", value: "healthy", detail: "WAL · solo lectura", icon: Server },
             ].map((stage) => {
               const Icon = stage.icon;
               return (
@@ -135,7 +135,7 @@ export function IngestPage() {
             <ArrowRight className="pipeline-arrow" size={17} />
             <div className="pipeline-node"><span className="pipeline-node-icon"><CheckCircle2 size={18} /></span><strong>Deduplicador</strong><span>event.id</span><small className="mono">idempotente</small></div>
             <ArrowRight className="pipeline-arrow" size={17} />
-            <div className="pipeline-node accent"><span className="pipeline-node-icon"><Database size={18} /></span><strong>Elasticsearch</strong><span>deception-events</span><small className="mono">9.3.5</small></div>
+            <div className="pipeline-node accent"><span className="pipeline-node-icon"><Database size={18} /></span><strong>SQLite local</strong><span>deception_events</span><small className="mono">WAL</small></div>
           </div>
         </Panel>
 
@@ -144,9 +144,9 @@ export function IngestPage() {
             <table className="data-table">
               <thead><tr><th>Destino</th><th>Tipo</th><th>Documentos</th><th>Retención</th><th>Estado</th></tr></thead>
               <tbody>
-                <tr><td className="mono">deception-events</td><td>data stream</td><td>{formatNumber(12847)}</td><td>30 d</td><td><span className="health-pill healthy"><i />healthy</span></td></tr>
-                <tr><td className="mono">deception-alerts</td><td>data stream</td><td>{formatNumber(342)}</td><td>90 d</td><td><span className="health-pill healthy"><i />healthy</span></td></tr>
-                <tr><td className="mono">.kibana</td><td>system index</td><td>53 objetos</td><td>—</td><td><span className="health-pill healthy"><i />healthy</span></td></tr>
+                <tr><td className="mono">deception_events</td><td>SQLite</td><td>{formatNumber(12847)}</td><td>configurable</td><td><span className="health-pill healthy"><i />healthy</span></td></tr>
+                <tr><td className="mono">events</td><td>SQLite runtime</td><td>{formatNumber(342)}</td><td>configurable</td><td><span className="health-pill healthy"><i />healthy</span></td></tr>
+                <tr><td className="mono">audit.db</td><td>SQLite</td><td>local</td><td>—</td><td><span className="health-pill healthy"><i />healthy</span></td></tr>
               </tbody>
             </table>
           </div>

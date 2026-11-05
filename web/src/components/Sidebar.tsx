@@ -91,7 +91,7 @@ export function Sidebar({ active, onNavigate, mobileOpen, onCloseMobile }: Sideb
               <span className="status-dot live" />
               <strong>Entorno de laboratorio</strong>
             </div>
-            <p>Elasticsearch 9.3.5 · datos de demostración</p>
+            <p>SQLite local · datos de demostración</p>
             <div className="system-meta">
               <span><ShieldCheck size={13} /> Sin cambios de red</span>
               <span className="mono">c1</span>

@@ -92,7 +92,7 @@ export function EventsPage({ search, range, events, total, mode }: EventsPagePro
       <PageHeader
         eyebrow="Monitorización / Event explorer"
         title="Eventos"
-        description="Explora el flujo normalizado de deception-events con filtros, búsqueda y detalle por evento."
+        description="Explora el flujo normalizado del almacén local con filtros, búsqueda y detalle por evento."
         actions={
           <>
             <button className="button ghost" onClick={() => setShowFilters((value) => !value)}><SlidersHorizontal size={15} /> Filtros</button>
@@ -215,7 +215,7 @@ export function EventsPage({ search, range, events, total, mode }: EventsPagePro
 
           <div className="side-card side-card-note">
             <span className="eyebrow">Privacidad</span>
-            <p>La vista usa datos de demostración. En producción, el navegador consulta el BFF de Dystopia y nunca recibe la API key de Elasticsearch.</p>
+            <p>La vista usa datos de demostración. En producción, el navegador consulta el BFF de Dystopia y nunca recibe la ruta de SQLite.</p>
           </div>
         </aside>
       </div>

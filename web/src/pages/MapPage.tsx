@@ -3,9 +3,11 @@ import {
   ArrowUpRight,
   Crosshair,
   Download,
+  Filter,
   Globe2,
   MapPin,
   Radio,
+  RotateCcw,
   ScanLine,
   ShieldAlert,
 } from "lucide-react";
@@ -26,14 +28,35 @@ interface MapPageProps {
 
 export function MapPage({ search, origins, mode }: MapPageProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [country, setCountry] = useState("all");
+  const [severity, setSeverity] = useState("all");
+  const [sensor, setSensor] = useState("all");
+  const [protocol, setProtocol] = useState("all");
+
+  const countryOptions = useMemo(() => Array.from(new Set(origins.map((origin) => origin.country))).sort(), [origins]);
+  const sensorOptions = useMemo(() => Array.from(new Set(origins.map((origin) => origin.sensor))).sort(), [origins]);
+  const protocolOptions = useMemo(() => Array.from(new Set(origins.map((origin) => origin.protocol))).sort(), [origins]);
 
   const points = useMemo(() => {
     const query = search.trim().toLowerCase();
-    if (!query) return origins;
-    return origins.filter((origin) =>
-      [origin.country, origin.city, origin.ip, origin.protocol, origin.sensor].join(" ").toLowerCase().includes(query),
-    );
-  }, [origins, search]);
+    return origins.filter((origin) => {
+      if (country !== "all" && origin.country !== country) return false;
+      if (severity !== "all" && origin.severity !== severity) return false;
+      if (sensor !== "all" && origin.sensor !== sensor) return false;
+      if (protocol !== "all" && origin.protocol !== protocol) return false;
+      if (!query) return true;
+      return [origin.country, origin.city, origin.ip, origin.protocol, origin.sensor].join(" ").toLowerCase().includes(query);
+    });
+  }, [country, origins, protocol, search, sensor, severity]);
+
+  const filtersActive = country !== "all" || severity !== "all" || sensor !== "all" || protocol !== "all";
+
+  function resetFilters() {
+    setCountry("all");
+    setSeverity("all");
+    setSensor("all");
+    setProtocol("all");
+  }
 
   const selected = points.find((origin) => origin.id === selectedId) ?? points[0] ?? null;
   const totalEvents = points.reduce((total, origin) => total + origin.events, 0);
@@ -60,6 +83,44 @@ export function MapPage({ search, origins, mode }: MapPageProps) {
         }
       />
 
+      <div className="filter-bar map-filter-bar">
+        <span className="filter-bar-label"><Filter size={14} /> Filtros del mapa</span>
+        <label className="filter-select">
+          <span>País</span>
+          <select value={country} onChange={(event) => { setCountry(event.target.value); setSelectedId(null); }}>
+            <option value="all">Todos</option>
+            {countryOptions.map((item) => <option key={item} value={item}>{item}</option>)}
+          </select>
+        </label>
+        <label className="filter-select">
+          <span>Severidad</span>
+          <select value={severity} onChange={(event) => { setSeverity(event.target.value); setSelectedId(null); }}>
+            <option value="all">Todas</option>
+            <option value="critical">Crítico</option>
+            <option value="high">Alto</option>
+            <option value="medium">Medio</option>
+            <option value="low">Bajo</option>
+            <option value="info">Info</option>
+          </select>
+        </label>
+        <label className="filter-select">
+          <span>Sensor</span>
+          <select value={sensor} onChange={(event) => { setSensor(event.target.value); setSelectedId(null); }}>
+            <option value="all">Todos</option>
+            {sensorOptions.map((item) => <option key={item} value={item}>{item}</option>)}
+          </select>
+        </label>
+        <label className="filter-select">
+          <span>Protocolo</span>
+          <select value={protocol} onChange={(event) => { setProtocol(event.target.value); setSelectedId(null); }}>
+            <option value="all">Todos</option>
+            {protocolOptions.map((item) => <option key={item} value={item}>{item}</option>)}
+          </select>
+        </label>
+        {filtersActive && <button className="link-button" onClick={resetFilters}><RotateCcw size={13} /> Limpiar</button>}
+        <span className="filter-count">{points.length} de {origins.length} orígenes</span>
+      </div>
+
       <div className="map-layout">
         <Panel className="map-main" flush>
           <AttackGlobe points={points} height={660} onSelect={(origin) => setSelectedId(origin.id)} />
@@ -68,7 +129,7 @@ export function MapPage({ search, origins, mode }: MapPageProps) {
             <div><span className="eyebrow">Países</span><strong>{points.length}</strong></div>
             <div><span className="eyebrow">Core</span><strong>{DATACENTER.city}</strong></div>
             <div><span className="eyebrow">Precisión</span><strong>ciudad</strong></div>
-            <div><span className="eyebrow">Fuente</span><strong>deception-events</strong></div>
+            <div><span className="eyebrow">Fuente</span><strong>SQLite local</strong></div>
           </div>
         </Panel>
 
@@ -131,7 +192,7 @@ export function MapPage({ search, origins, mode }: MapPageProps) {
           <Panel className="map-signal" eyebrow="Detección" title="Señales del mapa">
             <div className="map-signal-list">
               <div><span className="insight-icon red"><ShieldAlert size={15} /></span><p><strong>Concentración inusual</strong><span>China + Rusia representan 32 % del volumen.</span></p></div>
-              <div><span className="insight-icon cyan"><Crosshair size={15} /></span><p><strong>Core observado</strong><span>CDMX recibe arcos de {points.length} regiones distintas.</span></p></div>
+              <div><span className="insight-icon cyan"><Crosshair size={15} /></span><p><strong>Core observado</strong><span>{DATACENTER.city} recibe arcos de {points.length} regiones distintas.</span></p></div>
               <div><span className="insight-icon amber"><Radio size={15} /></span><p><strong>Nuevo origen</strong><span>Fráncfort entró en la ventana hace 38 minutos.</span></p></div>
             </div>
           </Panel>

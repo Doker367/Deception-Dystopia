@@ -166,7 +166,7 @@ function normalizeEvents(payload: ApiEvents): EventRow[] {
   return payload.items.map((event) => ({
     ...event,
     port: event.port ?? 0,
-    message: event.message || "Evento normalizado de deception-events",
+    message: event.message || "Evento normalizado del almacén local",
   }));
 }
 
@@ -218,19 +218,15 @@ export function useAnalytics(range: string): AnalyticsSnapshot {
           totalEvents: overviewPayload.total_events,
           uniqueSources: overviewPayload.unique_sources,
           alerts: overviewPayload.alerts,
-          protocols: overviewPayload.protocols.length ? overviewPayload.protocols : DEMO_OVERVIEW.protocols,
-          datasets: overviewPayload.datasets.length ? overviewPayload.datasets : DEMO_OVERVIEW.datasets,
+          protocols: overviewPayload.protocols,
+          datasets: overviewPayload.datasets,
           latestEvent: overviewPayload.latest_event,
         });
         setTimeline(
-          timelinePayload.buckets.length
-            ? timelinePayload.buckets.map((bucket) => ({ label: labelFor(bucket.at, range), count: bucket.count }))
-            : demoTimeline(range),
+          timelinePayload.buckets.map((bucket) => ({ label: labelFor(bucket.at, range), count: bucket.count })),
         );
-        const liveOrigins = normalizeOrigins(originsPayload);
-        setOrigins(liveOrigins.length ? liveOrigins : demoOrigins());
-        const liveEvents = normalizeEvents(eventsPayload);
-        setEvents(liveEvents.length ? liveEvents : demoEvents());
+        setOrigins(normalizeOrigins(originsPayload));
+        setEvents(normalizeEvents(eventsPayload));
         setTotalEvents(eventsPayload.total || overviewPayload.total_events);
       })
       .catch((cause: unknown) => {

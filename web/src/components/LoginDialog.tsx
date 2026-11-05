@@ -39,7 +39,7 @@ export function LoginDialog({ open, onClose, onSuccess }: LoginDialogProps) {
         <div className="auth-brand"><BrandMark className="auth-mark" /><span>DYSTOPIA</span></div>
         <span className="eyebrow">Control plane / session</span>
         <h2 id="login-title">Conectar datos en vivo</h2>
-        <p>Inicia sesión con una cuenta local de Dystopia para consultar Elasticsearch a través del BFF analítico. La API key del writer nunca se envía al navegador.</p>
+        <p>Inicia sesión con una cuenta local de Dystopia para consultar el almacén SQLite local a través del BFF analítico. La ruta de la base nunca se envía al navegador.</p>
         <form className="auth-form" onSubmit={submit}>
           <label>
             <span>Usuario</span>

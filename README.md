@@ -1,16 +1,15 @@
 # Dystopia
 
 Plataforma de deception y honeypots basada en Python/FastAPI, con un plano de
-control propio y Elasticsearch/Kibana como panel analítico. Está siendo
-endurecida para **Ubuntu Server 24.04 LTS con KVM/libvirt**.
+control propio, una interfaz web propia (**Dystopia Web**) y almacenamiento
+local en SQLite. Está siendo endurecida para **Ubuntu Server 24.04 LTS con
+KVM/libvirt**.
 
 Dystopia toma como referencia el ecosistema **T-Pot - The All In One Multi
 Honeypot Platform**, pero no es un clon: mantiene su propio contrato de eventos,
-publicador, topología y modelo de permisos.
-
-![Resumen del panel de deception](docs/images/overview.png)
-
-Interfaz propia **Dystopia Web**, con resumen, globo 3D y explorador de eventos:
+topología, modelo de permisos y almacén local. **El stack Elasticsearch/Kibana
+ya no forma parte del proyecto**; se conservan únicamente los honeypots del MVP
+y la analítica local.
 
 ![Dystopia Web · resumen](docs/images/dystopia-web-overview.jpg)
 
@@ -18,53 +17,25 @@ Interfaz propia **Dystopia Web**, con resumen, globo 3D y explorador de eventos:
 
 ## Estado
 
-- Integración de ingesta, contrato ECS/Dystopia y dashboards validada en
-  laboratorio con Elasticsearch/Kibana 9.3.5.
-- Suite completa, ruff y CI de GitHub Actions en verde.
-- **La instalación en servidor Linux y la contención real siguen pendientes de
+- Dystopia Web operativa con resumen, globo 3D, explorador de eventos,
+  honeypots, dispositivos, ingesta y administración.
+- Analítica local sobre SQLite (`deception_events` o `events`); sin
+  Elasticsearch ni Kibana.
+- Honeypots del MVP: Cowrie, OpenCanary, Dionaea, Heralding, RedisHoneyPot y
+  Endlessh.
+- Suite completa, `ruff` y `pyright` en verde.
+- **La activación real de celdas KVM/nftables/systemd sigue pendiente de
   validación.** No es un despliegue de producción certificado.
 - No hay contraseñas por defecto ni bootstrap público.
-- La interfaz propia **Dystopia Web** está en [`web/`](web/README.md), con
-  resumen, globo 3D, explorador de eventos, honeypots y salud de ingesta.
-
-## Índice
-
-- [Soporte y entornos](#soporte-y-entornos)
-- [Qué usa Dystopia](#qué-usa-dystopia)
-- [Relación con T-Pot](#relación-con-t-pot)
-- [Arquitectura](#arquitectura)
-- [Requisitos](#requisitos)
-- [Puertos](#puertos)
-- [Instalación y evaluación](#instalación-y-evaluación)
-- [Primer arranque](#primer-arranque)
-- [Uso](#uso)
-- [Usuarios y permisos](#usuarios-y-permisos)
-- [Mantenimiento](#mantenimiento)
-- [Límites actuales](#límites-actuales)
-- [Documentación](#documentación)
-- [Atribución](#atribución)
-
-## Soporte y entornos
-
-| Entorno | Soporte | Uso |
-|---|---|---|
-| Ubuntu Server 24.04 LTS + KVM/libvirt | Objetivo de producción | Control, sensores, honeypots y analítica |
-| Ubuntu Server 24.04 sin KVM | Limitado | Control y analítica; no valida celdas reales |
-| macOS con Docker Desktop/Colima | Evaluación | Panel, contratos, tests y eventos sintéticos |
-| Windows con Docker Desktop | No validado | No se certifica |
-| ARM64 | No validado | No se afirma compatibilidad de imágenes |
-
-T-Pot documenta macOS y Windows con Docker Desktop para pruebas limitadas.
-Dystopia solo ha probado el plano analítico en macOS/Colima. Para producción se
-requiere Linux.
 
 ## Qué usa Dystopia
 
 | Área | Componentes |
 |---|---|
 | Control | Python 3.12+, FastAPI, Uvicorn, Pydantic, slowapi, JWT, bcrypt, PyYAML |
-| Estado | SQLite, ficheros de configuración y socket Unix de consulta |
-| Analítica | Elasticsearch 9.3.5, Kibana 9.3.5 |
+| Interfaz | React 19, TypeScript, Vite, ECharts, react-globe.gl |
+| Estado | SQLite local, ficheros de configuración y socket Unix de consulta |
+| Analítica | BFF `/api/analytics/*` sobre SQLite y GeoIP local |
 | Contenedores | Docker y Docker Compose |
 | Honeypots MVP | Cowrie, OpenCanary, Dionaea, Heralding, RedisHoneyPot, Endlessh |
 | Red y host | KVM/libvirt, systemd, nftables, VLANs/segmentos |
@@ -78,60 +49,54 @@ Las dependencias y su procedencia están en
 ## Relación con T-Pot
 
 T-Pot ofrece 20+ honeypots y un conjunto amplio de herramientas. Dystopia adopta
-el modelo de contenedores y Elastic Stack, pero integra un subconjunto para el
-MVP.
+el modelo de contenedores y los honeypots del MVP, pero sustituye ELK por su
+propio almacén local y su propia interfaz.
 
 | Herramienta T-Pot | Estado en Dystopia |
 |---|---|
 | Docker / Compose | Adoptado |
-| Elastic Stack | Adoptado con ES/Kibana 9.3.5 |
-| Logstash | Sustituido por publicador propio |
-| NGINX | Pendiente para TLS/proxy de producción |
-| Kibana | Adoptado con 7 dashboards propios |
-| Attack Map | No incluido; mapa estático en Kibana |
+| Honeypots (Cowrie, OpenCanary, Dionaea, Heralding, RedisHoneyPot, Endlessh) | Adoptado |
+| Elastic Stack / Kibana | **Retirado** |
+| Logstash | No usado |
+| Attack Map | Sustituido por el globo 3D de Dystopia Web |
 | CyberChef, Elasticvue, Spiderfoot | No incluido |
 | Suricata, Fatt, P0f | No incluido |
 | Autoheal | No incluido |
-| EWSposter | No incluido; publicación explícita |
+| EWSposter | No incluido |
 | Ollama / ChatGPT / honeypots LLM | Fuera de alcance |
 
-La tabla completa de honeypots y herramientas, con su estado, está en
+La tabla completa de honeypots y herramientas está en
 [`docs/TPOT-COMPATIBILITY.md`](docs/TPOT-COMPATIBILITY.md).
 
 ## Arquitectura
 
 ```mermaid
 flowchart LR
-    OP[Operador] -->|HTTPS| KB[Kibana]
-    KB --> ES[Elasticsearch]
-    ES --> EV[deception-events]
-    ES --> AL[deception-alerts]
-    SENSOR[Sensor / honeypot] --> ING[Ingesta Dystopia]
-    ING --> NORM[Normalización ECS + dystopia.*]
-    NORM --> PUB[Publicador idempotente]
-    PUB --> ES
+    OP[Operador] -->|HTTPS| WEB[Dystopia Web]
+    WEB --> API[FastAPI /api/analytics]
+    API --> DB[(SQLite local)]
+    HP[Honeypots T-Pot] --> SENSOR[Sensor / colector]
+    SENSOR --> ING[Ingesta Dystopia]
+    ING --> NORM[Normalización]
+    NORM --> DB
     CTRL[Control Dystopia] --> TOPO[Topología, dispositivos y segmentos]
-    CTRL --> CON[Consola de solo lectura]
-    CON --> QRY[Puente Unix de consulta]
+    CTRL --> WEB
 ```
 
 Planos:
 
 - **Control:** API, topología, usuarios, consola y contratos.
 - **Sensor:** recogida de logs y transporte autenticado.
-- **Ingesta/proceso:** recepción, normalización, deduplicación y alertas.
-- **Analítica:** Elasticsearch/Kibana; no sustituye la topología de Dystopia.
+- **Ingesta/proceso:** recepción, normalización, deduplicación y persistencia.
+- **Analítica:** Dystopia Web y BFF sobre SQLite; no sustituye la topología.
 
 ## Requisitos
 
-Referencia conservadora, alineada con T-Pot Hive/Sensor. Ajustar según retención
-y volumen:
-
 | Tipo | RAM | Disco | Notas |
 |---|---|---|---|
-| Laboratorio completo | 16 GB | 128–256 GB SSD | Elastic Stack + honeypots + datos |
-| Sensor/celda | 8 GB | 128 GB SSD | Depende del volumen de ataque |
-| Evaluación del panel | 8 GB | 40–50 GB libres | Solo analítica y datos sintéticos |
+| Laboratorio completo | 8 GB | 64–128 GB SSD | Honeypots + SQLite + interfaz |
+| Sensor/celda | 4–8 GB | 64 GB SSD | Depende del volumen de ataque |
+| Evaluación del panel | 4 GB | 20–40 GB libres | Datos sintéticos o pocos eventos |
 
 Además:
 
@@ -145,9 +110,7 @@ Además:
 
 | Puerto | Protocolo | Dirección | Uso |
 |---|---|---|---|
-| 8082 | TCP | entrada local/gestión | API de control |
-| 5601 | TCP | entrada local/gestión | Kibana; debe ir tras proxy/TLS en producción |
-| 9200 | TCP | entrada local/gestión | Elasticsearch; nunca público |
+| 8082 | TCP | entrada local/gestión | API de control y Dystopia Web |
 | 22 | TCP | entrada gestión | SSH del sistema |
 | Unix socket | local | consulta | Puente de consulta, sin TCP |
 
@@ -159,16 +122,18 @@ esos puertos**; no los abras por analogía.
 
 ## Instalación y evaluación
 
-### Evaluación sin servidor Linux
+### Desarrollo local de la interfaz
 
-Para conocer el panel, contratos y dashboards se puede usar Docker Desktop o
-Colima. Es un entorno de evaluación, no producción:
-[`docs/EVALUATION-LAB.md`](docs/EVALUATION-LAB.md).
+```bash
+cd web
+npm install
+npm run dev
+```
 
-### Instalación en Ubuntu
+Vite sirve la UI en `http://127.0.0.1:5173` y redirige `/api` al control plane
+en `http://127.0.0.1:8082`.
 
-Todavía **no hay un instalador one-liner certificado**. El procedimiento
-soportado es:
+### Control plane
 
 ```bash
 python3 -m runtime.install --dry-run --config deploy/install.example.json
@@ -182,44 +147,38 @@ la red señuelo hasta completar la verificación.
 
 1. Provisionar secretos y usuarios locales.
 2. Instalar y validar systemd, permisos y directorios.
-3. Arrancar control, ingesta y proceso.
-4. Configurar Elasticsearch/Kibana.
-5. Ejecutar el bootstrap de roles, usuarios, ILM y data streams.
-6. Importar el bundle de Kibana con `overwrite=true`.
-7. Enviar un evento sintético y comprobar Discover.
-8. Solo después, habilitar la celda y el tráfico autorizado.
+3. Arrancar control e ingesta.
+4. Configurar el almacén SQLite (`DYSTOPIA_ANALYTICS_DB`) si se usa una ruta
+   distinta de la base de control por defecto.
+5. Arrancar los honeypots del MVP.
+6. Verificar que la ingesta escribe en SQLite.
+7. Abrir Dystopia Web en `http://127.0.0.1:8082/`.
+8. Solo después, habilitar tráfico autorizado.
 
 ## Uso
 
-- **Operador:** dashboards de Kibana, Discover y consola de solo lectura.
-- **Ingesta:** sensores y honeypots envían eventos al publicador; `event.id`
+- **Operador:** Dystopia Web (resumen, mapa, eventos, honeypots y topología).
+- **Ingesta:** sensores y honeypots envían eventos al pipeline; `event.id`
   evita duplicados.
-- **Analista:** consulta data streams y dashboards sin escritura.
-- **Administrador:** gestiona topología y el espacio `deception-*`; `elastic`
-  queda para bootstrap y emergencias.
-- **Consulta:** el control usa el puente Unix, no la base SQLite del sensor.
-
-Guía de evaluación con capturas:
-[`docs/EVALUATION-LAB.md`](docs/EVALUATION-LAB.md).
+- **Analista:** consulta eventos y mapa sin escritura.
+- **Administrador:** gestiona topología, usuarios y claves.
+- **Consulta:** el control usa el puente Unix o el BFF SQLite, nunca una base
+  de sensor expuesta a la red.
 
 ## Usuarios y permisos
 
 | Identidad | Uso |
 |---|---|
-| `deception-admin` | Administración diaria del panel y topología |
-| `deception-analyst` | Lectura de dashboards y data streams |
-| `deception-ingest-writer` | API key del publicador; sin acceso a Kibana |
-| `kibana_system` | Servicio interno de Kibana |
-| `elastic` | Bootstrap y emergencias; no uso diario |
+| Usuario administrador local | Administración diaria de Dystopia |
+| Usuario analyst/viewer | Lectura de eventos y mapa |
+| Usuario de sensor | Authentication de ingesta, por dispositivo |
 | Usuario del sistema | Servicios systemd; sin privilegios de aplicación |
 
 No se comparten contraseñas, API keys ni secretos entre entornos.
 
 ## Mantenimiento
 
-- Bootstrap idempotente para roles, usuarios, plantillas, ILM y data streams.
-- Rotación de API keys con permisos `0600`.
-- Retención configurable por ILM.
+- Retención de eventos en SQLite.
 - Backup/restore: pendiente de probar en Linux.
 - Actualizaciones de imágenes y sistema: pendiente de runbook certificado.
 - Revisión de logs y salud de contenedores.
@@ -230,33 +189,27 @@ No se comparten contraseñas, API keys ni secretos entre entornos.
 - KVM/libvirt, nftables, systemd, red de segmentos y honeypots reales no están
   certificados todavía.
 - No se integran los 20+ honeypots de T-Pot.
-- No hay Attack Map animado, CyberChef, Elasticvue, Spiderfoot, Suricata, Fatt
-  ni P0f.
-- No hay honeypots LLM.
 - No hay envío comunitario de datos.
-- Kibana no debe exponerse directamente; falta TLS/reverse proxy.
-- Snapshots/restore y observabilidad de producción están pendientes.
-- El panel Maps experimental no forma parte del bundle canónico.
+- TLS/reverse proxy de producción pendiente.
+- Snapshots/restore y observabilidad de producción pendientes.
+- La ingesta real de logs de T-Pot a SQLite requiere completar el colector en
+  la celda Linux.
 
 ## Documentación
 
-- [Referencia técnica completa](docs/REFERENCE.md)
+- [Referencia técnica](docs/REFERENCE.md)
 - [Handoff al servidor Linux](docs/LINUX-HANDOFF.md)
 - [Validación de builds de honeypots](docs/HONEYPOT-BUILDS.md)
 - [Orquestador de honeypots por celda](docs/HONEYPOT-ORCHESTRATION.md)
-- [Plano de datos runtime: colector offline](docs/RUNTIME-DATAPLANE.md)
+- [Plano de datos runtime](docs/RUNTIME-DATAPLANE.md)
 - [Auditoría de seguridad del runtime](docs/RUNTIME-SECURITY-AUDIT.md)
 - [Bundle offline y locks](docs/OFFLINE-BUNDLE.md)
 - [SBOM](docs/SBOM.md)
-- [TLS y reverse proxy de Kibana](deploy/tls-proxy/README.md)
+- [TLS y reverse proxy](deploy/tls-proxy/README.md)
 - [Compatibilidad con T-Pot](docs/TPOT-COMPATIBILITY.md)
-- [Laboratorio de evaluación](docs/EVALUATION-LAB.md)
 - [Arquitectura y diagnóstico](docs/HARDENING.md)
 - [Instalación, operación y recuperación](docs/HARDENING-OPERATIONS.md)
 - [Pruebas y pendientes](docs/HARDENING-TESTS.md)
-- [Sistema unificado: arquitectura](docs/UNIFIED-DECEPTION.md)
-- [Operación del sistema unificado](docs/UNIFIED-OPERATIONS.md)
-- [Informe de validación](docs/UNIFIED-VALIDATION.md)
 - [Roadmap](docs/ROADMAP.md)
 - [Consola operativa](docs/CONSOLE-OPERATIONS.md)
 - [Integración operativa offline](docs/OPS-INTEGRATION.md)
@@ -267,7 +220,7 @@ No se comparten contraseñas, API keys ni secretos entre entornos.
 ## Atribución
 
 T-Pot es un proyecto de Telekom Security y su comunidad. Dystopia reutiliza
-conceptos y algunos honeypots, pero mantiene su propio contrato, publicador y
+conceptos y algunos honeypots, pero mantiene su propio contrato, almacén y
 modelo de control. Las licencias de cada componente pertenecen a sus proyectos
 originales; consulte sus repositorios y la documentación de T-Pot.
 

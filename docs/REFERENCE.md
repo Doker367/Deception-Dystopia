@@ -114,7 +114,7 @@ events.db -> publicador opt-in -> Elasticsearch -> Kibana
 - Una red Docker `internal`, una VLAN o un `nft --check` correcto no prueban
   contención.
 
-Detalle: [UNIFIED-DECEPTION.md](UNIFIED-DECEPTION.md),
+Detalle: [RUNTIME-DATAPLANE.md](RUNTIME-DATAPLANE.md),
 [hardening-isolation.md](hardening-isolation.md) y
 [deploy/isolation/README.md](../deploy/isolation/README.md).
 
@@ -768,10 +768,6 @@ lsof -nP -iTCP:5601 -sTCP:LISTEN
 - [Pruebas y pendientes de hardening](HARDENING-TESTS.md)
 - [Consola operativa](CONSOLE-OPERATIONS.md)
 - [Puente de consulta Unix](QUERY-BRIDGE.md)
-- [Sistema unificado: arquitectura](UNIFIED-DECEPTION.md)
-- [Operación del sistema unificado](UNIFIED-OPERATIONS.md)
-- [Validación del sistema unificado](UNIFIED-VALIDATION.md)
-- [Laboratorio de evaluación](EVALUATION-LAB.md)
 - [Handoff al servidor Linux](LINUX-HANDOFF.md)
 - [Auditoría de seguridad del runtime](RUNTIME-SECURITY-AUDIT.md)
 - [Validación de builds de honeypots](HONEYPOT-BUILDS.md)

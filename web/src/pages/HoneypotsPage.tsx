@@ -14,9 +14,12 @@ import {
 import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
 import { Sparkline } from "../components/Sparkline";
-import { HONEYPOTS, EVENTS } from "../data/mock";
+import { EChart } from "../components/EChart";
+import { HoneypotConfigDrawer } from "../components/HoneypotConfigDrawer";
+import { HONEYPOTS, HONEYPOT_CONFIGS, EVENTS } from "../data/mock";
 import type { Honeypot } from "../types";
 import { formatNumber } from "../lib/format";
+import { horizontalBarOption } from "../lib/charts";
 
 const STATUS_LABEL = {
   healthy: "Healthy",
@@ -24,9 +27,20 @@ const STATUS_LABEL = {
   offline: "Offline",
 };
 
-function HoneypotCard({ honeypot, active, onSelect }: { honeypot: Honeypot; active: boolean; onSelect: () => void }) {
+function HoneypotCard({ honeypot, active, onSelect, onConfigure }: { honeypot: Honeypot; active: boolean; onSelect: () => void; onConfigure: () => void }) {
   return (
-    <button className={`honeypot-card ${active ? "active" : ""}`} onClick={onSelect}>
+    <article
+      className={`honeypot-card ${active ? "active" : ""}`}
+      onClick={onSelect}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onSelect();
+        }
+      }}
+      role="button"
+      tabIndex={0}
+    >
       <div className="honeypot-card-head">
         <span className="honeypot-icon" style={{ color: honeypot.color, borderColor: `${honeypot.color}44`, background: `${honeypot.color}12` }}>
           <Container size={18} />
@@ -47,15 +61,26 @@ function HoneypotCard({ honeypot, active, onSelect }: { honeypot: Honeypot; acti
       </div>
       <div className="honeypot-card-foot">
         <span><Clock3 size={13} /> {honeypot.lastSeen}</span>
-        <span className="mono">{honeypot.uptime} uptime</span>
+        <button
+          className="card-config-link"
+          onClick={(event) => {
+            event.stopPropagation();
+            onConfigure();
+          }}
+        >
+          Configurar
+        </button>
       </div>
-    </button>
+    </article>
   );
 }
 
 export function HoneypotsPage() {
   const [selected, setSelected] = useState(HONEYPOTS[0].id);
+  const [configId, setConfigId] = useState<string | null>(null);
   const active = HONEYPOTS.find((item) => item.id === selected) ?? HONEYPOTS[0];
+  const configHoneypot = HONEYPOTS.find((item) => item.id === configId) ?? null;
+  const config = configId ? HONEYPOT_CONFIGS[configId] ?? null : null;
   const related = useMemo(() => EVENTS.filter((event) => event.sensor === active.id).slice(0, 5), [active.id]);
 
   return (
@@ -88,17 +113,63 @@ export function HoneypotsPage() {
 
       <div className="honeypot-grid">
         {HONEYPOTS.map((honeypot) => (
-          <HoneypotCard key={honeypot.id} honeypot={honeypot} active={selected === honeypot.id} onSelect={() => setSelected(honeypot.id)} />
+          <HoneypotCard
+            key={honeypot.id}
+            honeypot={honeypot}
+            active={selected === honeypot.id}
+            onSelect={() => setSelected(honeypot.id)}
+            onConfigure={() => setConfigId(honeypot.id)}
+          />
         ))}
       </div>
 
       <div className="dashboard-grid">
         <Panel
           className="span-7"
+          eyebrow="Comparativa"
+          title="Eventos por honeypot"
+          description="Volumen capturado por cada sensor en la ventana activa."
+          actions={<span className="signal-pill"><Activity size={13} /> 6 sensores</span>}
+        >
+          <EChart
+            option={horizontalBarOption(
+              HONEYPOTS.map((honeypot) => honeypot.name),
+              HONEYPOTS.map((honeypot) => honeypot.events),
+              HONEYPOTS.map((honeypot) => honeypot.color),
+              " eventos",
+            )}
+            height={250}
+          />
+        </Panel>
+
+        <Panel
+          className="span-5"
+          eyebrow="Capacidad"
+          title="Memoria asignada"
+          description="Límite declarado por contenedor en la celda c1."
+        >
+          <EChart
+            option={horizontalBarOption(
+              HONEYPOTS.map((honeypot) => honeypot.name),
+              HONEYPOTS.map((honeypot) => Number.parseInt(HONEYPOT_CONFIGS[honeypot.id]?.resources.memLimit ?? "0", 10)),
+              HONEYPOTS.map((honeypot) => honeypot.color),
+              " MiB",
+            )}
+            height={250}
+          />
+        </Panel>
+
+        <Panel
+          className="span-7"
           eyebrow="Detalle del sensor"
           title={`${active.name} · ${active.service}`}
           description={`Contenedor dystopia-hp-c1-${active.id} en la celda c1.`}
-          actions={<span className={`health-pill ${active.status}`}><i />{STATUS_LABEL[active.status]}</span>}
+          actions={
+            <>
+              <button className="button small" onClick={() => setConfigId(active.id)}>Ver configuración</button>
+              <span className={`health-pill ${active.status}`}><i />{STATUS_LABEL[active.status]}</span>
+            </>
+          }
         >
           <div className="sensor-detail-grid">
             <div className="sensor-detail-stat"><span>Estado</span><strong><CircleCheck size={15} /> Operativo</strong></div>
@@ -165,10 +236,12 @@ export function HoneypotsPage() {
           <div className="note-grid">
             <div><ShieldCheck size={17} /><p><strong>Fail-closed</strong><span>Las acciones de preparación y activación siguen bloqueadas sin verificador Linux y claves de confianza.</span></p></div>
             <div><Activity size={17} /><p><strong>Observabilidad primero</strong><span>Esta vista es de solo lectura sobre la telemetría y el estado del runtime.</span></p></div>
-            <div><Boxes size={17} /><p><strong>Control en Dystopia</strong><span>La topología y los dispositivos se gestionan en el control plane, no en Kibana.</span></p></div>
+            <div><Boxes size={17} /><p><strong>Control en Dystopia</strong><span>La topología y los dispositivos se gestionan en el control plane de Dystopia.</span></p></div>
           </div>
         </Panel>
       </div>
+
+      <HoneypotConfigDrawer honeypot={configHoneypot} config={config} onClose={() => setConfigId(null)} />
     </div>
   );
 }
