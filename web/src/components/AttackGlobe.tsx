@@ -95,6 +95,9 @@ export function AttackGlobe({
   const [countries, setCountries] = useState<CountryFeature[]>([]);
   const [size, setSize] = useState({ width: 640, height });
   const [rotating, setRotating] = useState(autoRotate);
+  const [interactionPaused, setInteractionPaused] = useState(false);
+  const resumeTimer = useRef<number | null>(null);
+  const initialized = useRef(false);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -126,13 +129,65 @@ export function AttackGlobe({
     const globe = globeRef.current;
     if (!globe) return;
     const controls = globe.controls();
-    controls.autoRotate = rotating;
+    controls.autoRotate = rotating && !interactionPaused;
     controls.autoRotateSpeed = 0.42;
     controls.enablePan = false;
     controls.minDistance = 210;
     controls.maxDistance = 620;
-    globe.pointOfView({ lat: 18, lng: -78, altitude: 2.05 }, 0);
-  }, [rotating, size.width]);
+    if (!initialized.current) {
+      globe.pointOfView({ lat: DATACENTER.lat, lng: DATACENTER.lng, altitude: 1.9 }, 0);
+      initialized.current = true;
+    }
+  }, [rotating, interactionPaused, size.width]);
+
+  useEffect(() => {
+    const globe = globeRef.current;
+    if (!globe) return;
+    const controls = globe.controls();
+    const clearResumeTimer = () => {
+      if (resumeTimer.current !== null) {
+        window.clearTimeout(resumeTimer.current);
+        resumeTimer.current = null;
+      }
+    };
+    const pause = () => {
+      clearResumeTimer();
+      setInteractionPaused(true);
+    };
+    const scheduleResume = () => {
+      clearResumeTimer();
+      resumeTimer.current = window.setTimeout(() => {
+        setInteractionPaused(false);
+        resumeTimer.current = null;
+      }, 15_000);
+    };
+    const onStart = () => pause();
+    const onEnd = () => scheduleResume();
+    const container = containerRef.current;
+    const onPointerDown = () => pause();
+    const onPointerUp = () => scheduleResume();
+    const onWheel = () => {
+      pause();
+      scheduleResume();
+    };
+    controls.addEventListener("start", onStart);
+    controls.addEventListener("end", onEnd);
+    container?.addEventListener("pointerdown", onPointerDown);
+    container?.addEventListener("touchstart", onPointerDown, { passive: true });
+    container?.addEventListener("wheel", onWheel, { passive: true });
+    window.addEventListener("pointerup", onPointerUp);
+    window.addEventListener("touchend", onPointerUp);
+    return () => {
+      clearResumeTimer();
+      controls.removeEventListener("start", onStart);
+      controls.removeEventListener("end", onEnd);
+      container?.removeEventListener("pointerdown", onPointerDown);
+      container?.removeEventListener("touchstart", onPointerDown);
+      container?.removeEventListener("wheel", onWheel);
+      window.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("touchend", onPointerUp);
+    };
+  }, []);
 
   const originByCode = useMemo(() => new Map(points.map((origin) => [origin.countryCode, origin])), [points]);
   const pointData = useMemo<GlobePoint[]>(
@@ -255,7 +310,7 @@ export function AttackGlobe({
             const globe = globeRef.current;
             if (!globe) return;
             const controls = globe.controls();
-            controls.autoRotate = rotating;
+            controls.autoRotate = rotating && !interactionPaused;
             controls.autoRotateSpeed = 0.42;
             controls.enablePan = false;
           }}
@@ -272,7 +327,17 @@ export function AttackGlobe({
             <div className="globe-overlay-actions">
               <button
                 className="icon-button small"
-                onClick={() => setRotating((value) => !value)}
+                onClick={() => {
+                  const next = !rotating;
+                  setRotating(next);
+                  if (next) {
+                    if (resumeTimer.current !== null) {
+                      window.clearTimeout(resumeTimer.current);
+                      resumeTimer.current = null;
+                    }
+                    setInteractionPaused(false);
+                  }
+                }}
                 title={rotating ? "Pausar rotación" : "Reanudar rotación"}
                 aria-label={rotating ? "Pausar rotación" : "Reanudar rotación"}
               >
@@ -293,6 +358,7 @@ export function AttackGlobe({
             <span className="eyebrow">Origen de ataques</span>
             <strong>{points.length} regiones activas</strong>
             <span className="globe-overlay-muted">Arcos animados hacia {DATACENTER.city}</span>
+            <span className="globe-overlay-muted">{interactionPaused ? "Rotación en pausa · reanuda tras 15 s" : "Rotación automática · 0.42×"}</span>
           </div>
 
           <div className="globe-legend">

@@ -1,7 +1,7 @@
 """Read-only analytics BFF for the Dystopia web interface.
 
-The browser talks to these endpoints with its Dystopia JWT. Elasticsearch
-credentials and the raw index are never exposed to the client.
+The browser talks to these endpoints with its Dystopia JWT. The local SQLite
+store path and raw event payloads are never exposed to the client.
 """
 
 from __future__ import annotations

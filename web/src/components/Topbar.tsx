@@ -181,12 +181,12 @@ export function Topbar({
                 <span className="avatar large"><UserRound size={18} /></span>
                 <div>
                   <strong>{dataMode === "live" ? "sesión activa" : "deception_admin"}</strong>
-                  <span>{dataMode === "live" ? "datos de Elasticsearch" : "modo demostración · sin token"}</span>
+                  <span>{dataMode === "live" ? "datos de SQLite local" : "modo demostración · sin token"}</span>
                 </div>
               </div>
               <div className="user-dropdown-status">
                 <ShieldCheck size={14} />
-                <span>{dataMode === "live" ? "BFF analítico autorizado" : "La UI no envía credenciales de Elasticsearch"}</span>
+                <span>{dataMode === "live" ? "BFF analítico autorizado" : "La UI nunca recibe la ruta de SQLite"}</span>
               </div>
               <div className="user-dropdown-time"><Database size={13} /> actualizado {new Date(now).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })}</div>
               <button

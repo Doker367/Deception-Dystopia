@@ -16,7 +16,6 @@
 #   /var/lib/dystopia/ingest/{events.db,sensors.db,server.crt,server.key}
 #   /etc/dystopia/install.json                    (deployment plan)
 #   /etc/dystopia/control.env                     (non-secret settings only)
-#   deploy/elastic/.env                           (analytics settings, filtered)
 #
 # Output layout (created with mode 0700/0600):
 #   <output-dir>/manifest.json

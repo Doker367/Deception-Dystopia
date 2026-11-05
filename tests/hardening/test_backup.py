@@ -520,7 +520,7 @@ def test_cli_export_fails_without_required_state(tmp_path, capsys):
 # --------------------------------------------------------------------------
 
 
-SCRIPTS = ("backup-control.sh", "restore-control.sh", "backup-elasticsearch.sh")
+SCRIPTS = ("backup-control.sh", "restore-control.sh")
 
 
 @pytest.mark.parametrize("name", SCRIPTS)
@@ -531,18 +531,6 @@ def test_operator_scripts_have_valid_bash_syntax(name):
     except FileNotFoundError as exc:
         pytest.skip(f"bash unavailable: {exc}")
     assert proc.returncode == 0, proc.stderr
-
-
-def test_elasticsearch_script_contract_is_linux_only():
-    text = (REPO_ROOT / "scripts" / "backup-elasticsearch.sh").read_text()
-    assert 'uname -s' in text and '!= "Linux"' in text
-    # Only inspects/uses an already running container; never creates state.
-    assert "docker exec" in text
-    forbidden = ("docker compose", "compose up", "docker run", "docker create",
-                 "docker rm", "docker stop", "docker restart", "systemctl")
-    for pattern in forbidden:
-        assert pattern not in text
-    assert "never starts" in text  # contract promise, honest in a comment too
 
 
 def test_restore_script_requires_the_confirmation_guard():

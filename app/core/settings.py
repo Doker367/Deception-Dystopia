@@ -123,9 +123,11 @@ DECEPTION_ALERT_IGNORE_PRIVATE = os.getenv(
 # incluye el paquete `maxminddb-geolite2` (offline, sin servicios).
 GEOIP_DB = os.getenv("NETPULSE_GEOIP_DB", "")
 # Ubicación del centro de datos / red señuelo (punto verde del mapa).
-DECEPTION_DATACENTER_LAT = float(os.getenv("NETPULSE_DATACENTER_LAT", "0"))
-DECEPTION_DATACENTER_LON = float(os.getenv("NETPULSE_DATACENTER_LON", "0"))
-DECEPTION_DATACENTER_NAME = os.getenv("NETPULSE_DATACENTER_NAME", "Data Center")
+# Facultad de Ciencias en Física y Matemáticas, UNACH (Tuxtla Gutiérrez).
+DECEPTION_DATACENTER_LAT = float(os.getenv("NETPULSE_DATACENTER_LAT", "16.75236"))
+DECEPTION_DATACENTER_LON = float(os.getenv("NETPULSE_DATACENTER_LON", "-93.15323"))
+DECEPTION_DATACENTER_NAME = os.getenv(
+    "NETPULSE_DATACENTER_NAME", "UNACH · Facultad de Ciencias en Física y Matemáticas")
 
 # ── Firewall ─────────────────────────────────────────────────
 # Aplica reglas de bloqueo reales (requiere privilegios). Deshabilitado

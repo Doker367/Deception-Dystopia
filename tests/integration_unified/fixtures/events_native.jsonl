@@ -1,3 +1,0 @@
-{"event_id":"4ad51b88-cc79-4e1f-8431-3cdb1d3f86f4","device_id":"srv-files-01","observed_at":"2026-10-29T10:00:00.123456+00:00","src_ip":"203.0.113.9","src_port":45123,"type":"login_attempt","proto":"ssh","detail":{"username":"root","outcome":"failure"}}
-{"event_id":"cb117021-2f6c-45a0-86cc-360ebe2a88e0","device_id":"srv-files-01","observed_at":"2026-10-29T10:00:02.000000+00:00","src_ip":"203.0.113.9","src_port":45123,"type":"command","proto":"ssh","detail":{"username":"root","command":"uname -a","outcome":"success"}}
-{"event_id":"639c61c2-9c6b-4a20-8b20-1fade65b3c5b","device_id":"srv-files-01","observed_at":"2026-10-29T10:01:00.500000+00:00","src_ip":"198.51.100.44","type":"port_scan","proto":"tcp","detail":{"ports":"22,80,443"}}

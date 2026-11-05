@@ -134,4 +134,4 @@ No abrir tráfico señuelo si ocurre cualquiera de estos:
 - [ ] Runbook de incidentes.
 - [ ] Revisión de seguridad y threat model.
 - [ ] Prueba de carga y retención.
-- [ ] Documentar resultados en `docs/UNIFIED-VALIDATION.md`.
+- [ ] Documentar resultados en `docs/RUNTIME-DATAPLANE.md`.

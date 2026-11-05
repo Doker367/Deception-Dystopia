@@ -64,7 +64,7 @@ export function AdminPage() {
           </div>
         </Panel>
 
-        <Panel className="span-12" eyebrow="Integraciones" title="Claves de API" description="Credenciales de servicio para ingesta, lectura y Kibana." flush>
+        <Panel className="span-12" eyebrow="Integraciones" title="Claves de API" description="Credenciales de servicio para ingesta y lectura local." flush>
           <div className="table-scroll">
             <table className="data-table">
               <thead><tr><th>Nombre</th><th>Rol</th><th>Scope</th><th>Creada</th><th>Estado</th><th aria-label="Acciones" /></tr></thead>
@@ -88,9 +88,9 @@ export function AdminPage() {
         <Panel className="span-12" eyebrow="Sistema" title="Configuración de la interfaz" description="Parámetros que la web propia consume del control plane." flush>
           <div className="config-grid">
             <div><span>Entorno</span><strong>laboratory</strong><small className="mono">NETPULSE_ENV</small></div>
-            <div><span>Data view</span><strong className="mono">deception-events*</strong><small>Elasticsearch 9.3.5</small></div>
+            <div><span>Almacén local</span><strong className="mono">deception_events / events</strong><small>SQLite · solo lectura</small></div>
             <div><span>Dashboard inicial</span><strong>deception-overview</strong><small>Dystopia Web</small></div>
-            <div><span>Branding</span><strong>Dystopia</strong><small>inspirado en Kibana</small></div>
+            <div><span>Branding</span><strong>Dystopia</strong><small>Dystopia Web</small></div>
             <div><span>Autenticación</span><strong>JWT local</strong><small>bcrypt · 30 min</small></div>
             <div><span>Transporte</span><strong>HTTPS / proxy</strong><small>pendiente en producción</small></div>
           </div>

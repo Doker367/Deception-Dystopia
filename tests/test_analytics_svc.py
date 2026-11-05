@@ -1,122 +1,139 @@
-"""Offline contract tests for the read-only analytics service."""
+"""Offline contract tests for the local SQLite analytics service."""
+
+import sqlite3
+from pathlib import Path
 
 import pytest
 
 from app.services import analytics_svc
+from app.services.deception import geoip_svc
 
 
-def test_analytics_disabled_fails_closed():
-    service = analytics_svc.AnalyticsService(analytics_svc.AnalyticsConfig())
-    with pytest.raises(analytics_svc.AnalyticsDisabled):
-        service.overview(None, None)
+def _control_db(path: Path) -> None:
+    with sqlite3.connect(path) as conn:
+        conn.executescript("""
+            CREATE TABLE deception_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts TEXT NOT NULL,
+                device_id TEXT NOT NULL,
+                src_ip TEXT NOT NULL,
+                src_port INTEGER,
+                proto TEXT DEFAULT '',
+                event_type TEXT NOT NULL,
+                username TEXT,
+                success INTEGER,
+                detail TEXT DEFAULT '{}'
+            );
+        """)
+        conn.execute(
+            "INSERT INTO deception_events(ts,device_id,src_ip,src_port,proto,event_type,username,success,detail) "
+            "VALUES(?,?,?,?,?,?,?,?,?)",
+            (
+                "2026-11-05T12:00:00+00:00", "srv-files-01", "203.0.113.7", 55555,
+                "ssh", "login_attempt", "admin", 0, '{"engine":"cowrie"}',
+            ),
+        )
+        conn.execute(
+            "INSERT INTO deception_events(ts,device_id,src_ip,src_port,proto,event_type,username,success,detail) "
+            "VALUES(?,?,?,?,?,?,?,?,?)",
+            (
+                "2026-11-05T12:05:00+00:00", "srv-files-01", "203.0.113.7", 55555,
+                "ssh", "command", "root", 1, '{"engine":"cowrie","command":"id"}',
+            ),
+        )
 
 
-def test_analytics_config_rejects_credentials_in_url():
-    config = analytics_svc.AnalyticsConfig(
-        enabled=True,
-        url="https://user:pass@127.0.0.1:9200",
+def _runtime_db(path: Path) -> None:
+    with sqlite3.connect(path) as conn:
+        conn.executescript("""
+            CREATE TABLE events (
+                sensor TEXT NOT NULL, event_id TEXT NOT NULL, device TEXT NOT NULL,
+                received_at TEXT NOT NULL, received_epoch REAL NOT NULL,
+                observed_at TEXT NOT NULL, kind TEXT NOT NULL, source TEXT NOT NULL,
+                payload BLOB NOT NULL, PRIMARY KEY(sensor,event_id)
+            );
+        """)
+        payload = (
+            '{"event_id":"6f7a7f0a-0a2a-4b15-9c12-6c577f9b0f22",'
+            '"device_id":"srv-files-01","observed_at":"2026-11-05T12:10:00+00:00",'
+            '"src_ip":"203.0.113.7","type":"login_success","proto":"ssh","src_port":55555,'
+            '"detail":{"command":"id"}}'
+        )
+        conn.execute(
+            "INSERT INTO events VALUES(?,?,?,?,?,?,?,?,?)",
+            (
+                "cowrie", "6f7a7f0a-0a2a-4b15-9c12-6c577f9b0f22", "srv-files-01",
+                "2026-11-05T12:10:01+00:00", 0.0, "2026-11-05T12:10:00+00:00",
+                "login_success", "203.0.113.7", payload.encode(),
+            ),
+        )
+
+
+@pytest.fixture
+def geo(monkeypatch):
+    monkeypatch.setattr(
+        geoip_svc,
+        "lookup",
+        lambda ip: {
+            "country_code": "US",
+            "country": "United States",
+            "city": "Ashburn",
+            "lat": 39.04,
+            "lon": -77.48,
+        },
     )
+
+
+def test_control_schema_overview_timeline_and_origins(tmp_path, geo):
+    path = tmp_path / "events.db"
+    _control_db(path)
+    service = analytics_svc.AnalyticsService(analytics_svc.AnalyticsConfig(db_path=path))
+    window = ("2026-11-05T11:00:00+00:00", "2026-11-05T13:00:00+00:00")
+    overview = service.overview(*window)
+    assert overview["total_events"] == 2
+    assert overview["unique_sources"] == 1
+    assert overview["alerts"] == 0
+    assert overview["protocols"] == [{"name": "ssh", "value": 2}]
+    assert overview["datasets"] == [{"name": "cowrie", "value": 2}]
+
+    timeline = service.timeline(*window, interval="1h")
+    assert len(timeline["buckets"]) == 3
+    assert sum(bucket["count"] for bucket in timeline["buckets"]) == 2
+
+    origins = service.origins(*window)
+    assert origins["origins"][0]["countryCode"] == "US"
+    assert origins["origins"][0]["lat"] == 39.04
+    assert origins["origins"][0]["severity"] == "high"
+
+    events = service.events(*window, limit=10)
+    assert events["total"] == 2
+    assert events["items"][0]["sensor"] == "cowrie"
+    assert events["items"][0]["severity"] == "high"
+
+
+def test_runtime_schema_is_supported(tmp_path, geo):
+    path = tmp_path / "runtime.db"
+    _runtime_db(path)
+    service = analytics_svc.AnalyticsService(analytics_svc.AnalyticsConfig(db_path=path))
+    window = ("2026-11-05T11:00:00+00:00", "2026-11-05T13:00:00+00:00")
+    events = service.events(*window, limit=10)
+    assert events["total"] == 1
+    assert events["items"][0]["sensor"] == "cowrie"
+    assert events["items"][0]["severity"] == "critical"
+    assert events["items"][0]["source"] == "203.0.113.7"
+
+
+def test_missing_store_is_empty_not_an_error(tmp_path):
+    service = analytics_svc.AnalyticsService(analytics_svc.AnalyticsConfig(db_path=tmp_path / "missing.db"))
+    overview = service.overview("2026-11-05T11:00:00+00:00", "2026-11-05T13:00:00+00:00")
+    assert overview["total_events"] == 0
+    assert service.origins("2026-11-05T11:00:00+00:00", "2026-11-05T13:00:00+00:00")["origins"] == []
+    assert service.health()["status"] == "empty"
+
+
+def test_invalid_window_is_rejected(tmp_path):
+    service = analytics_svc.AnalyticsService(analytics_svc.AnalyticsConfig(db_path=tmp_path / "missing.db"))
     with pytest.raises(ValueError):
-        config.validate()
-
-
-def test_analytics_config_rejects_plaintext_non_loopback():
-    config = analytics_svc.AnalyticsConfig(
-        enabled=True,
-        url="http://192.0.2.10:9200",
-        api_key_file=None,
-    )
+        service.overview("2026-11-05T13:00:00+00:00", "2026-11-05T11:00:00+00:00")
     with pytest.raises(ValueError):
-        config.validate()
-
-
-def test_origins_maps_geo_and_severity(monkeypatch):
-    service = analytics_svc.AnalyticsService(
-        analytics_svc.AnalyticsConfig(enabled=True, url="https://127.0.0.1:9200")
-    )
-    payload = {
-        "aggregations": {
-            "countries": {
-                "buckets": [
-                    {
-                        "key": "CN",
-                        "doc_count": 12,
-                        "country_name": {"buckets": [{"key": "China"}]},
-                        "city": {"buckets": [{"key": "Shanghai"}]},
-                        "location": {
-                            "hits": {
-                                "hits": [
-                                    {
-                                        "_source": {
-                                            "source": {
-                                                "geo": {
-                                                    "country_name": "China",
-                                                    "city_name": "Shanghai",
-                                                    "location": {"lat": 31.2, "lon": 121.4},
-                                                }
-                                            }
-                                        }
-                                    }
-                                ]
-                            }
-                        },
-                        "top_ip": {"buckets": [{"key": "203.0.113.7"}]},
-                        "protocol": {"buckets": [{"key": "ssh"}]},
-                        "dataset": {"buckets": [{"key": "deception.cowrie"}]},
-                        "sources": {"value": 3},
-                        "severity": {"value": 9},
-                        "last_event": {"value_as_string": "2026-11-05T12:00:00.000Z"},
-                    }
-                ]
-            }
-        }
-    }
-    monkeypatch.setattr(service, "_search", lambda index, body: payload)
-    result = service.origins("2026-11-05T00:00:00Z", "2026-11-05T23:59:59Z")
-    origin = result["origins"][0]
-    assert origin["country"] == "China"
-    assert origin["city"] == "Shanghai"
-    assert origin["lat"] == 31.2
-    assert origin["lng"] == 121.4
-    assert origin["severity"] == "critical"
-    assert origin["uniqueSources"] == 3
-
-
-def test_events_maps_ecs_document(monkeypatch):
-    service = analytics_svc.AnalyticsService(
-        analytics_svc.AnalyticsConfig(enabled=True, url="https://127.0.0.1:9200")
-    )
-    payload = {
-        "hits": {
-            "total": {"value": 1},
-            "hits": [
-                {
-                    "_id": "abc",
-                    "_source": {
-                        "@timestamp": "2026-11-05T12:00:00.000Z",
-                        "event": {
-                            "id": "evt-1",
-                            "kind": "event",
-                            "action": "login",
-                            "severity": 7,
-                            "dataset": "deception.cowrie",
-                        },
-                        "source": {
-                            "ip": "203.0.113.7",
-                            "geo": {"country_name": "China", "country_iso_code": "CN"},
-                        },
-                        "destination": {"port": 22},
-                        "network": {"protocol": "ssh"},
-                        "dystopia": {"device_id": "srv-files-01"},
-                    },
-                }
-            ],
-        }
-    }
-    monkeypatch.setattr(service, "_search", lambda index, body: payload)
-    result = service.events("2026-11-05T00:00:00Z", "2026-11-05T23:59:59Z")
-    assert result["total"] == 1
-    assert result["items"][0]["sensor"] == "cowrie"
-    assert result["items"][0]["severity"] == "high"
-    assert result["items"][0]["port"] == 22
-    assert result["items"][0]["device"] == "srv-files-01"
+        service.timeline(None, None, "2h")

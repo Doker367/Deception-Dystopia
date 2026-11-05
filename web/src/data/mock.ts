@@ -1,11 +1,11 @@
 import type { AttackOrigin, EventRow, Honeypot, TimeRangeOption } from "../types";
 
 export const DATACENTER = {
-  name: "Dystopia Core",
-  city: "CDMX",
-  country: "México",
-  lat: 19.4326,
-  lng: -99.1332,
+  name: "UNACH · FCFM",
+  city: "Tuxtla Gutiérrez",
+  country: "Chiapas, México",
+  lat: 16.75236,
+  lng: -93.15323,
 };
 
 export const TIME_RANGES: TimeRangeOption[] = [
@@ -426,9 +426,9 @@ export const USERS = [
 ];
 
 export const API_KEYS = [
-  { name: "dystopia-ingest-writer", role: "writer", created: "12 oct 2026", scope: "deception-events", status: "activa" },
-  { name: "dystopia-readonly", role: "viewer", created: "14 oct 2026", scope: "deception-*", status: "activa" },
-  { name: "kibana-service", role: "service", created: "02 nov 2026", scope: "kibana", status: "activa" },
+  { name: "dystopia-ingest-writer", role: "writer", created: "12 oct 2026", scope: "sqlite:deception_events", status: "activa" },
+  { name: "dystopia-readonly", role: "viewer", created: "14 oct 2026", scope: "sqlite:read", status: "activa" },
+  { name: "sensor-cowrie-c1", role: "sensor", created: "02 nov 2026", scope: "ingest:v1", status: "activa" },
 ];
 
 export const DEVICES = [

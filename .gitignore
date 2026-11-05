@@ -107,8 +107,6 @@ config/deception/vms.json
 # IMPORTANTE: runtime/ es CÓDIGO FUENTE (planos control/sensor/ingestión/aislamiento)
 # y debe versionarse. El estado generado vive en /var/lib/dystopia.
 /data/
-deploy/elastic/api-keys/
-deploy/elastic/certs/
 deploy/tls-proxy/certs/
 *.db
 *.db-wal
@@ -130,4 +128,3 @@ secrets/
 config/metrics_history.json
 
 # Variantes experimentales de dashboards no certificadas
-deploy/kibana-dashboards/artifacts/*EXPERIMENTAL*

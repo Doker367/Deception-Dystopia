@@ -1,22 +1,20 @@
 """Small pipeline that normalizes a native log record and optionally publishes.
 
 Publication is opt-in: with no publisher the caller still receives the
-normalized document. With a publisher, the returned ``delivered`` flag is true
-only after Elasticsearch confirmed the document, never merely because it was
-queued.
+normalized document. A publisher is any object exposing ``publish(document)``;
+Dystopia no longer ships an Elasticsearch publisher.
 """
 
 from typing import Any, Optional
 
 from . import adapters
-from .elastic_svc import ElasticPublisher
 
 
 class HoneypotPipeline:
     def __init__(
         self,
         *,
-        publisher: Optional[ElasticPublisher] = None,
+        publisher: Optional[Any] = None,
         resolver=None,
         instance_id: str = "unassigned",
         default_device: str = "",

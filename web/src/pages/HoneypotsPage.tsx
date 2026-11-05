@@ -165,7 +165,7 @@ export function HoneypotsPage() {
           <div className="note-grid">
             <div><ShieldCheck size={17} /><p><strong>Fail-closed</strong><span>Las acciones de preparación y activación siguen bloqueadas sin verificador Linux y claves de confianza.</span></p></div>
             <div><Activity size={17} /><p><strong>Observabilidad primero</strong><span>Esta vista es de solo lectura sobre la telemetría y el estado del runtime.</span></p></div>
-            <div><Boxes size={17} /><p><strong>Control en Dystopia</strong><span>La topología y los dispositivos se gestionan en el control plane, no en Kibana.</span></p></div>
+            <div><Boxes size={17} /><p><strong>Control en Dystopia</strong><span>La topología y los dispositivos se gestionan en el control plane de Dystopia.</span></p></div>
           </div>
         </Panel>
       </div>
