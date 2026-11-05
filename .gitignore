@@ -106,7 +106,7 @@ config/deception/vms.json
 # Dystopia private material and generated state.
 # IMPORTANTE: runtime/ es CÓDIGO FUENTE (planos control/sensor/ingestión/aislamiento)
 # y debe versionarse. El estado generado vive en /var/lib/dystopia.
-data/
+/data/
 deploy/elastic/api-keys/
 deploy/elastic/certs/
 deploy/tls-proxy/certs/

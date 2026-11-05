@@ -16,12 +16,13 @@ export function Sparkline({
   fill = true,
 }: SparklineProps) {
   const gradientId = useId();
+  const series = data.length > 1 ? data : [0, 0];
   const { line, area } = useMemo(() => {
-    const max = Math.max(...data, 1);
-    const min = Math.min(...data, 0);
+    const max = Math.max(...series, 1);
+    const min = Math.min(...series, 0);
     const span = Math.max(max - min, 1);
-    const step = width / Math.max(data.length - 1, 1);
-    const points = data.map((value, index) => {
+    const step = width / Math.max(series.length - 1, 1);
+    const points = series.map((value, index) => {
       const x = index * step;
       const y = height - 4 - ((value - min) / span) * (height - 8);
       return [x, y] as const;
@@ -31,7 +32,7 @@ export function Sparkline({
       line: linePath,
       area: `${linePath} L${width},${height} L0,${height} Z`,
     };
-  }, [data, height, width]);
+  }, [series, height, width]);
 
   return (
     <svg
@@ -52,7 +53,7 @@ export function Sparkline({
       <path d={line} fill="none" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
       <circle
         cx={width}
-        cy={height - 4 - ((data[data.length - 1] - Math.min(...data, 0)) / Math.max(Math.max(...data, 1) - Math.min(...data, 0), 1)) * (height - 8)}
+        cy={height - 4 - ((series[series.length - 1] - Math.min(...series, 0)) / Math.max(Math.max(...series, 1) - Math.min(...series, 0), 1)) * (height - 8)}
         r="2.4"
         fill={color}
       />

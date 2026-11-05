@@ -1,0 +1,259 @@
+import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  ATTACK_ORIGINS,
+  EVENTS,
+  HONEYPOTS,
+  PROTOCOLS,
+  TIME_RANGES,
+  VOLUME_SERIES,
+} from "../data/mock";
+import type { AttackOrigin, EventRow, Severity } from "../types";
+import { apiGet, getToken } from "../lib/api";
+import { relativeTime } from "../lib/format";
+
+const HOURS: Record<string, number> = { "24h": 24, "7d": 168, "30d": 720, "90d": 2160 };
+const INTERVAL: Record<string, string> = { "24h": "1h", "7d": "6h", "30d": "1d", "90d": "1d" };
+
+interface ApiOverview {
+  total_events: number;
+  unique_sources: number;
+  alerts: number;
+  max_severity: Severity;
+  latest_event: string | null;
+  protocols: Array<{ name: string; value: number }>;
+  datasets: Array<{ name: string; value: number }>;
+}
+
+interface ApiTimeline {
+  interval: string;
+  buckets: Array<{ at: string; count: number }>;
+}
+
+interface ApiOrigin {
+  countryCode: string;
+  country: string;
+  city: string;
+  ip: string;
+  lat: number | null;
+  lng: number | null;
+  events: number;
+  uniqueSources: number;
+  severity: Severity;
+  protocol: string;
+  sensor: string;
+  lastEvent: string | null;
+}
+
+interface ApiOrigins {
+  origins: ApiOrigin[];
+}
+
+interface ApiEvents {
+  total: number;
+  items: Array<{
+    id: string;
+    timestamp: string;
+    sensor: string;
+    device: string;
+    source: string;
+    country: string;
+    countryCode: string;
+    kind: string;
+    proto: string;
+    port: number | null;
+    action: string;
+    severity: Severity;
+    message: string;
+  }>;
+}
+
+export interface AnalyticsOverview {
+  totalEvents: number;
+  uniqueSources: number;
+  alerts: number;
+  protocols: Array<{ name: string; value: number }>;
+  datasets: Array<{ name: string; value: number }>;
+  latestEvent: string | null;
+}
+
+export interface TimelinePoint {
+  label: string;
+  count: number;
+}
+
+export type DataMode = "demo" | "live" | "error";
+
+export interface AnalyticsSnapshot {
+  mode: DataMode;
+  loading: boolean;
+  error: string | null;
+  overview: AnalyticsOverview;
+  timeline: TimelinePoint[];
+  origins: AttackOrigin[];
+  events: EventRow[];
+  totalEvents: number;
+  refresh: () => void;
+}
+
+const DEMO_OVERVIEW: AnalyticsOverview = {
+  totalEvents: 12_847,
+  uniqueSources: 1_204,
+  alerts: 17,
+  protocols: PROTOCOLS.map((item) => ({ name: item.name, value: item.value })),
+  datasets: HONEYPOTS.map((item) => ({ name: item.id, value: item.events })),
+  latestEvent: null,
+};
+
+function windowFor(range: string) {
+  const to = new Date();
+  const hours = HOURS[range] ?? 24;
+  const from = new Date(to.getTime() - hours * 60 * 60 * 1000);
+  return { from: from.toISOString(), to: to.toISOString(), interval: INTERVAL[range] ?? "1h" };
+}
+
+function labelFor(iso: string, range: string) {
+  const date = new Date(iso);
+  if (range === "24h") {
+    return new Intl.DateTimeFormat("es-MX", { hour: "2-digit", minute: "2-digit", hour12: false }).format(date);
+  }
+  if (range === "7d") {
+    return new Intl.DateTimeFormat("es-MX", { weekday: "short", hour: "2-digit", hour12: false }).format(date);
+  }
+  return new Intl.DateTimeFormat("es-MX", { day: "2-digit", month: "short" }).format(date);
+}
+
+function demoOrigins(): AttackOrigin[] {
+  return ATTACK_ORIGINS;
+}
+
+function demoEvents(): EventRow[] {
+  return EVENTS;
+}
+
+function demoTimeline(range: string): TimelinePoint[] {
+  const series = (VOLUME_SERIES as Record<string, number[]>)[range] ?? VOLUME_SERIES["24h"];
+  return series.map((count, index) => ({
+    label: range === "24h" ? `${String(index).padStart(2, "0")}:00` : `P-${index + 1}`,
+    count,
+  }));
+}
+
+function normalizeOrigins(payload: ApiOrigins): AttackOrigin[] {
+  return payload.origins.flatMap((origin, index) => {
+    const fallback = ATTACK_ORIGINS.find((item) => item.countryCode === origin.countryCode);
+    const lat = typeof origin.lat === "number" ? origin.lat : fallback?.lat;
+    const lng = typeof origin.lng === "number" ? origin.lng : fallback?.lng;
+    if (typeof lat !== "number" || typeof lng !== "number") return [];
+    return [{
+      id: `${origin.countryCode}-${index}`,
+      country: origin.country || fallback?.country || origin.countryCode,
+      countryCode: origin.countryCode || fallback?.countryCode || "??",
+      city: origin.city || fallback?.city || "",
+      ip: origin.ip || fallback?.ip || "—",
+      lat,
+      lng,
+      events: origin.events,
+      uniqueSources: origin.uniqueSources,
+      severity: origin.severity,
+      protocol: origin.protocol || fallback?.protocol || "—",
+      sensor: origin.sensor || fallback?.sensor || "—",
+      lastSeen: origin.lastEvent ? relativeTime(origin.lastEvent) : "sin dato",
+    }];
+  });
+}
+
+function normalizeEvents(payload: ApiEvents): EventRow[] {
+  return payload.items.map((event) => ({
+    ...event,
+    port: event.port ?? 0,
+    message: event.message || "Evento normalizado de deception-events",
+  }));
+}
+
+export function useAnalytics(range: string): AnalyticsSnapshot {
+  const [nonce, setNonce] = useState(0);
+  const [mode, setMode] = useState<DataMode>(() => (getToken() ? "live" : "demo"));
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [overview, setOverview] = useState<AnalyticsOverview>(DEMO_OVERVIEW);
+  const [timeline, setTimeline] = useState<TimelinePoint[]>(() =>
+    (VOLUME_SERIES["24h"] ?? []).map((count, index) => ({ label: `${String(index).padStart(2, "0")}:00`, count })),
+  );
+  const [origins, setOrigins] = useState<AttackOrigin[]>(demoOrigins);
+  const [events, setEvents] = useState<EventRow[]>(demoEvents);
+  const [totalEvents, setTotalEvents] = useState(DEMO_OVERVIEW.totalEvents);
+
+  const refresh = useCallback(() => setNonce((value) => value + 1), []);
+
+  useEffect(() => {
+    const token = getToken();
+    if (!token) {
+      setMode("demo");
+      setLoading(false);
+      setError(null);
+      setOverview(DEMO_OVERVIEW);
+      setOrigins(demoOrigins());
+      setEvents(demoEvents());
+      setTotalEvents(DEMO_OVERVIEW.totalEvents);
+      setTimeline(demoTimeline(range));
+      return;
+    }
+
+    const controller = new AbortController();
+    const { from, to, interval } = windowFor(range);
+    const query = `from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
+    setLoading(true);
+    setError(null);
+
+    Promise.all([
+      apiGet<ApiOverview>(`/api/analytics/overview?${query}`, controller.signal),
+      apiGet<ApiTimeline>(`/api/analytics/timeline?${query}&interval=${interval}`, controller.signal),
+      apiGet<ApiOrigins>(`/api/analytics/origins?${query}&limit=50`, controller.signal),
+      apiGet<ApiEvents>(`/api/analytics/events?${query}&limit=100`, controller.signal),
+    ])
+      .then(([overviewPayload, timelinePayload, originsPayload, eventsPayload]) => {
+        if (controller.signal.aborted) return;
+        setMode("live");
+        setOverview({
+          totalEvents: overviewPayload.total_events,
+          uniqueSources: overviewPayload.unique_sources,
+          alerts: overviewPayload.alerts,
+          protocols: overviewPayload.protocols.length ? overviewPayload.protocols : DEMO_OVERVIEW.protocols,
+          datasets: overviewPayload.datasets.length ? overviewPayload.datasets : DEMO_OVERVIEW.datasets,
+          latestEvent: overviewPayload.latest_event,
+        });
+        setTimeline(
+          timelinePayload.buckets.length
+            ? timelinePayload.buckets.map((bucket) => ({ label: labelFor(bucket.at, range), count: bucket.count }))
+            : demoTimeline(range),
+        );
+        const liveOrigins = normalizeOrigins(originsPayload);
+        setOrigins(liveOrigins.length ? liveOrigins : demoOrigins());
+        const liveEvents = normalizeEvents(eventsPayload);
+        setEvents(liveEvents.length ? liveEvents : demoEvents());
+        setTotalEvents(eventsPayload.total || overviewPayload.total_events);
+      })
+      .catch((cause: unknown) => {
+        if (controller.signal.aborted) return;
+        setMode("error");
+        setError(cause instanceof Error ? cause.message : "No se pudo consultar el BFF analítico");
+        setOverview(DEMO_OVERVIEW);
+        setOrigins(demoOrigins());
+        setEvents(demoEvents());
+        setTotalEvents(DEMO_OVERVIEW.totalEvents);
+        setTimeline(demoTimeline(range));
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+
+    return () => controller.abort();
+  }, [nonce, range]);
+
+  return useMemo(
+    () => ({ mode, loading, error, overview, timeline, origins, events, totalEvents, refresh }),
+    [mode, loading, error, overview, timeline, origins, events, totalEvents, refresh],
+  );
+}
+
+export const RANGE_OPTIONS = TIME_RANGES;

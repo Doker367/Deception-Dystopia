@@ -486,6 +486,34 @@ pre {
   font-weight: 700;
 }
 
+.mode-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 7px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  background: rgba(12, 20, 30, 0.6);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 8px;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+
+.mode-pill.live {
+  border-color: rgba(53, 230, 196, 0.24);
+  color: var(--cyan);
+  background: rgba(53, 230, 196, 0.06);
+}
+
+.mode-pill.error {
+  border-color: rgba(255, 107, 122, 0.24);
+  color: #ff9aa5;
+  background: rgba(255, 107, 122, 0.06);
+}
+
 .range-control,
 .user-control {
   position: relative;
@@ -673,6 +701,17 @@ pre {
   color: var(--cyan);
   background: rgba(53, 230, 196, 0.06);
   font-size: 10px;
+}
+
+.user-dropdown-time {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 2px 3px;
+  padding: 6px;
+  color: var(--faint);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 8px;
 }
 
 .user-dropdown > button {
@@ -939,6 +978,31 @@ pre {
 }
 
 /* ── Metrics ─────────────────────────────────────────────── */
+.data-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+  padding: 9px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  background: rgba(11, 19, 29, 0.7);
+  font-size: 9.5px;
+}
+
+.data-notice.error {
+  border-color: rgba(255, 107, 122, 0.22);
+  color: #d9a1a7;
+  background: rgba(255, 107, 122, 0.045);
+}
+
+.data-notice .mono {
+  margin-left: auto;
+  color: var(--faint);
+  font-size: 8px;
+}
+
 .metrics-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -3621,4 +3685,134 @@ pre {
     scroll-behavior: auto !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* ── Authentication dialog ───────────────────────────────── */
+.auth-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(2, 6, 10, 0.72);
+  backdrop-filter: blur(5px);
+}
+
+.auth-dialog {
+  position: relative;
+  width: min(410px, 100%);
+  padding: 26px;
+  border: 1px solid var(--line-strong);
+  border-radius: 14px;
+  background:
+    radial-gradient(ellipse 90% 50% at 50% 0%, rgba(53, 230, 196, 0.08), transparent 66%),
+    #0a121c;
+  box-shadow: 0 30px 100px rgba(0, 0, 0, 0.55);
+}
+
+.auth-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+}
+
+.auth-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 22px;
+  color: #effbfa;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+}
+
+.auth-mark {
+  width: 28px;
+  height: 28px;
+}
+
+.auth-dialog h2 {
+  margin-bottom: 7px;
+  font-size: 21px;
+  font-weight: 560;
+  letter-spacing: -0.035em;
+}
+
+.auth-dialog > p {
+  margin-bottom: 18px;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.auth-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.auth-form label > span {
+  color: var(--muted);
+  font-size: 8.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.auth-input {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 38px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: var(--muted);
+  background: rgba(7, 13, 21, 0.7);
+}
+
+.auth-input:focus-within {
+  border-color: rgba(53, 230, 196, 0.36);
+  box-shadow: 0 0 0 3px rgba(53, 230, 196, 0.06);
+}
+
+.auth-input input {
+  width: 100%;
+  border: 0;
+  outline: 0;
+  color: var(--text);
+  background: transparent;
+  font-size: 11px;
+}
+
+.auth-error {
+  padding: 8px 9px;
+  border: 1px solid rgba(255, 107, 122, 0.25);
+  border-radius: 6px;
+  color: #ff9aa5;
+  background: rgba(255, 107, 122, 0.06);
+  font-size: 9px;
+}
+
+.auth-form .button.wide {
+  margin-top: 4px;
+}
+
+.auth-foot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+  color: var(--faint);
+  font-size: 8px;
+  line-height: 1.4;
 }

@@ -12,27 +12,32 @@ import {
 import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
 import { AttackGlobe } from "../components/AttackGlobe";
-import { ATTACK_ORIGINS, DATACENTER } from "../data/mock";
+import { DATACENTER } from "../data/mock";
 import type { AttackOrigin } from "../types";
+import type { DataMode } from "../data/useAnalytics";
 import { formatNumber } from "../lib/format";
 import { SeverityBadge } from "../components/SeverityBadge";
 
 interface MapPageProps {
   search: string;
+  origins: AttackOrigin[];
+  mode: DataMode;
 }
 
-export function MapPage({ search }: MapPageProps) {
-  const [selected, setSelected] = useState<AttackOrigin | null>(ATTACK_ORIGINS[0]);
+export function MapPage({ search, origins, mode }: MapPageProps) {
+  const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const points = useMemo(() => {
     const query = search.trim().toLowerCase();
-    if (!query) return ATTACK_ORIGINS;
-    return ATTACK_ORIGINS.filter((origin) =>
+    if (!query) return origins;
+    return origins.filter((origin) =>
       [origin.country, origin.city, origin.ip, origin.protocol, origin.sensor].join(" ").toLowerCase().includes(query),
     );
-  }, [search]);
+  }, [origins, search]);
 
+  const selected = points.find((origin) => origin.id === selectedId) ?? points[0] ?? null;
   const totalEvents = points.reduce((total, origin) => total + origin.events, 0);
+  const maxEvents = Math.max(...points.map((origin) => origin.events), 1);
 
   return (
     <div className="page page-map">
@@ -48,7 +53,7 @@ export function MapPage({ search }: MapPageProps) {
         }
         meta={
           <>
-            <span><i className="status-dot live" /> Telemetría en vivo</span>
+            <span><i className={`status-dot ${mode === "live" ? "live" : ""}`} /> {mode === "live" ? "Telemetría en vivo" : mode === "error" ? "BFF sin conexión" : "Datos de demostración"}</span>
             <span>{points.length} orígenes activos</span>
             <span className="mono">ventana 24 h</span>
           </>
@@ -57,7 +62,7 @@ export function MapPage({ search }: MapPageProps) {
 
       <div className="map-layout">
         <Panel className="map-main" flush>
-          <AttackGlobe points={points} height={660} onSelect={setSelected} />
+          <AttackGlobe points={points} height={660} onSelect={(origin) => setSelectedId(origin.id)} />
           <div className="map-bottom-strip">
             <div><span className="eyebrow">Eventos geolocalizados</span><strong>{formatNumber(totalEvents)}</strong></div>
             <div><span className="eyebrow">Países</span><strong>{points.length}</strong></div>
@@ -95,7 +100,7 @@ export function MapPage({ search }: MapPageProps) {
                 <button className="button ghost wide">Ver eventos de este origen <ArrowUpRight size={14} /></button>
               </div>
             ) : (
-              <p className="muted">Haz clic en un punto del globo para inspeccionar el origen.</p>
+              <p className="muted">Haz clic en un punto del globo para inspeccionar el origen. No hay orígenes en la ventana actual.</p>
             )}
           </Panel>
 
@@ -111,12 +116,12 @@ export function MapPage({ search }: MapPageProps) {
                 <button
                   className={`rank-row ${selected?.id === origin.id ? "selected" : ""}`}
                   key={origin.id}
-                  onClick={() => setSelected(origin)}
+                  onClick={() => setSelectedId(origin.id)}
                 >
                   <span className="rank-number">{String(index + 1).padStart(2, "0")}</span>
                   <span className="rank-flag">{origin.countryCode}</span>
                   <span className="rank-country"><strong>{origin.country}</strong><small>{origin.city}</small></span>
-                  <span className="rank-bar"><i style={{ width: `${(origin.events / points[0].events) * 100}%` }} /></span>
+                  <span className="rank-bar"><i style={{ width: `${(origin.events / maxEvents) * 100}%` }} /></span>
                   <span className="rank-value mono">{formatNumber(origin.events)}</span>
                 </button>
               ))}
@@ -126,7 +131,7 @@ export function MapPage({ search }: MapPageProps) {
           <Panel className="map-signal" eyebrow="Detección" title="Señales del mapa">
             <div className="map-signal-list">
               <div><span className="insight-icon red"><ShieldAlert size={15} /></span><p><strong>Concentración inusual</strong><span>China + Rusia representan 32 % del volumen.</span></p></div>
-              <div><span className="insight-icon cyan"><Crosshair size={15} /></span><p><strong>Core observado</strong><span>CDMX recibe arcos de 16 regiones distintas.</span></p></div>
+              <div><span className="insight-icon cyan"><Crosshair size={15} /></span><p><strong>Core observado</strong><span>CDMX recibe arcos de {points.length} regiones distintas.</span></p></div>
               <div><span className="insight-icon amber"><Radio size={15} /></span><p><strong>Nuevo origen</strong><span>Fráncfort entró en la ventana hace 38 minutos.</span></p></div>
             </div>
           </Panel>

@@ -13,8 +13,9 @@ import {
 import { PageHeader } from "../components/PageHeader";
 import { EventTable } from "../components/EventTable";
 import { SeverityBadge } from "../components/SeverityBadge";
-import { EVENTS, HONEYPOTS } from "../data/mock";
+import { HONEYPOTS } from "../data/mock";
 import type { EventRow, Severity } from "../types";
+import type { DataMode } from "../data/useAnalytics";
 import { formatDateTime, formatNumber } from "../lib/format";
 
 const PAGE_SIZE = 12;
@@ -31,9 +32,12 @@ const SEVERITY_OPTIONS: Array<{ value: "all" | Severity; label: string }> = [
 interface EventsPageProps {
   search: string;
   range: string;
+  events: EventRow[];
+  total: number;
+  mode: DataMode;
 }
 
-export function EventsPage({ search, range }: EventsPageProps) {
+export function EventsPage({ search, range, events, total, mode }: EventsPageProps) {
   const [localQuery, setLocalQuery] = useState("");
   const [severity, setSeverity] = useState<"all" | Severity>("all");
   const [sensor, setSensor] = useState("all");
@@ -44,7 +48,7 @@ export function EventsPage({ search, range }: EventsPageProps) {
 
   const filtered = useMemo(() => {
     const query = `${search} ${localQuery}`.trim().toLowerCase();
-    return EVENTS.filter((event) => {
+    return events.filter((event) => {
       if (severity !== "all" && event.severity !== severity) return false;
       if (sensor !== "all" && event.sensor !== sensor) return false;
       if (protocol !== "all" && event.proto !== protocol) return false;
@@ -54,13 +58,13 @@ export function EventsPage({ search, range }: EventsPageProps) {
         .toLowerCase()
         .includes(query);
     });
-  }, [localQuery, protocol, search, sensor, severity]);
+  }, [events, localQuery, protocol, search, sensor, severity]);
 
   const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const safePage = Math.min(page, pageCount - 1);
   const pageEvents = filtered.slice(safePage * PAGE_SIZE, safePage * PAGE_SIZE + PAGE_SIZE);
 
-  const protocols = useMemo(() => Array.from(new Set(EVENTS.map((event) => event.proto))).sort(), []);
+  const protocols = useMemo(() => Array.from(new Set(events.map((event) => event.proto))).sort(), [events]);
 
   function resetFilters() {
     setSeverity("all");
@@ -98,8 +102,8 @@ export function EventsPage({ search, range }: EventsPageProps) {
         }
         meta={
           <>
-            <span><i className="status-dot live" /> deception-events*</span>
-            <span>{formatNumber(EVENTS.length)} documentos</span>
+            <span><i className={`status-dot ${mode === "live" ? "live" : ""}`} /> {mode === "live" ? "datos en vivo" : mode === "error" ? "BFF sin conexión" : "datos de demostración"}</span>
+            <span>{formatNumber(total)} documentos</span>
             <span>ventana {range}</span>
           </>
         }

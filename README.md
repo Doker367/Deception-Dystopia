@@ -18,6 +18,8 @@ publicador, topología y modelo de permisos.
 - **La instalación en servidor Linux y la contención real siguen pendientes de
   validación.** No es un despliegue de producción certificado.
 - No hay contraseñas por defecto ni bootstrap público.
+- La interfaz propia **Dystopia Web** está en [`web/`](web/README.md), con
+  resumen, globo 3D, explorador de eventos, honeypots y salud de ingesta.
 
 ## Índice
 

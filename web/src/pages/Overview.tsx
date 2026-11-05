@@ -16,19 +16,28 @@ import { Panel } from "../components/Panel";
 import { EChart } from "../components/EChart";
 import { AttackGlobe } from "../components/AttackGlobe";
 import { EventTable } from "../components/EventTable";
-import { HONEYPOTS, EVENTS, ATTACK_ORIGINS, PROTOCOLS, VOLUME_SERIES } from "../data/mock";
+import { HONEYPOTS } from "../data/mock";
+import type { AnalyticsSnapshot, TimelinePoint } from "../data/useAnalytics";
 import type { PageId } from "../types";
 import { formatNumber } from "../lib/format";
 
 const AXIS_LABEL = { color: "#71849b", fontSize: 10, fontFamily: "JetBrains Mono, monospace" };
 const GRID_LINE = { color: "rgba(108, 150, 177, 0.12)", type: "dashed" as const };
+const PROTOCOL_COLORS: Record<string, string> = {
+  SSH: "#35e6c4",
+  HTTP: "#5aa9ff",
+  SMB: "#f5b75b",
+  RDP: "#b58cff",
+  Redis: "#ff7a9e",
+  Otros: "#58718f",
+  telnet: "#f5b75b",
+  http: "#5aa9ff",
+  ssh: "#35e6c4",
+  redis: "#ff7a9e",
+};
 
-function volumeOption(range: string): EChartsOption {
-  const data = VOLUME_SERIES[range as keyof typeof VOLUME_SERIES] ?? VOLUME_SERIES["24h"];
-  const labels = data.map((_, index) => {
-    if (range === "24h") return `${String(index).padStart(2, "0")}:00`;
-    return `D-${data.length - index}`;
-  });
+function volumeOption(points: TimelinePoint[]): EChartsOption {
+  const data = points.length ? points : Array.from({ length: 24 }, (_, index) => ({ label: `${String(index).padStart(2, "0")}:00`, count: 0 }));
   return {
     backgroundColor: "transparent",
     animationDuration: 900,
@@ -48,10 +57,10 @@ function volumeOption(range: string): EChartsOption {
     xAxis: {
       type: "category",
       boundaryGap: false,
-      data: labels,
+      data: data.map((point) => point.label),
       axisLine: { lineStyle: { color: "rgba(108, 150, 177, 0.16)" } },
       axisTick: { show: false },
-      axisLabel: { ...AXIS_LABEL, interval: range === "24h" ? 3 : 2 },
+      axisLabel: { ...AXIS_LABEL, interval: data.length > 20 ? 3 : 1 },
     },
     yAxis: {
       type: "value",
@@ -61,7 +70,7 @@ function volumeOption(range: string): EChartsOption {
     series: [
       {
         type: "line",
-        data,
+        data: data.map((point) => point.count),
         smooth: 0.34,
         symbol: "none",
         lineStyle: { color: "#35e6c4", width: 2 },
@@ -84,14 +93,15 @@ function volumeOption(range: string): EChartsOption {
           symbol: "none",
           label: { show: false },
           lineStyle: { color: "rgba(255, 159, 91, 0.35)", type: "dashed" },
-          data: [{ yAxis: data[Math.floor(data.length * 0.7)] }],
+          data: [{ yAxis: data[Math.floor(data.length * 0.7)]?.count ?? 0 }],
         },
       },
     ],
   };
 }
 
-function protocolOption(): EChartsOption {
+function protocolOption(protocols: Array<{ name: string; value: number }>): EChartsOption {
+  const total = protocols.reduce((sum, item) => sum + item.value, 0) || 1;
   return {
     backgroundColor: "transparent",
     tooltip: {
@@ -99,7 +109,7 @@ function protocolOption(): EChartsOption {
       backgroundColor: "#0b1520",
       borderColor: "rgba(93, 170, 196, 0.3)",
       textStyle: { color: "#dbe7f3", fontSize: 12 },
-      formatter: "{b}: {c}%",
+      formatter: "{b}: {c} ({d}%)",
     },
     series: [
       {
@@ -110,11 +120,11 @@ function protocolOption(): EChartsOption {
         itemStyle: { borderColor: "#0a111b", borderWidth: 3, borderRadius: 4 },
         label: { show: false },
         emphasis: { scale: true, scaleSize: 4 },
-        data: PROTOCOLS.map((item) => ({
+        data: protocols.map((item, index) => ({
           value: item.value,
           name: item.name,
-          itemStyle: { color: item.color },
-        })),
+          itemStyle: { color: PROTOCOL_COLORS[item.name] ?? ["#35e6c4", "#5aa9ff", "#f5b75b", "#b58cff", "#ff7a9e", "#58718f"][index % 6] },
+        })).map((item) => ({ ...item, value: Math.round((item.value / total) * 100) })),
       },
     ],
   };
@@ -123,23 +133,28 @@ function protocolOption(): EChartsOption {
 interface OverviewPageProps {
   search: string;
   range: string;
+  data: AnalyticsSnapshot;
   onNavigate: (page: PageId) => void;
 }
 
-export function OverviewPage({ search, range, onNavigate }: OverviewPageProps) {
+export function OverviewPage({ search, range, data, onNavigate }: OverviewPageProps) {
+  const { mode, overview, timeline, origins, events } = data;
   const filteredEvents = useMemo(() => {
     const query = search.trim().toLowerCase();
-    if (!query) return EVENTS.slice(0, 7);
-    return EVENTS.filter((event) =>
+    if (!query) return events.slice(0, 7);
+    return events.filter((event) =>
       [event.source, event.country, event.sensor, event.device, event.kind, event.action, event.proto]
         .join(" ")
         .toLowerCase()
         .includes(query),
     ).slice(0, 7);
-  }, [search]);
+  }, [events, search]);
 
-  const volume = useMemo(() => volumeOption(range), [range]);
-  const protocols = useMemo(() => protocolOption(), []);
+  const volume = useMemo(() => volumeOption(timeline), [timeline]);
+  const protocols = useMemo(() => protocolOption(overview.protocols), [overview.protocols]);
+  const maxOriginEvents = Math.max(...origins.map((origin) => origin.events), 1);
+  const total = overview.totalEvents;
+  const live = mode === "live";
 
   return (
     <div className="page">
@@ -155,37 +170,45 @@ export function OverviewPage({ search, range, onNavigate }: OverviewPageProps) {
         }
         meta={
           <>
-            <span><i className="status-dot live" /> Datos de demostración</span>
+            <span><i className="status-dot live" /> {live ? "Datos en vivo" : "Datos de demostración"}</span>
             <span className="mono">c1 · 172.28.1.6</span>
-            <span>Actualizado hace 12 s</span>
+            <span>{data.loading ? "Sincronizando BFF…" : live ? "Consultado ahora" : "Actualizado hace 12 s"}</span>
           </>
         }
       />
 
+      {mode === "error" && (
+        <div className="data-notice error">
+          <ShieldAlert size={15} />
+          <span>El BFF analítico no está disponible. La interfaz sigue mostrando datos de demostración.</span>
+          <span className="mono">{data.error}</span>
+        </div>
+      )}
+
       <div className="metrics-grid">
         <MetricCard
           label="Eventos totales"
-          value="12,847"
-          detail="vs. 10,854 en el periodo anterior"
-          delta="+18.4 %"
+          value={formatNumber(total)}
+          detail={live ? "en la ventana consultada" : "vs. 10,854 en el periodo anterior"}
+          delta={live ? undefined : "+18.4 %"}
           icon={<Activity size={17} />}
           tone="cyan"
-          spark={[18, 24, 21, 34, 39, 32, 46, 41, 55, 49, 62, 58]}
+          spark={timeline.slice(-12).map((point) => point.count)}
         />
         <MetricCard
           label="Orígenes únicos"
-          value="1,204"
-          detail="214 nuevos en las últimas 24 h"
-          delta="+9.1 %"
+          value={formatNumber(overview.uniqueSources)}
+          detail={live ? "direcciones únicas en la ventana" : "214 nuevos en las últimas 24 h"}
+          delta={live ? undefined : "+9.1 %"}
           icon={<Users size={17} />}
           tone="blue"
           spark={[12, 18, 16, 21, 18, 28, 25, 31, 29, 38, 35, 42]}
         />
         <MetricCard
           label="Alertas abiertas"
-          value="17"
-          detail="2 críticas requieren revisión"
-          delta="-4.2 %"
+          value={formatNumber(overview.alerts)}
+          detail={overview.alerts ? "requieren revisión" : "sin alertas en la ventana"}
+          delta={live ? undefined : "-4.2 %"}
           trend="down"
           icon={<ShieldAlert size={17} />}
           tone="red"
@@ -193,9 +216,9 @@ export function OverviewPage({ search, range, onNavigate }: OverviewPageProps) {
         />
         <MetricCard
           label="Latencia de ingesta"
-          value="1.2 s"
-          detail="6/6 sensores reportando"
-          delta="estable"
+          value={live ? "n/d" : "1.2 s"}
+          detail={live ? "pendiente de métrica de lag" : "6/6 sensores reportando"}
+          delta={live ? undefined : "estable"}
           trend="flat"
           icon={<Sparkles size={17} />}
           tone="amber"
@@ -218,9 +241,9 @@ export function OverviewPage({ search, range, onNavigate }: OverviewPageProps) {
           }
         >
           <div className="chart-summary">
-            <div><strong>1,284</strong><span>eventos / hora</span></div>
-            <div><strong className="up">+18.4 %</strong><span>vs. ayer</span></div>
-            <div><strong>103k</strong><span>pico histórico</span></div>
+            <div><strong>{formatNumber(total)}</strong><span>eventos en ventana</span></div>
+            <div><strong className="up">{live ? "live" : "+18.4 %"}</strong><span>{live ? "BFF conectado" : "vs. ayer"}</span></div>
+            <div><strong>{origins.length}</strong><span>países activos</span></div>
           </div>
           <EChart option={volume} height={252} />
         </Panel>
@@ -237,11 +260,11 @@ export function OverviewPage({ search, range, onNavigate }: OverviewPageProps) {
           }
           flush
         >
-          <AttackGlobe minimal height={330} />
+          <AttackGlobe points={origins} minimal height={330} />
           <div className="globe-summary-row">
-            <div><span>Top origen</span><strong>China <small>1,842</small></strong></div>
+            <div><span>Top origen</span><strong>{origins[0]?.country ?? "—"} <small>{origins[0] ? formatNumber(origins[0].events) : "0"}</small></strong></div>
             <div><span>Core</span><strong>CDMX <small>México</small></strong></div>
-            <div><span>Países</span><strong>16 <small>activos</small></strong></div>
+            <div><span>Países</span><strong>{origins.length} <small>activos</small></strong></div>
           </div>
         </Panel>
 
@@ -254,13 +277,13 @@ export function OverviewPage({ search, range, onNavigate }: OverviewPageProps) {
           <div className="protocol-panel">
             <div className="donut-wrap">
               <EChart option={protocols} height={190} />
-              <div className="donut-center"><strong>6</strong><span>protocolos</span></div>
+              <div className="donut-center"><strong>{overview.protocols.length}</strong><span>protocolos</span></div>
             </div>
             <div className="legend-list">
-              {PROTOCOLS.map((item) => (
+              {overview.protocols.map((item, index) => (
                 <div className="legend-row" key={item.name}>
-                  <span><i style={{ background: item.color }} />{item.name}</span>
-                  <strong>{item.value}%</strong>
+                  <span><i style={{ background: PROTOCOL_COLORS[item.name] ?? ["#35e6c4", "#5aa9ff", "#f5b75b", "#b58cff", "#ff7a9e", "#58718f"][index % 6] }} />{item.name}</span>
+                  <strong>{Math.round((item.value / Math.max(overview.protocols.reduce((sum, protocol) => sum + protocol.value, 0), 1)) * 100)}%</strong>
                 </div>
               ))}
             </div>
@@ -275,12 +298,12 @@ export function OverviewPage({ search, range, onNavigate }: OverviewPageProps) {
           actions={<button className="link-button" onClick={() => onNavigate("map")}>Detalle <ArrowRight size={14} /></button>}
         >
           <div className="rank-list">
-            {ATTACK_ORIGINS.slice(0, 6).map((origin, index) => (
+            {origins.slice(0, 6).map((origin, index) => (
               <button className="rank-row" key={origin.id} onClick={() => onNavigate("map")}>
                 <span className="rank-number">{String(index + 1).padStart(2, "0")}</span>
                 <span className="rank-flag">{origin.countryCode}</span>
                 <span className="rank-country"><strong>{origin.country}</strong><small>{origin.city}</small></span>
-                <span className="rank-bar"><i style={{ width: `${(origin.events / ATTACK_ORIGINS[0].events) * 100}%` }} /></span>
+                <span className="rank-bar"><i style={{ width: `${(origin.events / maxOriginEvents) * 100}%` }} /></span>
                 <span className="rank-value mono">{formatNumber(origin.events)}</span>
               </button>
             ))}

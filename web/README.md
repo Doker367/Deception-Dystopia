@@ -16,8 +16,13 @@ Prototipo funcional de la interfaz con datos de demostración:
 - Salud del pipeline de ingesta.
 - Administración de usuarios, claves y configuración.
 
-El siguiente paso es conectar los endpoints reales del BFF de Dystopia y
-Elasticsearch. La UI no debe recibir credenciales de Elasticsearch.
+La UI tiene dos modos:
+
+- **Demo**: sin token JWT, usa datos sintéticos para poder revisar el diseño.
+- **Live**: tras iniciar sesión, consulta el BFF `/api/analytics/*`, que habla
+  con Elasticsearch usando una identidad de solo lectura.
+
+La UI nunca recibe credenciales de Elasticsearch.
 
 ## Stack
 
@@ -60,7 +65,27 @@ GET /api/analytics/events?from=...&to=...&page=...
 GET /api/analytics/health
 ```
 
-El BFF usará un rol de solo lectura y aplicará la autorización JWT de Dystopia.
+El BFF usa un rol de solo lectura y aplica la autorización JWT de Dystopia.
+Variables de entorno del control plane:
+
+```bash
+DYSTOPIA_ANALYTICS_ENABLED=true
+DYSTOPIA_ANALYTICS_URL=https://127.0.0.1:9200
+DYSTOPIA_ANALYTICS_INDEX=deception-events*
+DYSTOPIA_ANALYTICS_ALERTS_INDEX=deception-alerts*
+DYSTOPIA_ANALYTICS_API_KEY_FILE=/ruta/privada/dystopia-analytics-reader.api-key
+DYSTOPIA_ANALYTICS_CA_FILE=/ruta/privada/ca.crt
+DYSTOPIA_ANALYTICS_TIMEOUT=5
+```
+
+La API key debe tener el rol `deception-analyst` (solo lectura). No reutilizar
+la clave del writer de ingesta.
+
+## Servir el build desde FastAPI
+
+`npm run build` genera `web/dist`. FastAPI lo detecta y sirve la SPA en `/`
+(la consola histórica queda en `/console`). Si `web/dist` no existe, `/`
+sigue sirviendo la consola anterior.
 
 ## Diseño
 
