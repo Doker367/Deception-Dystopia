@@ -20,6 +20,7 @@ import { DATACENTER, HONEYPOTS } from "../data/mock";
 import type { AnalyticsSnapshot, TimelinePoint } from "../data/useAnalytics";
 import type { PageId } from "../types";
 import { formatNumber } from "../lib/format";
+import { horizontalBarOption } from "../lib/charts";
 
 const AXIS_LABEL = { color: "#71849b", fontSize: 10, fontFamily: "JetBrains Mono, monospace" };
 const GRID_LINE = { color: "rgba(108, 150, 177, 0.12)", type: "dashed" as const };
@@ -338,6 +339,24 @@ export function OverviewPage({ search, range, data, onNavigate }: OverviewPagePr
               </button>
             ))}
           </div>
+        </Panel>
+
+        <Panel
+          className="span-12"
+          eyebrow="Comparativa"
+          title="Actividad por honeypot"
+          description="Volumen capturado por cada sensor del MVP."
+          actions={<span className="signal-pill"><Activity size={13} /> 6 sensores</span>}
+        >
+          <EChart
+            option={horizontalBarOption(
+              HONEYPOTS.map((honeypot) => honeypot.name),
+              HONEYPOTS.map((honeypot) => honeypot.events),
+              HONEYPOTS.map((honeypot) => honeypot.color),
+              " eventos",
+            )}
+            height={250}
+          />
         </Panel>
 
         <Panel

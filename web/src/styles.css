@@ -3816,3 +3816,203 @@ pre {
   font-size: 8px;
   line-height: 1.4;
 }
+
+/* ── Honeypot configuration drawer ───────────────────────── */
+.card-config-link {
+  padding: 0;
+  border: 0;
+  color: var(--cyan);
+  background: transparent;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 8px;
+  cursor: pointer;
+}
+
+.card-config-link:hover {
+  color: #9affec;
+}
+
+.config-description {
+  margin: 12px 0 14px;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.honeypot-config-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--line);
+}
+
+.honeypot-config-grid > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px;
+  background: rgba(10, 17, 27, 0.78);
+}
+
+.honeypot-config-grid span {
+  color: var(--faint);
+  font-size: 8px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.honeypot-config-grid strong {
+  overflow: hidden;
+  color: var(--text-soft);
+  font-size: 9.5px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+}
+
+.honeypot-config-grid.compact {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.config-block {
+  margin-top: 16px;
+  padding-top: 13px;
+  border-top: 1px solid var(--line);
+}
+
+.config-code-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: rgba(7, 13, 21, 0.7);
+}
+
+.config-code-row .mono {
+  overflow: hidden;
+  color: var(--cyan);
+  font-size: 8.5px;
+  text-overflow: ellipsis;
+}
+
+.config-code-row span:last-child {
+  color: var(--faint);
+  font-size: 8px;
+  white-space: nowrap;
+}
+
+.config-port-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--line);
+}
+
+.config-port-list > div {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 8px;
+  padding: 7px 9px;
+  background: rgba(10, 17, 27, 0.75);
+  font-size: 8.5px;
+}
+
+.config-port-list span:nth-child(2) {
+  color: var(--muted);
+}
+
+.config-port-list span:last-child {
+  text-align: right;
+}
+
+.config-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: rgba(7, 13, 21, 0.55);
+}
+
+.config-list .mono {
+  overflow-wrap: anywhere;
+  color: var(--text-soft);
+  font-size: 8.5px;
+}
+
+.config-kv {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--line);
+}
+
+.config-kv > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 9px;
+  background: rgba(10, 17, 27, 0.75);
+}
+
+.config-kv span {
+  color: var(--faint);
+  font-size: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.config-kv strong {
+  overflow-wrap: anywhere;
+  color: var(--text-soft);
+  font-size: 8.5px;
+  font-weight: 500;
+}
+
+.config-footnote {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+  color: var(--faint);
+  font-size: 8px;
+  line-height: 1.55;
+}
+
+.config-footnote code {
+  color: var(--cyan);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 7.5px;
+}
+
+.config-drawer {
+  width: min(620px, 100vw);
+}
+
+@media (max-width: 680px) {
+  .honeypot-config-grid,
+  .honeypot-config-grid.compact,
+  .config-kv {
+    grid-template-columns: 1fr;
+  }
+
+  .config-port-list > div {
+    grid-template-columns: 1fr;
+  }
+
+  .config-port-list span:last-child {
+    text-align: left;
+  }
+}

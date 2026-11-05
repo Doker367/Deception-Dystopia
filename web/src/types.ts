@@ -61,3 +61,20 @@ export interface TimeRangeOption {
   short: string;
   from: string;
 }
+
+export interface HoneypotConfig {
+  id: string;
+  container: string;
+  image: string;
+  device: string;
+  description: string;
+  user: string;
+  configFile: string;
+  configTarget: string;
+  logPath: string;
+  logFormat: string;
+  ports: Array<{ container: number; proto: string; purpose: string; host?: number }>;
+  volumes: string[];
+  healthcheck: { type: string; marker: string; interval: string; startPeriod: string };
+  resources: { memLimit: string; cpus: string; pidsLimit: number; nofile: number; tmpfsMib: number };
+}
