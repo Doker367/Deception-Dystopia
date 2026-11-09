@@ -78,7 +78,7 @@ services:
     tmpfs:
       - "/tmp:rw,noexec,nosuid,size=64m"
       - "/var/tmp:rw,noexec,nosuid,size=8m"
-      - "/run:rw,noexec,nosuid,size=16m"
+      - "/run:rw,noexec,nosuid,size=16m,uid=2000,gid=2000,mode=0755"
     mem_limit: 256m
     cpus: 0.25
     pids_limit: 128
@@ -231,9 +231,9 @@ volumes:
   control_state: {}
 
 networks:
-  cowrie_net: {driver: bridge, internal: true, enable_ipv6: false}
-  opencanary_net: {driver: bridge, internal: true, enable_ipv6: false}
-  dionaea_net: {driver: bridge, internal: true, enable_ipv6: false}
-  heralding_net: {driver: bridge, internal: true, enable_ipv6: false}
-  redishoneypot_net: {driver: bridge, internal: true, enable_ipv6: false}
-  endlessh_net: {driver: bridge, internal: true, enable_ipv6: false}
+  cowrie_net: {driver: bridge, enable_ipv6: false}
+  opencanary_net: {driver: bridge, enable_ipv6: false}
+  dionaea_net: {driver: bridge, enable_ipv6: false}
+  heralding_net: {driver: bridge, enable_ipv6: false}
+  redishoneypot_net: {driver: bridge, enable_ipv6: false}
+  endlessh_net: {driver: bridge, enable_ipv6: false}

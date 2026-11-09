@@ -139,3 +139,15 @@ def test_unknown_engine_or_non_object_record_is_rejected():
 
 def test_blank_text_line_is_skipped():
     assert normalize_raw("endlessh", "fw-edge-01", "   \n") is None
+
+
+def test_redis_addr_field_is_parsed_as_source_and_port():
+    from runtime.normalize import normalize_raw
+
+    raw = ('{"action":"PING","addr":"203.0.113.50:41234",'
+           '"time":"2026-11-09 06:00:49"}')
+    event = normalize_raw("redishoneypot", "srv-db-01", raw)
+    assert event is not None
+    assert event["src_ip"] == "203.0.113.50"
+    assert event["src_port"] == 41234
+    assert event["type"] == "connect"

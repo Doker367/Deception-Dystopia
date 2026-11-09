@@ -17,6 +17,8 @@ COPY app/ /srv/app/app/
 COPY runtime/ /srv/app/runtime/
 COPY deploy/honeypots/inventory.yaml /srv/app/deploy/honeypots/inventory.yaml
 COPY deploy/honeypots/fixtures/ /srv/app/deploy/honeypots/fixtures/
+# El cargador del inventario valida los build contexts declarados.
+COPY docker/deception/ /srv/app/docker/deception/
 
 USER 2000:2000
 

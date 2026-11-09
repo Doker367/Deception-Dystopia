@@ -33,7 +33,7 @@ ps: check-docker
 bootstrap-user: env check-docker
 	@read -r -s -p "Contraseña del usuario lab (12+ caracteres): " P; echo; \
 	test $${#P} -ge 12 || { echo "demasiado corta"; exit 1; }; \
-	printf '%s' "$$P" | $(COMPOSE) run --rm -T --user 0 \
+	printf '%s' "$$P" | $(COMPOSE) run --rm -T --user 2000:2000 \
 		-v "$(CURDIR)/bootstrap-user.py:/tmp/bootstrap-user.py:ro" \
 		control python /tmp/bootstrap-user.py
 
@@ -70,7 +70,7 @@ token: env check-docker
 
 reset-ledger: check-docker
 	@$(COMPOSE) stop collector
-	@$(COMPOSE) run --rm --user 0 -T -v "$(CURDIR)/reset-ledger.sql:/tmp/reset.sql:ro" \
+	@$(COMPOSE) run --rm --user 2000:2000 -T -v "$(CURDIR)/reset-ledger.sql:/tmp/reset.sql:ro" \
 		control python -c "import sqlite3; c=sqlite3.connect('/srv/deception/deception.db'); \
 		c.executescript(open('/tmp/reset.sql').read()); c.commit(); print('ledger y heartbeat reseteados')"
 	@$(COMPOSE) start collector

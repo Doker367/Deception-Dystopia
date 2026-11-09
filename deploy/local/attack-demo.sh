@@ -20,7 +20,7 @@ probe_line 12223 "lab"
 echo "[3/8] OpenCanary SSH  :$HOST:13022"
 probe_ssh 13022
 echo "[4/8] OpenCanary HTTP :$HOST:13080"
-curl --max-time 5 -sS "http://$HOST:13080/admin" -o /dev/null || true
+curl --max-time 5 -sS "http://$HOST:13080/index.html" -o /dev/null || true
 echo "[5/8] Dionaea FTP     :$HOST:14021"
 printf 'USER lab\r\nPASS demo-not-a-real-password\r\nQUIT\r\n' \
   | nc -w 5 "$HOST" 14021 >/dev/null 2>&1 || true
