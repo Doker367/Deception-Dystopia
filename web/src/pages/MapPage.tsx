@@ -57,16 +57,24 @@ export function MapPage({ search, origins, mode, onRefresh, onOpenEvents }: MapP
   const countryOptions = useMemo(() => Array.from(new Set(origins.map((origin) => origin.country))).sort(), [origins]);
   const sensorOptions = useMemo(() => Array.from(new Set(origins.map((origin) => origin.sensor))).sort(), [origins]);
   const protocolOptions = useMemo(() => Array.from(new Set(origins.map((origin) => origin.protocol))).sort(), [origins]);
-  const subdivisionOptions = useMemo(
-    () => Array.from(new Set(origins.map((origin) => origin.region).filter((item): item is string => Boolean(item)))).sort(),
-    [origins],
-  );
+  const subdivisionOptions = useMemo(() => {
+    const options = new Map<string, string>();
+    for (const origin of origins) {
+      if (country !== "all" && origin.country !== country) continue;
+      const name = origin.region || origin.regionCode;
+      if (!name) continue;
+      const value = `${origin.countryCode}|${origin.regionCode || name}`;
+      options.set(value, country === "all" ? `${name} (${origin.country})` : name);
+    }
+    return Array.from(options, ([value, label]) => ({ value, label }))
+      .sort((a, b) => a.label.localeCompare(b.label, "es"));
+  }, [origins, country]);
 
   const points = useMemo(() => {
     const query = search.trim().toLowerCase();
     return origins.filter((origin) => {
       if (country !== "all" && origin.country !== country) return false;
-      if (subdivision !== "all" && origin.region !== subdivision) return false;
+      if (subdivision !== "all" && `${origin.countryCode}|${origin.regionCode || origin.region}` !== subdivision) return false;
       if (region !== "all" && regionFor(origin.countryCode) !== region) return false;
       if (severity !== "all" && origin.severity !== severity) return false;
       if (sensor !== "all" && origin.sensor !== sensor) return false;
@@ -153,7 +161,7 @@ export function MapPage({ search, origins, mode, onRefresh, onOpenEvents }: MapP
         <span className="filter-bar-label"><Filter size={14} /> Filtros del mapa</span>
         <label className="filter-select">
           <span>País</span>
-          <select value={country} onChange={(event) => { setCountry(event.target.value); setSelectedId(null); }}>
+          <select value={country} onChange={(event) => { setCountry(event.target.value); setSubdivision("all"); setSelectedId(null); }}>
             <option value="all">Todos</option>
             {countryOptions.map((item) => <option key={item} value={item}>{item}</option>)}
           </select>
@@ -163,7 +171,7 @@ export function MapPage({ search, origins, mode, onRefresh, onOpenEvents }: MapP
             <span>Estado / región</span>
             <select value={subdivision} onChange={(event) => { setSubdivision(event.target.value); setSelectedId(null); }}>
               <option value="all">Todos</option>
-              {subdivisionOptions.map((item) => <option key={item} value={item}>{item}</option>)}
+              {subdivisionOptions.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
             </select>
           </label>
         )}

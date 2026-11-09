@@ -19,5 +19,6 @@ en [`deploy/honeypots/PROVENANCE.md`](deploy/honeypots/PROVENANCE.md). Resumen:
 | T-Pot (solo referencia de diseño) | GPL-3.0 |
 
 Las licencias GPL de los componentes upstream no se ven alteradas por la
-licencia MIT del código propio de Dystopia. Este documento no es asesoramiento
-legal.
+licencia MIT del código propio de Dystopia. Las fuentes y licencias de los mapas
+admin-1 se documentan en [`LICENSES-THIRD-PARTY.md`](LICENSES-THIRD-PARTY.md).
+Este documento no es asesoramiento legal.

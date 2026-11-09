@@ -87,12 +87,16 @@ flowchart LR
 
 GeoLite2 aporta la subdivisión administrativa (estado/provincia) además del
 país. El BFF agrupa los orígenes por `país + subdivisión` y expone `region` y
-`regionCode`. En el globo, EE. UU. se dibuja con los polígonos de
-`web/public/us-states.geo.json` y **solo se colorea el estado afectado**; el
-resto de países se colorea a nivel de país. Si GeoIP no conoce la subdivisión,
-el origen se muestra como punto sin teñir todo el territorio. La vista permite
-filtrar por estado/región y mantiene la precisión declarada como
-`estado / ciudad`.
+`regionCode`. El globo carga bajo demanda los polígonos de EE. UU. desde
+`web/public/us-states.geo.json` y los de México y Canadá desde
+`web/public/regions/{mx,ca}.geo.json`; solo se colorea la subdivisión afectada.
+Si un país no tiene GeoJSON disponible o falla la carga, conserva el polígono
+de país; si tiene subdivisiones pero un origen carece de código reconocido,
+permanece su punto sin teñir el país entero. El filtro Estado / región incluye
+subdivisiones de cualquier país y distingue nombres homónimos por país.
+La precisión declarada se mantiene como `estado / ciudad`.
+La procedencia de los nuevos mapas consta en
+[`LICENSES-THIRD-PARTY.md`](LICENSES-THIRD-PARTY.md).
 
 Planos:
 
