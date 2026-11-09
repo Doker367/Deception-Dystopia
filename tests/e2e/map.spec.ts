@@ -141,3 +141,18 @@ test("login → mapa → origen seleccionado → eventos filtrados", async ({ pa
   await expect(rows.first()).toContainText(TX_IP);
   await expect(rows.first()).not.toContainText(CA_IP);
 });
+
+test("permite zoom profundo y muestra etiquetas al acercarse", async ({ page }) => {
+  await loginAndOpenMap(page);
+  const canvas = page.locator(".globe-canvas");
+  const zoomIn = page.getByRole("button", { name: "Acercar mapa" });
+  await expect(zoomIn).toBeVisible();
+  const before = Number(await canvas.getAttribute("data-zoom"));
+  for (let index = 0; index < 4; index += 1) {
+    await zoomIn.click();
+    await page.waitForTimeout(400);
+  }
+  await expect.poll(async () => Number(await canvas.getAttribute("data-zoom"))).toBeLessThan(before - 0.2);
+  await expect.poll(async () => Number(await canvas.getAttribute("data-labels"))).toBeGreaterThan(0);
+  await expect(page.getByRole("button", { name: "Alejar mapa" })).toBeVisible();
+});

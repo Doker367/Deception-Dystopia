@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Globe from "react-globe.gl";
 import type { GlobeMethods } from "react-globe.gl";
 import { MeshPhongMaterial } from "three";
-import { Crosshair, Maximize2, RotateCcw } from "lucide-react";
+import { Crosshair, Maximize2, Minus, Plus, RotateCcw } from "lucide-react";
 import { ATTACK_ORIGINS, DATACENTER } from "../data/mock";
 import type { AttackOrigin, Severity } from "../types";
 
@@ -145,7 +145,9 @@ export function AttackGlobe({
   const [size, setSize] = useState({ width: 640, height });
   const [rotating, setRotating] = useState(autoRotate);
   const [interactionPaused, setInteractionPaused] = useState(false);
+  const [zoomAltitude, setZoomAltitude] = useState(2.5);
   const resumeTimer = useRef<number | null>(null);
+  const lastZoomAltitude = useRef(0);
   const initialized = useRef(false);
 
   useEffect(() => {
@@ -195,8 +197,14 @@ export function AttackGlobe({
     controls.autoRotate = rotating && !interactionPaused;
     controls.autoRotateSpeed = 0.42;
     controls.enablePan = false;
-    controls.minDistance = 210;
-    controls.maxDistance = 620;
+    // Permite acercarse hasta ~0.15 radios sobre la superficie (mucho más zoom
+    // que antes) sin atravesar el globo, y alejarse para ver el mundo completo.
+    controls.minDistance = 115;
+    controls.maxDistance = 900;
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
+    controls.zoomSpeed = 1.15;
+    controls.rotateSpeed = 0.5;
     if (!initialized.current) {
       globe.pointOfView({ lat: DATACENTER.lat, lng: DATACENTER.lng, altitude: 1.9 }, 0);
       initialized.current = true;
@@ -325,6 +333,30 @@ export function AttackGlobe({
   );
 
   const maxEvents = Math.max(...points.map((origin) => origin.events), 1);
+  // Etiquetas de ciudad/estado solo al acercarse, para no saturar la vista global.
+  const labelData = useMemo(() => {
+    if (zoomAltitude > 0.8) return [];
+    const seen = new Set<string>();
+    return [...points]
+      .sort((a, b) => b.events - a.events)
+      .filter((origin) => {
+        const text = origin.region || origin.city || origin.country;
+        if (!text || seen.has(text)) return false;
+        seen.add(text);
+        return true;
+      })
+      .slice(0, 12)
+      .map((origin) => ({ lat: origin.lat, lng: origin.lng, text: origin.region || origin.city || origin.country }));
+  }, [points, zoomAltitude]);
+
+  function zoomBy(factor: number) {
+    const globe = globeRef.current;
+    if (!globe) return;
+    const pov = globe.pointOfView();
+    const altitude = Math.max(0.16, Math.min(pov.altitude * factor, 8));
+    globe.pointOfView({ lat: pov.lat, lng: pov.lng, altitude }, 300);
+  }
+
   const globeMaterial = useMemo(
     () =>
       new MeshPhongMaterial({
@@ -340,6 +372,8 @@ export function AttackGlobe({
   return (
     <div className={`globe-shell ${minimal ? "globe-minimal" : ""}`} ref={containerRef} style={{ height }}>
       <div className="globe-canvas" role="img"
+        data-zoom={zoomAltitude.toFixed(2)}
+        data-labels={labelData.length}
         aria-label={`Globo de ataques: ${points.length} ${points.length === 1 ? "origen" : "orígenes"} y ${activeRegions} ${activeRegions === 1 ? "región activa" : "regiones activas"}.`}>
         <Globe
           ref={globeRef}
@@ -360,8 +394,8 @@ export function AttackGlobe({
           }}
           polygonSideColor={() => "rgba(0, 0, 0, 0)"}
           polygonStrokeColor={(feature: object) => String((feature as CountryFeature).properties?.__layer ?? "") === "region"
-            ? "rgba(91, 184, 190, 0.3)"
-            : "rgba(91, 184, 190, 0.18)"}
+            ? "rgba(120, 220, 225, 0.42)"
+            : "rgba(110, 200, 210, 0.24)"}
           polygonLabel={(feature: object) => {
             const properties = (feature as CountryFeature).properties ?? {};
             const total = totalForPolygon(feature as CountryFeature, areaTotals);
@@ -399,6 +433,15 @@ export function AttackGlobe({
           arcDashAnimateTime={2600}
           arcsTransitionDuration={0}
           arcLabel={(arc: object) => tooltipFor((arc as GlobeArc).origin)}
+          labelsData={labelData}
+          labelLat="lat"
+          labelLng="lng"
+          labelText="text"
+          labelSize={0.42}
+          labelColor={() => "#e6f4f6"}
+          labelAltitude={0.02}
+          labelIncludeDot={false}
+          labelResolution={2}
           ringsData={[{ lat: DATACENTER.lat, lng: DATACENTER.lng }]}
           ringColor={() => "rgba(53, 230, 196, 0.32)"}
           ringMaxRadius={4.2}
@@ -411,6 +454,18 @@ export function AttackGlobe({
             controls.autoRotate = rotating && !interactionPaused;
             controls.autoRotateSpeed = 0.42;
             controls.enablePan = false;
+            controls.minDistance = 115;
+            controls.maxDistance = 900;
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.08;
+            controls.zoomSpeed = 1.15;
+            controls.rotateSpeed = 0.5;
+          }}
+          onZoom={(pov: { altitude: number }) => {
+            if (Math.abs(pov.altitude - lastZoomAltitude.current) > 0.08) {
+              lastZoomAltitude.current = pov.altitude;
+              setZoomAltitude(pov.altitude);
+            }
           }}
         />
       </div>
@@ -445,6 +500,14 @@ export function AttackGlobe({
                 onClick={() => globeRef.current?.pointOfView({ lat: DATACENTER.lat, lng: DATACENTER.lng, altitude: 1.85 }, 800)}>
                 <Crosshair size={14} />
               </button>
+              <button className="icon-button small" title="Acercar" aria-label="Acercar mapa"
+                onClick={() => zoomBy(0.62)}>
+                <Plus size={14} />
+              </button>
+              <button className="icon-button small" title="Alejar" aria-label="Alejar mapa"
+                onClick={() => zoomBy(1.6)}>
+                <Minus size={14} />
+              </button>
               <button className="icon-button small" title="Pantalla completa" aria-label="Pantalla completa"
                 onClick={() => containerRef.current?.requestFullscreen?.()}>
                 <Maximize2 size={14} />
@@ -456,7 +519,7 @@ export function AttackGlobe({
             <span className="eyebrow">Origen de ataques</span>
             <strong>{points.length} regiones activas</strong>
             <span className="globe-overlay-muted">Arcos animados hacia {DATACENTER.city}</span>
-            <span className="globe-overlay-muted">{interactionPaused ? "Rotación en pausa · reanuda tras 15 s" : "Rotación automática · 0.42×"}</span>
+            <span className="globe-overlay-muted">{interactionPaused ? "Rotación en pausa · reanuda tras 15 s" : "Rotación automática · rueda o botones para zoom"}</span>
           </div>
 
           <div className="globe-legend">
