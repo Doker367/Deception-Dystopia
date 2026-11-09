@@ -12,6 +12,54 @@ interface CountryFeature {
   geometry: unknown;
 }
 
+interface AreaTotal {
+  events: number;
+  severity: Severity;
+}
+
+interface AreaTotals {
+  byCountry: Map<string, AreaTotal>;
+  byRegion: Map<string, AreaTotal>;
+}
+
+// Shared promises cache in-flight requests, successful GeoJSONs and missing files.
+const regionCache = new Map<string, Promise<CountryFeature[]>>();
+
+function loadRegions(countryCode: string): Promise<CountryFeature[]> {
+  const cached = regionCache.get(countryCode);
+  if (cached) return cached;
+  const path = countryCode === "US" ? "us-states.geo.json" : `regions/${countryCode.toLowerCase()}.geo.json`;
+  const request = fetch(`${import.meta.env.BASE_URL}${path}`)
+    .then(async (response) => {
+      if (response.status === 404) return [];
+      if (!response.ok) throw new Error(`No se pudo cargar ${path}`);
+      // Some SPA servers serve index.html (HTTP 200) for absent static assets.
+      const collection = await response.json().catch(() => null);
+      const features: CountryFeature[] = collection?.features;
+      if (!Array.isArray(features) || !features.length || !features.every((feature) =>
+        feature?.type === "Feature" && typeof feature.properties?.code === "string"
+        && typeof feature.properties?.name === "string" && feature.geometry)) return [];
+      return features.map((feature) => ({
+        ...feature,
+        properties: { ...feature.properties, __layer: "region", __country: countryCode },
+      }));
+    })
+    .catch(() => {
+      // A transient network error can be retried when the origins change.
+      regionCache.delete(countryCode);
+      return [];
+    });
+  regionCache.set(countryCode, request);
+  return request;
+}
+
+function totalForPolygon(feature: CountryFeature, totals: AreaTotals): AreaTotal | undefined {
+  const properties = feature.properties ?? {};
+  return properties.__layer === "region"
+    ? totals.byRegion.get(`${properties.__country}|${properties.code}`)
+    : totals.byCountry.get(String(properties.ISO_A2 ?? ""));
+}
+
 interface GlobePoint {
   lat: number;
   lng: number;
@@ -93,7 +141,7 @@ export function AttackGlobe({
   const globeRef = useRef<GlobeMethods | undefined>(undefined);
   const containerRef = useRef<HTMLDivElement>(null);
   const [countries, setCountries] = useState<CountryFeature[]>([]);
-  const [states, setStates] = useState<CountryFeature[]>([]);
+  const [regions, setRegions] = useState<Record<string, CountryFeature[]>>({});
   const [size, setSize] = useState({ width: 640, height });
   const [rotating, setRotating] = useState(autoRotate);
   const [interactionPaused, setInteractionPaused] = useState(false);
@@ -111,32 +159,34 @@ export function AttackGlobe({
     return () => observer.disconnect();
   }, []);
 
+  const regionCountries = useMemo(() => Array.from(new Set(points
+    .filter((origin) => origin.regionCode && /^[A-Z]{2}$/.test(origin.countryCode))
+    .map((origin) => origin.countryCode))).sort(), [points]);
+
   useEffect(() => {
     let cancelled = false;
-    Promise.all([
-      fetch(`${import.meta.env.BASE_URL}world.geo.json`).then((response) => response.json()),
-      // Si falta el GeoJSON de estados, se conserva el polígono de EE. UU.
-      fetch(`${import.meta.env.BASE_URL}us-states.geo.json`).then((response) => response.json()).catch(() => ({ features: [] })),
-    ])
-      .then(([world, us]) => {
-        if (cancelled) return;
-        const stateFeatures = Array.isArray(us?.features) ? (us.features as CountryFeature[]) : [];
-        setStates(stateFeatures.map((feature) => ({
-          ...feature,
-          properties: { ...feature.properties, __layer: "state" },
-        })));
-        const countryFeatures = Array.isArray(world?.features) ? (world.features as CountryFeature[]) : [];
-        setCountries(stateFeatures.length
-          ? countryFeatures.filter((feature) => String(feature.properties?.ISO_A2 ?? "") !== "US")
-          : countryFeatures);
+    fetch(`${import.meta.env.BASE_URL}world.geo.json`)
+      .then((response) => {
+        if (!response.ok) throw new Error("No se pudo cargar world.geo.json");
+        return response.json();
       })
-      .catch(() => {
-        if (!cancelled) { setCountries([]); setStates([]); }
-      });
-    return () => {
-      cancelled = true;
-    };
+      .then((world) => {
+        if (!cancelled) setCountries(Array.isArray(world?.features) ? world.features as CountryFeature[] : []);
+      })
+      .catch(() => { /* Points and any available regional polygons still render. */ });
+    return () => { cancelled = true; };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    for (const countryCode of regionCountries) {
+      loadRegions(countryCode).then((features) => {
+        if (!cancelled) setRegions((current) => current[countryCode] === features
+          ? current : { ...current, [countryCode]: features });
+      });
+    }
+    return () => { cancelled = true; };
+  }, [regionCountries]);
 
   useEffect(() => {
     const globe = globeRef.current;
@@ -202,15 +252,30 @@ export function AttackGlobe({
     };
   }, []);
 
-  const polygons = useMemo(() => [...countries, ...states], [countries, states]);
-  const areaTotals = useMemo(() => {
-    const byCountry = new Map<string, { events: number; severity: Severity }>();
-    const byState = new Map<string, { events: number; severity: Severity }>();
+  const availableRegions = useMemo(() => {
+    const available = new Map<string, CountryFeature[]>();
+    for (const countryCode of regionCountries) {
+      if (regions[countryCode]?.length) available.set(countryCode, regions[countryCode]);
+    }
+    return available;
+  }, [regionCountries, regions]);
+  const polygons = useMemo(() => [
+    ...countries.filter((feature) => !availableRegions.has(String(feature.properties?.ISO_A2 ?? ""))),
+    ...Array.from(availableRegions.values()).flat(),
+  ], [countries, availableRegions]);
+  const areaTotals = useMemo<AreaTotals>(() => {
+    const byCountry = new Map<string, AreaTotal>();
+    const byRegion = new Map<string, AreaTotal>();
+    const regionCodes = new Map<string, Set<string>>();
+    for (const [country, features] of availableRegions) {
+      regionCodes.set(country, new Set(features.map((feature) => String(feature.properties.code))));
+    }
     const rank: Record<Severity, number> = { info: 0, low: 1, medium: 2, high: 3, critical: 4 };
     for (const origin of points) {
-      const isState = origin.countryCode === "US" && Boolean(origin.regionCode);
-      const target = isState ? byState : byCountry;
-      const key = isState ? String(origin.regionCode) : origin.countryCode;
+      const code = origin.regionCode?.toUpperCase();
+      const hasRegion = Boolean(code && regionCodes.get(origin.countryCode)?.has(code));
+      const target = hasRegion ? byRegion : byCountry;
+      const key = hasRegion ? `${origin.countryCode}|${code}` : origin.countryCode;
       const current = target.get(key);
       if (!current) {
         target.set(key, { events: origin.events, severity: origin.severity });
@@ -219,8 +284,8 @@ export function AttackGlobe({
         if (rank[origin.severity] > rank[current.severity]) current.severity = origin.severity;
       }
     }
-    return { byCountry, byState };
-  }, [points]);
+    return { byCountry, byRegion };
+  }, [points, availableRegions]);
   const pointData = useMemo<GlobePoint[]>(
     () => [
       ...points.map((origin) => ({
@@ -284,34 +349,21 @@ export function AttackGlobe({
           atmosphereAltitude={0.16}
           showGraticules
           polygonsData={polygons}
-          polygonAltitude={(feature: object) => {
-            const properties = (feature as CountryFeature).properties ?? {};
-            const active = properties.__layer === "state"
-              ? areaTotals.byState.has(String(properties.code ?? ""))
-              : areaTotals.byCountry.has(String(properties.ISO_A2 ?? ""));
-            return active ? 0.012 : 0.004;
-          }}
+          polygonAltitude={(feature: object) => totalForPolygon(feature as CountryFeature, areaTotals) ? 0.012 : 0.004}
           polygonCapColor={(feature: object) => {
-            const properties = (feature as CountryFeature).properties ?? {};
-            const isState = properties.__layer === "state";
-            const total = isState
-              ? areaTotals.byState.get(String(properties.code ?? ""))
-              : areaTotals.byCountry.get(String(properties.ISO_A2 ?? ""));
+            const total = totalForPolygon(feature as CountryFeature, areaTotals);
             if (!total) return "rgba(17, 34, 46, 0.82)";
             return withAlpha(SEVERITY_COLOR[total.severity], 0.34 + (total.events / maxEvents) * 0.42);
           }}
           polygonSideColor={() => "rgba(0, 0, 0, 0)"}
-          polygonStrokeColor={(feature: object) => String((feature as CountryFeature).properties?.__layer ?? "") === "state"
+          polygonStrokeColor={(feature: object) => String((feature as CountryFeature).properties?.__layer ?? "") === "region"
             ? "rgba(91, 184, 190, 0.3)"
             : "rgba(91, 184, 190, 0.18)"}
           polygonLabel={(feature: object) => {
             const properties = (feature as CountryFeature).properties ?? {};
-            const isState = properties.__layer === "state";
-            const total = isState
-              ? areaTotals.byState.get(String(properties.code ?? ""))
-              : areaTotals.byCountry.get(String(properties.ISO_A2 ?? ""));
-            const name = isState
-              ? String(properties.name ?? properties.code ?? "Estado")
+            const total = totalForPolygon(feature as CountryFeature, areaTotals);
+            const name = properties.__layer === "region"
+              ? String(properties.name ?? properties.code ?? "Estado / región")
               : String(properties.NAME_ES ?? properties.ADMIN ?? properties.NAME ?? "País");
             return `<div class="globe-tooltip globe-tooltip-small"><strong>${name}</strong><span>${total ? `${total.events.toLocaleString("es-MX")} eventos` : "Sin actividad en la ventana"}</span></div>`;
           }}
