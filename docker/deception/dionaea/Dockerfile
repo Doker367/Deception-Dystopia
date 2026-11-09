@@ -13,7 +13,9 @@
 FROM ubuntu:26.04@sha256:6a06111c3b0a8600feadb270aec771dc239bf407b25625f93f44ab00e11f4d3c AS builder
 
 ARG DEBIAN_FRONTEND=noninteractive
-ARG DIONAEA_COMMIT=78af2ff2a0f1b62ac7cc5858bac2ab46898c9cc0
+# Upstream reescribió el commit 78af2ff (ya no existe). Pin al HEAD
+# verificado de master el 2026-11-08.
+ARG DIONAEA_COMMIT=4e459f1b672a5b4c1e8335c0bff1b93738019215
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
