@@ -38,6 +38,42 @@ MAX_WINDOW = timedelta(days=90)
 DEFAULT_MAX_ROWS = 20_000
 INTERVALS = {"1m": 60, "5m": 300, "15m": 900, "30m": 1800, "1h": 3600, "3h": 10800, "6h": 21600, "12h": 43200, "1d": 86400, "7d": 604800}
 SEVERITY_ORDER = {"critical": 4, "high": 3, "medium": 2, "low": 1, "info": 0}
+
+
+def _collector_health(db_path: Path) -> dict[str, Any]:
+    """Estado del colector según su heartbeat, sin abrir la BD en escritura."""
+    path = Path(db_path)
+    if not path.exists():
+        return {"status": "missing", "reason": "db_not_found"}
+    try:
+        conn = sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True, timeout=2)
+        try:
+            row = conn.execute(
+                """SELECT last_poll_at, polls, ingested, interval, status
+                   FROM collector_heartbeat WHERE id = 1"""
+            ).fetchone()
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return {"status": "missing", "reason": "no_heartbeat"}
+    if not row:
+        return {"status": "missing", "reason": "no_heartbeat"}
+    last_poll, polls, ingested, interval, status = row
+    try:
+        age = (datetime.now(timezone.utc)
+               - datetime.fromisoformat(str(last_poll).replace("Z", "+00:00"))
+               ).total_seconds()
+    except ValueError:
+        age = float("inf")
+    stale_after = max(90.0, float(interval or 30.0) * 3)
+    return {
+        "status": "stale" if age > stale_after else (status or "ok"),
+        "last_poll_at": last_poll,
+        "age_seconds": round(age, 1),
+        "polls": polls,
+        "ingested": ingested,
+        "interval": interval,
+    }
 KIND_SEVERITY = {
     "login_success": "critical",
     "file_download": "critical",
@@ -230,10 +266,13 @@ class AnalyticsService:
             row[0]
             for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
         }
-        if "events" in tables:
-            return "runtime"
+        # La BD del control plane puede contener ambas tablas (runtime v1 y la
+        # nativa). El colector escribe en ``deception_events``; si existe, esa
+        # es la fuente de verdad para no leer una tabla ``events`` obsoleta.
         if "deception_events" in tables:
             return "control"
+        if "events" in tables:
+            return "runtime"
         return "none"
 
     def _rows(self, start: datetime, end: datetime) -> list[EventRecord]:
@@ -452,6 +491,7 @@ class AnalyticsService:
     def health(self) -> dict[str, Any]:
         db_path = self.config.resolved_db_path
         db_exists = self.config.db_exists
+        collector = _collector_health(db_path)
         conn = self._connect()
         if conn is None:
             return {
@@ -461,6 +501,7 @@ class AnalyticsService:
                 "schema": "none",
                 "db": str(db_path),
                 "db_exists": db_exists,
+                "collector": collector,
             }
         try:
             schema = self._schema(conn)
@@ -473,6 +514,7 @@ class AnalyticsService:
                 "documents": documents,
                 "db": str(db_path),
                 "db_exists": db_exists,
+                "collector": collector,
                 "geoip": geoip_svc.available(),
             }
         finally:

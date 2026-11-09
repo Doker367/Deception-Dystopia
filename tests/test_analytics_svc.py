@@ -170,3 +170,29 @@ def test_invalid_window_is_rejected(tmp_path):
         service.overview("2026-11-05T13:00:00+00:00", "2026-11-05T11:00:00+00:00")
     with pytest.raises(ValueError):
         service.timeline(None, None, "2h")
+
+
+def test_control_schema_wins_when_both_tables_exist(tmp_path, geo):
+    """El colector escribe deception_events: si hay tabla runtime obsoleta,
+    analytics no debe leerla por prioridad."""
+    path = tmp_path / "both.db"
+    _control_db(path)
+    with sqlite3.connect(path) as conn:
+        conn.executescript("""
+            CREATE TABLE events (
+                sensor TEXT, event_id TEXT, device TEXT, observed_at TEXT,
+                kind TEXT, source TEXT, severity TEXT, message TEXT, payload TEXT
+            );
+        """)
+        conn.execute(
+            "INSERT INTO events VALUES(?,?,?,?,?,?,?,?,?)",
+            ("cowrie", "legacy-1", "srv-files-01", "2026-11-05T12:00:00+00:00",
+             "login_attempt", "198.51.100.9", "critical", "", "{}"),
+        )
+    service = analytics_svc.AnalyticsService(analytics_svc.AnalyticsConfig(db_path=path))
+    window = ("2026-11-05T11:00:00+00:00", "2026-11-05T13:00:00+00:00")
+    overview = service.overview(*window)
+    assert overview["total_events"] == 2  # solo deception_events
+    events = service.events(*window, limit=10)
+    assert events["total"] == 2
+    assert {e["source"] for e in events["items"]} == {"203.0.113.7"}
