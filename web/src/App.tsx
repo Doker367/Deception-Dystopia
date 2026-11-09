@@ -10,7 +10,7 @@ import { IngestPage } from "./pages/IngestPage";
 import { AdminPage } from "./pages/AdminPage";
 import { useAnalytics } from "./data/useAnalytics";
 import { LoginDialog } from "./components/LoginDialog";
-import { clearToken, getToken } from "./lib/api";
+import { UNAUTHORIZED_EVENT, clearToken, getToken } from "./lib/api";
 import type { PageId } from "./types";
 
 const PAGES: PageId[] = ["overview", "map", "events", "honeypots", "devices", "ingest", "admin"];
@@ -40,6 +40,22 @@ export function App() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }, [page]);
 
+  useEffect(() => {
+    const onUnauthorized = () => {
+      setSessionActive(false);
+      setLoginOpen(false);
+    };
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === "dystopia.access_token") setSessionActive(Boolean(getToken()));
+    };
+    window.addEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
+    window.addEventListener("storage", onStorage);
+    return () => {
+      window.removeEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
+      window.removeEventListener("storage", onStorage);
+    };
+  }, []);
+
   function navigate(next: PageId) {
     if (next === page) {
       window.scrollTo({ top: 0, behavior: "smooth" });
@@ -58,6 +74,23 @@ export function App() {
   function openEventsFor(query = "") {
     if (query) setSearch(query);
     navigate("events");
+  }
+
+  if (!sessionActive) {
+    return (
+      <div className="app login-gate">
+        <LoginDialog
+          open
+          allowClose={false}
+          onClose={() => {}}
+          onSuccess={() => {
+            setLoginOpen(false);
+            setSessionActive(true);
+            analytics.refresh();
+          }}
+        />
+      </div>
+    );
   }
 
   return (

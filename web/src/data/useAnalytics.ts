@@ -123,6 +123,15 @@ export const DEMO_OVERVIEW: AnalyticsOverview = {
   latestEvent: null,
 };
 
+const EMPTY_OVERVIEW: AnalyticsOverview = {
+  totalEvents: 0,
+  uniqueSources: 0,
+  alerts: 0,
+  protocols: [],
+  datasets: [],
+  latestEvent: null,
+};
+
 function windowFor(range: string) {
   const to = new Date();
   const hours = HOURS[range] ?? 24;
@@ -194,16 +203,22 @@ export function useAnalytics(range: string): AnalyticsSnapshot {
   const [mode, setMode] = useState<DataMode>(() => (getToken() ? "live" : "demo"));
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [overview, setOverview] = useState<AnalyticsOverview>(DEMO_OVERVIEW);
-  const [timeline, setTimeline] = useState<TimelinePoint[]>(() =>
-    (VOLUME_SERIES["24h"] ?? []).map((count, index) => ({ label: `${String(index).padStart(2, "0")}:00`, count })),
-  );
-  const [origins, setOrigins] = useState<AttackOrigin[]>(demoOrigins);
-  const [events, setEvents] = useState<EventRow[]>(demoEvents);
-  const [totalEvents, setTotalEvents] = useState(DEMO_OVERVIEW.totalEvents);
+  // Arrancamos vacío: los datos de demostración solo se usan sin sesión,
+  // nunca como relleno mientras se carga la sesión real.
+  const [overview, setOverview] = useState<AnalyticsOverview>(EMPTY_OVERVIEW);
+  const [timeline, setTimeline] = useState<TimelinePoint[]>([]);
+  const [origins, setOrigins] = useState<AttackOrigin[]>([]);
+  const [events, setEvents] = useState<EventRow[]>([]);
+  const [totalEvents, setTotalEvents] = useState(0);
   const [collectorHealth, setCollectorHealth] = useState<CollectorHealth | null>(null);
 
   const refresh = useCallback(() => setNonce((value) => value + 1), []);
+
+  // Refresco automático: sin esto la vista solo cambia al pulsar el botón.
+  useEffect(() => {
+    const timer = window.setInterval(() => setNonce((value) => value + 1), 15_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     if (mode !== "live") {
