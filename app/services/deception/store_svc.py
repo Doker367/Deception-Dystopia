@@ -35,6 +35,8 @@ CREATE TABLE IF NOT EXISTS deception_events (
     device_id TEXT NOT NULL,
     src_ip TEXT NOT NULL,
     src_port INTEGER,
+    dst_ip TEXT,
+    dst_port INTEGER,
     proto TEXT DEFAULT '',
     event_type TEXT NOT NULL,
     username TEXT,
@@ -100,6 +102,12 @@ def _ensure_db() -> None:
         conn.execute("PRAGMA journal_mode=WAL;")
         conn.execute("PRAGMA synchronous=NORMAL;")
         conn.executescript(_SCHEMA)
+        # Migración idempotente para bases creadas antes del destino estructurado.
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(deception_events)")}
+        if "dst_ip" not in columns:
+            conn.execute("ALTER TABLE deception_events ADD COLUMN dst_ip TEXT")
+        if "dst_port" not in columns:
+            conn.execute("ALTER TABLE deception_events ADD COLUMN dst_port INTEGER")
         index_exists = conn.execute(
             """SELECT 1 FROM sqlite_master
                WHERE type = 'index' AND name = 'idx_deception_events_source'"""
@@ -142,6 +150,8 @@ def log_event(event: DeceptionEventIn) -> dict:
         "device_id": event.device_id,
         "src_ip": event.src_ip,
         "src_port": event.src_port,
+        "dst_ip": event.dst_ip,
+        "dst_port": event.dst_port,
         "proto": event.proto,
         "type": etype,
         "username": event.username,
@@ -155,12 +165,12 @@ def log_event(event: DeceptionEventIn) -> dict:
             conn.execute("PRAGMA journal_mode=WAL;")
             conn.execute(
                 """INSERT INTO deception_events
-                   (ts, device_id, src_ip, src_port, proto, event_type,
+                   (ts, device_id, src_ip, src_port, dst_ip, dst_port, proto, event_type,
                     username, success, detail)
-                   VALUES (?,?,?,?,?,?,?,?,?)""",
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     ts, event.device_id, event.src_ip, event.src_port,
-                    event.proto, etype, event.username,
+                    event.dst_ip, event.dst_port, event.proto, etype, event.username,
                     1 if event.success else 0, detail_json,
                 ),
             )
@@ -232,6 +242,8 @@ def log_events_batch(events, offset_rows=None, heartbeat=None,
                     "device_id": event.device_id,
                     "src_ip": event.src_ip,
                     "src_port": event.src_port,
+                    "dst_ip": event.dst_ip,
+                    "dst_port": event.dst_port,
                     "proto": event.proto,
                     "type": etype,
                     "username": event.username,
@@ -240,12 +252,12 @@ def log_events_batch(events, offset_rows=None, heartbeat=None,
                 }
                 cur = conn.execute(
                     """INSERT OR IGNORE INTO deception_events
-                       (ts, device_id, src_ip, src_port, proto, event_type,
+                       (ts, device_id, src_ip, src_port, dst_ip, dst_port, proto, event_type,
                         username, success, detail)
-                       VALUES (?,?,?,?,?,?,?,?,?)""",
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
                     (
                         ts, event.device_id, event.src_ip, event.src_port,
-                        event.proto, etype, event.username,
+                        event.dst_ip, event.dst_port, event.proto, etype, event.username,
                         1 if event.success else 0, detail_json,
                     ),
                 )
@@ -548,8 +560,8 @@ def events_to_csv(limit: int = 1000) -> str:
     import io
 
     buffer = io.StringIO()
-    headers = ["timestamp", "device_id", "src_ip", "src_port", "proto",
-               "type", "username", "success", "detail"]
+    headers = ["timestamp", "device_id", "src_ip", "src_port", "dst_ip", "dst_port",
+               "proto", "type", "username", "success", "detail"]
     writer = csv.DictWriter(buffer, fieldnames=headers, lineterminator="\n")
     writer.writeheader()
     for event in get_events(limit=limit):
@@ -600,6 +612,8 @@ def _row_to_event(row: sqlite3.Row) -> dict:
         "device_id": row["device_id"],
         "src_ip": row["src_ip"],
         "src_port": row["src_port"],
+        "dst_ip": row["dst_ip"],
+        "dst_port": row["dst_port"],
         "proto": row["proto"] or "",
         "type": row["event_type"],
         "username": row["username"],

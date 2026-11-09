@@ -40,6 +40,8 @@ export interface EventRow {
   kind: string;
   proto: string;
   port: number;
+  dst_ip?: string;
+  dst_port?: number | null;
   action: string;
   severity: Severity;
   message: string;

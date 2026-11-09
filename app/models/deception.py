@@ -164,6 +164,8 @@ class DeceptionEventIn(BaseModel):
     device_id: str = Field(..., description="Dispositivo señuelo que recibió la interacción")
     src_ip: str = Field(..., description="IP del atacante", examples=["203.0.113.9"])
     src_port: Optional[int] = Field(default=None, ge=0, le=65535)
+    dst_ip: Optional[str] = Field(default=None, description="IP del sensor que recibió la conexión")
+    dst_port: Optional[int] = Field(default=None, ge=1, le=65535, description="Puerto destino en el sensor")
     proto: str = Field(default="tcp", description="Protocolo de la interacción")
     type: DeceptionEventType = Field(default=DeceptionEventType.OTHER, description="Tipo de evento")
     detail: dict = Field(default_factory=dict, description="Datos específicos del evento")
@@ -180,6 +182,8 @@ class DeceptionEventOut(BaseModel):
     device_id: str
     src_ip: str
     src_port: Optional[int] = None
+    dst_ip: Optional[str] = None
+    dst_port: Optional[int] = None
     proto: str
     type: str
     username: Optional[str] = None

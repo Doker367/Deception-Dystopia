@@ -83,6 +83,22 @@ flowchart LR
     CTRL --> WEB
 ```
 
+### Normalización, destino y correlación
+
+Cada evento conserva `src_ip`/`src_port` y añade `dst_ip`/`dst_port` (destino
+observado por el sensor). Un `login_success` de Cowrie cuyo usuario es en
+realidad una línea HTTP (`GET / HTTP/1.0`) se clasifica como `connect` con
+`classification=protocol_probe`, no como acceso exitoso. Las severidades son
+login fallido `low`, login aceptado en señuelo `medium`, comando/descarga/escaneo
+`high`. El detalle incluye el identificador MITRE ATT&CK aplicable (T1110,
+T1059, T1105, T1046, T1190).
+
+`GET /api/analytics/campaigns` correlaciona una misma IP que toca varios
+señuelos o puertos en una ventana de cinco minutos. Devuelve una campaña
+`port_scan` de severidad `high`, MITRE `T1046`, con sensores, puertos y ventana.
+El mapa muestra estas campañas en el panel “Campañas detectadas”. La detección
+es de solo lectura: no reescribe los eventos capturados.
+
 ### Mapa por país y estado
 
 GeoLite2 aporta la subdivisión administrativa (estado/provincia) además del

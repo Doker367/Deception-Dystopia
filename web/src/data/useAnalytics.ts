@@ -63,6 +63,8 @@ interface ApiEvents {
     kind: string;
     proto: string;
     port: number | null;
+    dst_ip?: string;
+    dst_port?: number | null;
     action: string;
     severity: Severity;
     message: string;
