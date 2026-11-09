@@ -44,7 +44,52 @@ CREATE TABLE IF NOT EXISTS deception_events (
 CREATE INDEX IF NOT EXISTS idx_deception_events_ts ON deception_events(ts);
 CREATE INDEX IF NOT EXISTS idx_deception_events_dev ON deception_events(device_id);
 CREATE INDEX IF NOT EXISTS idx_deception_events_src ON deception_events(src_ip);
+CREATE TABLE IF NOT EXISTS collector_offsets (
+    engine TEXT PRIMARY KEY,
+    path TEXT NOT NULL,
+    dev INTEGER NOT NULL DEFAULT -1,
+    ino INTEGER NOT NULL DEFAULT -1,
+    offset INTEGER NOT NULL DEFAULT 0,
+    pending BLOB NOT NULL DEFAULT X'',
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS collector_heartbeat (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    started_at TEXT NOT NULL,
+    last_poll_at TEXT NOT NULL,
+    polls INTEGER NOT NULL,
+    ingested INTEGER NOT NULL,
+    interval REAL NOT NULL,
+    status TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS collector_dead_letters (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    engine TEXT NOT NULL,
+    path TEXT NOT NULL,
+    byte_offset INTEGER NOT NULL,
+    raw TEXT NOT NULL,
+    error TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
 """
+
+
+def _dedupe_existing(conn: sqlite3.Connection) -> None:
+    """Colapsa duplicados históricos antes de crear el índice único.
+
+    Solo aplica a filas que ya traen ``source_event_id`` en su detalle; el
+    resto (eventos nativos sin huella) se preserva intacto.
+    """
+    conn.execute(
+        """DELETE FROM deception_events
+           WHERE json_extract(detail, '$.source_event_id') IS NOT NULL
+             AND id NOT IN (
+                 SELECT MIN(id) FROM deception_events
+                 WHERE json_extract(detail, '$.source_event_id') IS NOT NULL
+                 GROUP BY json_extract(detail, '$.engine'),
+                          json_extract(detail, '$.source_event_id')
+             )"""
+    )
 
 
 def _ensure_db() -> None:
@@ -54,6 +99,23 @@ def _ensure_db() -> None:
         conn.execute("PRAGMA journal_mode=WAL;")
         conn.execute("PRAGMA synchronous=NORMAL;")
         conn.executescript(_SCHEMA)
+        index_exists = conn.execute(
+            """SELECT 1 FROM sqlite_master
+               WHERE type = 'index' AND name = 'idx_deception_events_source'"""
+        ).fetchone()
+        if not index_exists:
+            _dedupe_existing(conn)
+            # Índice único por (motor, huella del registro): el dedupe real
+            # vive aquí, no en memoria, para sobrevivir a reinicios y resets
+            # de offsets.
+            conn.execute(
+                """CREATE UNIQUE INDEX IF NOT EXISTS idx_deception_events_source
+                   ON deception_events(
+                       json_extract(detail, '$.engine'),
+                       json_extract(detail, '$.source_event_id')
+                   )
+                   WHERE json_extract(detail, '$.source_event_id') IS NOT NULL"""
+            )
 
 
 def _connect() -> sqlite3.Connection:
@@ -102,11 +164,188 @@ def log_event(event: DeceptionEventIn) -> dict:
                 ),
             )
             record["id"] = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+    except sqlite3.IntegrityError:
+        # La huella ya existía (índice único por motor+source_event_id):
+        # no es un error, es un duplicado idempotente.
+        record["duplicate"] = True
+        record["id"] = _existing_id(event)
     except Exception as exc:  # noqa: BLE001
         logger.error("[deception] fallo al escribir evento (%s): %s", etype, exc)
         record.setdefault("id", 0)
 
     return record
+
+
+def _existing_id(event: DeceptionEventIn) -> int:
+    """Id de un evento ya presente con el mismo (engine, source_event_id)."""
+    detail = event.detail or {}
+    engine = detail.get("engine")
+    source_id = detail.get("source_event_id")
+    if not engine or not source_id:
+        return 0
+    try:
+        with sqlite3.connect(str(DB_PATH), timeout=10) as conn:
+            row = conn.execute(
+                """SELECT id FROM deception_events
+                   WHERE json_extract(detail, '$.engine') = ?
+                     AND json_extract(detail, '$.source_event_id') = ?
+                   LIMIT 1""",
+                (engine, source_id),
+            ).fetchone()
+        return int(row[0]) if row else 0
+    except sqlite3.Error:
+        return 0
+
+
+def log_events_batch(events, offset_rows=None, heartbeat=None,
+                     dead_letters=None) -> list[dict]:
+    """Inserta un lote y persiste offsets/corazón en la MISMA transacción.
+
+    Es la escritura que usa el colector: o entra todo el lote (eventos,
+    offsets y heartbeat) o no entra nada. Así un fallo de SQLite nunca deja
+    el offset por delante de los eventos ya confirmados.
+
+    Args:
+        events: iterable de ``DeceptionEventIn``.
+        offset_rows: filas de ``collector_offsets`` (dict) o ``None``.
+        heartbeat: dict con el estado del colector o ``None``.
+        dead_letters: muestras de líneas irrecuperables (dict) o ``None``.
+
+    Returns:
+        Lista de dicts ``{"record": ..., "inserted": bool}`` en orden.
+    """
+    events = list(events)
+    results: list[dict] = []
+    _ensure_db()
+    with _write_lock, sqlite3.connect(str(DB_PATH), timeout=10) as conn:
+        conn.execute("PRAGMA journal_mode=WAL;")
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            for event in events:
+                ts = event.ts or datetime.now(timezone.utc).isoformat()
+                detail = event.detail or {}
+                detail_json = json.dumps(detail, ensure_ascii=False)
+                etype = event.type.value if hasattr(event.type, "value") else str(event.type)
+                record = {
+                    "timestamp": ts,
+                    "device_id": event.device_id,
+                    "src_ip": event.src_ip,
+                    "src_port": event.src_port,
+                    "proto": event.proto,
+                    "type": etype,
+                    "username": event.username,
+                    "success": bool(event.success),
+                    "detail": detail,
+                }
+                cur = conn.execute(
+                    """INSERT OR IGNORE INTO deception_events
+                       (ts, device_id, src_ip, src_port, proto, event_type,
+                        username, success, detail)
+                       VALUES (?,?,?,?,?,?,?,?,?)""",
+                    (
+                        ts, event.device_id, event.src_ip, event.src_port,
+                        event.proto, etype, event.username,
+                        1 if event.success else 0, detail_json,
+                    ),
+                )
+                inserted = cur.rowcount > 0
+                if inserted:
+                    record["id"] = cur.lastrowid
+                else:
+                    row = conn.execute(
+                        """SELECT id FROM deception_events
+                           WHERE json_extract(detail, '$.engine') = ?
+                             AND json_extract(detail, '$.source_event_id') = ?
+                           LIMIT 1""",
+                        (detail.get("engine"), detail.get("source_event_id")),
+                    ).fetchone()
+                    record["id"] = int(row[0]) if row else 0
+                    record["duplicate"] = True
+                results.append({"record": record, "inserted": inserted})
+
+            if offset_rows:
+                conn.executemany(
+                    """INSERT INTO collector_offsets
+                           (engine, path, dev, ino, offset, pending, updated_at)
+                       VALUES (?,?,?,?,?,?,?)
+                       ON CONFLICT(engine) DO UPDATE SET
+                           path=excluded.path, dev=excluded.dev,
+                           ino=excluded.ino, offset=excluded.offset,
+                           pending=excluded.pending, updated_at=excluded.updated_at""",
+                    [
+                        (row["engine"], row["path"], int(row.get("dev", -1)),
+                         int(row.get("ino", -1)), int(row.get("offset", 0)),
+                         row.get("pending", b"") or b"", row["updated_at"])
+                        for row in offset_rows
+                    ],
+                )
+            if heartbeat:
+                conn.execute(
+                    """INSERT INTO collector_heartbeat
+                           (id, started_at, last_poll_at, polls, ingested,
+                            interval, status)
+                       VALUES (1,?,?,?,?,?,?)
+                       ON CONFLICT(id) DO UPDATE SET
+                           last_poll_at=excluded.last_poll_at,
+                           polls=excluded.polls, ingested=excluded.ingested,
+                           interval=excluded.interval, status=excluded.status""",
+                    (
+                        heartbeat["started_at"], heartbeat["last_poll_at"],
+                        int(heartbeat.get("polls", 0)),
+                        int(heartbeat.get("ingested", 0)),
+                        float(heartbeat.get("interval", 30.0)),
+                        heartbeat.get("status", "ok"),
+                    ),
+                )
+            if dead_letters:
+                conn.executemany(
+                    """INSERT INTO collector_dead_letters
+                           (engine, path, byte_offset, raw, error, created_at)
+                       VALUES (?,?,?,?,?,?)""",
+                    [
+                        (row["engine"], row["path"],
+                         int(row.get("byte_offset", 0)),
+                         str(row.get("raw", ""))[:4096],
+                         str(row.get("error", ""))[:512],
+                         row["created_at"])
+                        for row in dead_letters
+                    ],
+                )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+    return results
+
+
+def get_collector_health(max_age_seconds: float = 90.0) -> dict:
+    """Estado del colector según su heartbeat en SQLite (read-only)."""
+    try:
+        if not DB_PATH.exists():
+            return {"status": "missing", "reason": "db_not_found"}
+        with sqlite3.connect(str(DB_PATH), timeout=5) as conn:
+            row = conn.execute(
+                """SELECT last_poll_at, polls, ingested, interval, status
+                   FROM collector_heartbeat WHERE id = 1"""
+            ).fetchone()
+    except sqlite3.Error:
+        return {"status": "missing", "reason": "no_heartbeat"}
+    if not row:
+        return {"status": "missing", "reason": "no_heartbeat"}
+    last_poll, polls, ingested, interval, status = row
+    try:
+        age = (datetime.now(timezone.utc)
+               - datetime.fromisoformat(str(last_poll).replace("Z", "+00:00"))
+               ).total_seconds()
+    except ValueError:
+        age = float("inf")
+    stale_after = max(float(max_age_seconds), float(interval) * 3)
+    if age > stale_after:
+        state = "stale"
+    else:
+        state = status or "ok"
+    return {"status": state, "last_poll_at": last_poll, "age_seconds": round(age, 1),
+            "polls": polls, "ingested": ingested, "interval": interval}
 
 
 # ── Lectura ──────────────────────────────────────────────────

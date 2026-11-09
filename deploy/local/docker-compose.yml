@@ -1,0 +1,237 @@
+# Laboratorio LOCAL (macOS Docker Desktop) — puertos exclusivamente en 127.0.0.1.
+#
+# NO es una activación de celda Linux ni una prueba de contención. En el
+# servidor se usarán bind mounts por celda con UID/GID reales.
+#
+#   docker compose --env-file .env -f docker-compose.yml up -d --wait
+#
+# Los logs viven en volúmenes nombrados (filesystem Linux de Docker Desktop):
+# el colector los monta read-only y así los permisos son coherentes entre
+# contenedores. La SQLite también es un volumen nombrado y la comparten
+# colector (único writer del flujo) y control (solo lectura de la BFF).
+name: dystopia-local
+
+x-honeypot: &honeypot
+  restart: "no"
+  read_only: true
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: [ALL]
+  logging:
+    driver: json-file
+    options: {max-size: "10m", max-file: "3"}
+  # No usar init:true: los HEALTHCHECK de cada Dockerfile inspeccionan
+  # /proc/1/cmdline y un init intermedio los rompería.
+
+services:
+  # Prepara permisos de los volúmenes de estado/config/logs una sola vez.
+  permissions-init:
+    image: alpine:3.20
+    user: "0:0"
+    restart: "no"
+    command:
+      - sh
+      - -c
+      - |
+        mkdir -p /srv/state /srv/deception /srv/local-config
+        chown -R 2000:2000 /srv/state /srv/deception /srv/local-config
+        chown -R 999:999 /logs/cowrie
+        chown -R 2000:2000 /logs/opencanary /logs/dionaea \
+          /logs/heralding /logs/redishoneypot /logs/endlessh
+    volumes:
+      - control_state:/srv/state
+      - deception_db:/srv/deception
+      - control_config:/srv/local-config
+      - cowrie_var:/logs/cowrie
+      - opencanary_log:/logs/opencanary
+      - dionaea_var:/logs/dionaea
+      - heralding_log:/logs/heralding
+      - redishoneypot_log:/logs/redishoneypot
+      - endlessh_log:/logs/endlessh
+
+  cowrie:
+    <<: *honeypot
+    build: {context: ../../docker/deception/cowrie, dockerfile: Dockerfile}
+    image: dystopia/honeypot-cowrie:3.1.4
+    user: "999:999"
+    ports:
+      - "127.0.0.1:12222:2222/tcp"
+      - "127.0.0.1:12223:2223/tcp"
+    volumes: ["cowrie_var:/cowrie/cowrie-git/var"]
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=64m"]
+    mem_limit: 512m
+    cpus: 0.50
+    pids_limit: 256
+    depends_on:
+      permissions-init: {condition: service_completed_successfully}
+    networks: [cowrie_net]
+
+  opencanary:
+    <<: *honeypot
+    build: {context: ../../docker/deception/opencanary, dockerfile: Dockerfile}
+    image: dystopia/honeypot-opencanary:0.9.10
+    user: "2000:2000"
+    cap_add: [NET_BIND_SERVICE]
+    ports:
+      - "127.0.0.1:13022:22/tcp"
+      - "127.0.0.1:13080:80/tcp"
+    volumes: ["opencanary_log:/var/log/opencanary"]
+    tmpfs:
+      - "/tmp:rw,noexec,nosuid,size=64m"
+      - "/var/tmp:rw,noexec,nosuid,size=8m"
+      - "/run:rw,noexec,nosuid,size=16m"
+    mem_limit: 256m
+    cpus: 0.25
+    pids_limit: 128
+    depends_on:
+      permissions-init: {condition: service_completed_successfully}
+    networks: [opencanary_net]
+
+  dionaea:
+    <<: *honeypot
+    build: {context: ../../docker/deception/dionaea, dockerfile: Dockerfile}
+    image: dystopia/honeypot-dionaea:0.12.5
+    user: "2000:2000"
+    cap_add: [NET_BIND_SERVICE]
+    ports: ["127.0.0.1:14021:21/tcp"]
+    volumes: ["dionaea_var:/opt/dionaea/var"]
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=128m"]
+    mem_limit: 768m
+    cpus: 1.00
+    pids_limit: 512
+    depends_on:
+      permissions-init: {condition: service_completed_successfully}
+    networks: [dionaea_net]
+
+  heralding:
+    <<: *honeypot
+    build: {context: ../../docker/deception/heralding, dockerfile: Dockerfile}
+    image: dystopia/honeypot-heralding:ac12724
+    user: "2000:2000"
+    cap_add: [NET_BIND_SERVICE]
+    ports: ["127.0.0.1:15021:21/tcp"]
+    volumes: ["heralding_log:/var/log/heralding"]
+    tmpfs: ["/tmp/heralding:rw,noexec,nosuid,size=32m,uid=2000,gid=2000"]
+    mem_limit: 512m
+    cpus: 0.50
+    pids_limit: 256
+    depends_on:
+      permissions-init: {condition: service_completed_successfully}
+    networks: [heralding_net]
+
+  redishoneypot:
+    <<: *honeypot
+    build: {context: ../../docker/deception/redishoneypot, dockerfile: Dockerfile}
+    image: dystopia/honeypot-redishoneypot:45adc62
+    user: "2000:2000"
+    ports: ["127.0.0.1:16379:6379/tcp"]
+    volumes: ["redishoneypot_log:/var/log/redishoneypot"]
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=32m"]
+    mem_limit: 192m
+    cpus: 0.25
+    pids_limit: 128
+    depends_on:
+      permissions-init: {condition: service_completed_successfully}
+    networks: [redishoneypot_net]
+
+  endlessh:
+    <<: *honeypot
+    build: {context: ../../docker/deception/endlessh, dockerfile: Dockerfile}
+    image: dystopia/honeypot-endlessh:dfe44eb
+    user: "2000:2000"
+    ports: ["127.0.0.1:17222:2222/tcp"]
+    volumes: ["endlessh_log:/var/log/endlessh"]
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=16m"]
+    mem_limit: 64m
+    cpus: 0.10
+    pids_limit: 64
+    depends_on:
+      permissions-init: {condition: service_completed_successfully}
+    networks: [endlessh_net]
+
+  collector:
+    build: {context: ../.., dockerfile: deploy/local/Dockerfile.collector}
+    image: dystopia/local-collector:lab
+    network_mode: none
+    user: "2000:2000"
+    group_add: ["999"]          # Cowrie escribe su var como 999:999.
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      HOME: /tmp
+      NETPULSE_DECEPTION_DATA_DIR: /srv/deception
+    command:
+      - python
+      - -m
+      - runtime.collector
+      - --inventory
+      - /srv/app/deploy/honeypots/inventory.yaml
+      - --data-root
+      - /data/honeypots
+      - --interval
+      - "10"
+    volumes:
+      # Reproducen exactamente los `volumes` del inventario bajo un data-root.
+      - {type: volume, source: cowrie_var, target: /data/honeypots/cowrie/var, read_only: true}
+      - {type: volume, source: opencanary_log, target: /data/honeypots/opencanary/log, read_only: true}
+      - {type: volume, source: dionaea_var, target: /data/honeypots/dionaea/var, read_only: true}
+      - {type: volume, source: heralding_log, target: /data/honeypots/heralding/log, read_only: true}
+      - {type: volume, source: redishoneypot_log, target: /data/honeypots/redishoneypot/log, read_only: true}
+      - {type: volume, source: endlessh_log, target: /data/honeypots/endlessh/log, read_only: true}
+      - {type: volume, source: deception_db, target: /srv/deception}
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=32m,uid=2000,gid=2000"]
+    restart: "no"              # permite observar collector=stale al pararlo
+    depends_on:
+      permissions-init: {condition: service_completed_successfully}
+
+  control:
+    build: {context: ../.., dockerfile: deploy/local/Dockerfile.control}
+    image: dystopia/local-control:lab
+    user: "2000:2000"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      HOME: /tmp
+      NETPULSE_JWT_SECRET: ${NETPULSE_JWT_SECRET:?Configura un secreto local único de 32 bytes como mínimo}
+      NETPULSE_DECEPTION_ENABLED: "false"
+      FIREWALL_ENABLED: "false"
+      DYSTOPIA_CONTROL_CONFIG: /srv/local-config
+      DYSTOPIA_CONTROL_STATE: /srv/state
+      NETPULSE_DECEPTION_DATA_DIR: /srv/deception
+      # NO configurar DYSTOPIA_ANALYTICS_DB: analytics hereda DECEPTION_DB.
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8082"]
+    ports: ["127.0.0.1:8082:8082/tcp"]
+    volumes:
+      - {type: volume, source: deception_db, target: /srv/deception}
+      - {type: volume, source: control_config, target: /srv/local-config}
+      - {type: volume, source: control_state, target: /srv/state}
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=32m,uid=2000,gid=2000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8082/api/health', timeout=2).close()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    restart: "no"
+    depends_on:
+      permissions-init: {condition: service_completed_successfully}
+
+volumes:
+  cowrie_var: {}
+  opencanary_log: {}
+  dionaea_var: {}
+  heralding_log: {}
+  redishoneypot_log: {}
+  endlessh_log: {}
+  deception_db: {}
+  control_config: {}
+  control_state: {}
+
+networks:
+  cowrie_net: {driver: bridge, internal: true, enable_ipv6: false}
+  opencanary_net: {driver: bridge, internal: true, enable_ipv6: false}
+  dionaea_net: {driver: bridge, internal: true, enable_ipv6: false}
+  heralding_net: {driver: bridge, internal: true, enable_ipv6: false}
+  redishoneypot_net: {driver: bridge, internal: true, enable_ipv6: false}
+  endlessh_net: {driver: bridge, internal: true, enable_ipv6: false}

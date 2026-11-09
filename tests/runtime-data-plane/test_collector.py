@@ -239,3 +239,74 @@ def test_stop_signals_terminate_run_forever(db, tmp_path):
     result = collector.run_forever(interval=0.01)
     timer.join()
     assert result["ingested"] == 1
+
+
+# ── Revisión GPT: offsets en SQLite, heartbeat, dead-letter, atomicidad ──
+
+
+def test_default_offset_store_is_sqlite_and_resumes(db, tmp_path):
+    log = tmp_path / "cowrie.jsonl"
+    log.write_text(cowrie_record(COWRIE_CONNECT), encoding="utf-8")
+    reader = LogReader(Sources([Source("cowrie", str(log), "jsonl", "srv-files-01")]))
+
+    first = Collector(reader, store=db)
+    assert first.health()["offset_store"] == "SqliteOffsetStore"
+    assert first.poll_once()["ingested"] == 1
+
+    # Otra instancia (sin ledger JSON) reanuda desde la tabla de offsets.
+    reader2 = LogReader(Sources([Source("cowrie", str(log), "jsonl", "srv-files-01")]))
+    second = Collector(reader2, store=db)
+    assert second.poll_once()["ingested"] == 0
+    assert len(db.get_events(limit=10)) == 1
+
+
+def test_poll_writes_heartbeat_and_reports_active_collector(db, tmp_path):
+    log = tmp_path / "cowrie.jsonl"
+    log.write_text(cowrie_record(COWRIE_CONNECT), encoding="utf-8")
+    collector = make_collector(log, tmp_path / "ledger.json", db)
+    collector.poll_once()
+
+    health = collector.health()
+    assert health["db_heartbeat"]["status"] == "ok"
+    assert health["db_heartbeat"]["polls"] == 1
+    assert db.get_collector_health()["status"] == "ok"
+
+
+def test_malformed_line_goes_to_dead_letters(db, tmp_path):
+    log = tmp_path / "cowrie.jsonl"
+    log.write_text(json.dumps({"eventid": "cowrie.login.failed"}) + "\n",
+                   encoding="utf-8")
+    collector = make_collector(log, tmp_path / "ledger.json", db)
+    result = collector.poll_once()
+
+    assert result["failed"] == 1
+    assert collector.dead_letters == 1
+    with db._connect() as conn:
+        rows = conn.execute(
+            "SELECT engine, error FROM collector_dead_letters").fetchall()
+    assert len(rows) == 1
+    assert rows[0][0] == "cowrie"
+    assert rows[0][1].startswith("NormalizeError")
+
+
+def test_batch_failure_does_not_advance_offsets(db, tmp_path, monkeypatch):
+    log = tmp_path / "cowrie.jsonl"
+    log.write_text(cowrie_record(COWRIE_CONNECT), encoding="utf-8")
+    collector = make_collector(log, tmp_path / "ledger.json", db)
+    original = db.log_events_batch
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("database is locked")
+
+    monkeypatch.setattr(db, "log_events_batch", boom)
+    result = collector.poll_once()
+    assert result["failed"] == 1
+    assert db.get_events(limit=10) == []
+    db._ensure_db()
+    with db._connect() as conn:
+        assert conn.execute(
+            "SELECT COUNT(*) FROM collector_offsets").fetchone()[0] == 0
+
+    monkeypatch.setattr(db, "log_events_batch", original)
+    assert collector.poll_once()["ingested"] == 1
+    assert len(db.get_events(limit=10)) == 1

@@ -1,0 +1,14 @@
+.git
+.github
+.venv*
+node_modules
+**/node_modules
+**/__pycache__
+**/*.pyc
+tests
+docs
+deploy/elastic
+web/src
+web/node_modules
+*.png
+*.log
