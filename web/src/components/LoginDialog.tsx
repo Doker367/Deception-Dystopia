@@ -7,10 +7,12 @@ interface LoginDialogProps {
   open: boolean;
   onClose: () => void;
   onSuccess: () => void;
+  /** La pantalla de entrada no se puede cerrar sin autenticarse. */
+  allowClose?: boolean;
 }
 
-export function LoginDialog({ open, onClose, onSuccess }: LoginDialogProps) {
-  const [username, setUsername] = useState("admin");
+export function LoginDialog({ open, onClose, onSuccess, allowClose = true }: LoginDialogProps) {
+  const [username, setUsername] = useState("lab");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -33,9 +35,9 @@ export function LoginDialog({ open, onClose, onSuccess }: LoginDialogProps) {
   }
 
   return (
-    <div className="auth-backdrop" onMouseDown={onClose}>
+    <div className="auth-backdrop" onMouseDown={allowClose ? onClose : undefined}>
       <div className="auth-dialog" role="dialog" aria-modal="true" aria-labelledby="login-title" onMouseDown={(event) => event.stopPropagation()}>
-        <button className="icon-button auth-close" onClick={onClose} aria-label="Cerrar"><X size={18} /></button>
+        {allowClose && <button className="icon-button auth-close" onClick={onClose} aria-label="Cerrar"><X size={18} /></button>}
         <div className="auth-brand"><img className="auth-logo-image" src={logoUrl} alt="DYSTOPIA" /><span>DYSTOPIA</span></div>
         <span className="eyebrow">Control plane / session</span>
         <h2 id="login-title">Conectar datos en vivo</h2>

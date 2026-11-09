@@ -1,4 +1,22 @@
 const TOKEN_KEY = "dystopia.access_token";
+export const UNAUTHORIZED_EVENT = "dystopia:unauthorized";
+
+function tokenExpiry(token: string): number | null {
+  try {
+    const payload = token.split(".")[1];
+    if (!payload) return null;
+    const padded = payload.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(payload.length / 4) * 4, "=");
+    const data = JSON.parse(atob(padded)) as { exp?: unknown };
+    return typeof data.exp === "number" ? data.exp : null;
+  } catch {
+    return null;
+  }
+}
+
+function notifyUnauthorized() {
+  clearToken();
+  window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
+}
 
 export class ApiError extends Error {
   status: number;
@@ -12,7 +30,14 @@ export class ApiError extends Error {
 
 export function getToken(): string | null {
   try {
-    return window.localStorage.getItem(TOKEN_KEY);
+    const token = window.localStorage.getItem(TOKEN_KEY);
+    if (!token) return null;
+    const exp = tokenExpiry(token);
+    if (exp !== null && exp * 1000 <= Date.now()) {
+      window.localStorage.removeItem(TOKEN_KEY);
+      return null;
+    }
+    return token;
   } catch {
     return null;
   }
@@ -50,7 +75,7 @@ export async function apiPut<T>(path: string, body: unknown): Promise<T> {
     body: JSON.stringify(body),
   });
   if (response.status === 401) {
-    clearToken();
+    notifyUnauthorized();
     throw new ApiError("Sesión expirada; inicia sesión de nuevo", 401);
   }
   if (!response.ok) {
@@ -71,7 +96,7 @@ export async function apiGet<T>(path: string, signal?: AbortSignal): Promise<T> 
   if (token) headers.Authorization = `Bearer ${token}`;
   const response = await fetch(path, { headers, signal });
   if (response.status === 401) {
-    clearToken();
+    notifyUnauthorized();
     throw new ApiError("Sesión expirada", 401);
   }
   if (!response.ok) {
