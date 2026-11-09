@@ -1,7 +1,7 @@
 # Dionaea — Dystopia sensor artifact.
 #
-# Built from a pinned upstream commit (no `latest`). Upstream 0.12.5 vendors
-# libemu, so the build no longer depends on archived Debian packages.
+# Built from a pinned upstream commit (no `latest`). El master actual ya no
+# vendoriza libemu; se desactiva el módulo emu (no hace falta para FTP/SMB).
 #
 # Upstream: https://github.com/DinoTools/dionaea
 # Upstream license: GPL-2.0-or-later (see the upstream LICENSES directory).
@@ -45,6 +45,7 @@ RUN git clone https://github.com/DinoTools/dionaea.git /src \
 RUN mkdir -p /src/build \
     && cd /src/build \
     && cmake -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+          -DWITH_MODULE_EMU=OFF \
           -DCMAKE_INSTALL_PREFIX:PATH=/opt/dionaea \
           -DCMAKE_BUILD_TYPE=RelWithDebInfo .. \
     && make -j"$(nproc)" \
