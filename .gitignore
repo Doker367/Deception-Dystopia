@@ -5,7 +5,7 @@ config/.fernet_key
 .taste-skill/
 
 # Web frontend and browser tests
-node_modules
+node_modules/
 web/dist/
 .npm-cache/
 playwright-report/
@@ -75,6 +75,10 @@ config/baselines/
 
 # Secretos locales (no commitear)
 config/alertmanager.yml
+# GeoIP actualizada y configuración local de red: nunca versionar.
+deploy/local/geoip/
+deploy/vps/dnat.env
+deploy/server/wg0.conf
 
 # Logs
 *.log

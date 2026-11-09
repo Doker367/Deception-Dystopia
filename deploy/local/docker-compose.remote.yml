@@ -1,0 +1,49 @@
+# Variante Linux con exposición remota limitada a los ocho señuelos existentes.
+# El control NO se publica en WireGuard ni en la interfaz pública.
+# Requiere DYSTOPIA_TAILSCALE_IP en .env (IPv4 Tailscale real, nunca en Git).
+# Uso: docker compose --env-file .env -f docker-compose.yml \
+#        -f docker-compose.remote.yml up -d --wait
+services:
+  control:
+    restart: unless-stopped
+    volumes:
+      # Base GeoLite2-City.mmdb actualizada, provista solo en el host.
+      - ./geoip:/srv/local-config/geoip:ro
+    ports: !override
+      - "127.0.0.1:8082:8082/tcp"
+      - "${DYSTOPIA_TAILSCALE_IP:?Configura la IPv4 de Tailscale en .env}:8082:8082/tcp"
+
+  collector:
+    restart: unless-stopped
+
+  cowrie:
+    restart: unless-stopped
+    ports:
+      - "10.66.0.3:12222:2222/tcp"
+      - "10.66.0.3:12223:2223/tcp"
+
+  opencanary:
+    restart: unless-stopped
+    ports:
+      - "10.66.0.3:13022:22/tcp"
+      - "10.66.0.3:13080:80/tcp"
+
+  dionaea:
+    restart: unless-stopped
+    ports:
+      - "10.66.0.3:14021:21/tcp"
+
+  heralding:
+    restart: unless-stopped
+    ports:
+      - "10.66.0.3:15021:21/tcp"
+
+  redishoneypot:
+    restart: unless-stopped
+    ports:
+      - "10.66.0.3:16379:6379/tcp"
+
+  endlessh:
+    restart: unless-stopped
+    ports:
+      - "10.66.0.3:17222:2222/tcp"
