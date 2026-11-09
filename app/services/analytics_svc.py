@@ -8,6 +8,14 @@ supports both local event schemas used in the laboratory:
 - ``deception_events``: the control-plane store used by the native engine and
   the simulator.
 
+By default both schemas are read from the control-plane SQLite file
+(``DECEPTION_DB`` in ``app.core.settings``), i.e. the exact same file written
+by ``app.services.deception.store_svc``. The ``DYSTOPIA_ANALYTICS_DB``
+environment variable is an optional override for advanced deployments (for
+example, a read replica or a pre-built analytics snapshot). Leave it unset so
+the BFF always follows the live control-plane store and never ends up pointing
+at a second, divergent database.
+
 Elasticsearch is not part of this path. GeoIP is local (MaxMind/GeoLite2); no
 external lookup service is used.
 """
@@ -74,6 +82,13 @@ class AnalyticsConfig:
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> "AnalyticsConfig":
+        """Build the config from the environment.
+
+        ``DYSTOPIA_ANALYTICS_DB`` is only an optional override; when it is
+        unset (or empty) the path falls back to ``DECEPTION_DB`` from
+        ``app.core.settings``, the single source of truth shared with
+        ``store_svc``.
+        """
         values = os.environ if env is None else env
         raw_path = values.get("DYSTOPIA_ANALYTICS_DB", "").strip()
         raw_rows = values.get("DYSTOPIA_ANALYTICS_MAX_ROWS", "").strip()
@@ -89,6 +104,16 @@ class AnalyticsConfig:
         if not self.db_path.is_absolute():
             return self
         return self
+
+    @property
+    def resolved_db_path(self) -> Path:
+        """Absolute, normalised path of the SQLite store actually read."""
+        return self.db_path.expanduser().resolve()
+
+    @property
+    def db_exists(self) -> bool:
+        """Whether the resolved SQLite store exists on disk."""
+        return self.resolved_db_path.is_file()
 
 
 @dataclass
@@ -188,11 +213,11 @@ class AnalyticsService:
         return self._geo_cache[ip]
 
     def _connect(self) -> Optional[sqlite3.Connection]:
-        path = self.config.db_path
+        path = self.config.resolved_db_path
         if not path.is_file():
             return None
         try:
-            conn = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True, timeout=2)
+            conn = sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True, timeout=2)
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA query_only=ON")
             conn.execute("PRAGMA temp_store=MEMORY")
@@ -425,9 +450,18 @@ class AnalyticsService:
         }
 
     def health(self) -> dict[str, Any]:
+        db_path = self.config.resolved_db_path
+        db_exists = self.config.db_exists
         conn = self._connect()
         if conn is None:
-            return {"status": "empty", "store": "sqlite", "documents": 0, "schema": "none"}
+            return {
+                "status": "empty",
+                "store": "sqlite",
+                "documents": 0,
+                "schema": "none",
+                "db": str(db_path),
+                "db_exists": db_exists,
+            }
         try:
             schema = self._schema(conn)
             table = "events" if schema == "runtime" else "deception_events" if schema == "control" else None
@@ -437,6 +471,8 @@ class AnalyticsService:
                 "store": "sqlite",
                 "schema": schema,
                 "documents": documents,
+                "db": str(db_path),
+                "db_exists": db_exists,
                 "geoip": geoip_svc.available(),
             }
         finally:
