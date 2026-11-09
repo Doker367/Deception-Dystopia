@@ -504,6 +504,8 @@ class AnalyticsService:
                     "source": row.source,
                     "country": row.country,
                     "countryCode": row.countryCode,
+                    "region": row.region,
+                    "regionCode": row.regionCode,
                     "kind": row.kind,
                     "proto": row.proto,
                     "port": row.port,

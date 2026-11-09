@@ -159,9 +159,9 @@ export function MapPage({ search, origins, mode, onRefresh, onOpenEvents }: MapP
           </select>
         </label>
         {subdivisionOptions.length > 0 && (
-          <label className="filter-select">
+          <label className="filter-select" htmlFor="map-subdivision">
             <span>Estado / región</span>
-            <select value={subdivision} onChange={(event) => { setSubdivision(event.target.value); setSelectedId(null); }}>
+            <select id="map-subdivision" value={subdivision} onChange={(event) => { setSubdivision(event.target.value); setSelectedId(null); }}>
               <option value="all">Todos</option>
               {subdivisionOptions.map((item) => <option key={item} value={item}>{item}</option>)}
             </select>
