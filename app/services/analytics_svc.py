@@ -563,6 +563,7 @@ class AnalyticsService:
                     "action": row.action,
                     "severity": row.severity,
                     "message": row.message,
+                    "detail": row.detail,
                 }
                 for row in page
             ],

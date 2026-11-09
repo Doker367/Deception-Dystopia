@@ -45,6 +45,7 @@ export interface EventRow {
   action: string;
   severity: Severity;
   message: string;
+  detail?: Record<string, unknown>;
 }
 
 export interface Honeypot {

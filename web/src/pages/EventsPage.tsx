@@ -274,6 +274,7 @@ export function EventsPage({ search, range, events, total, mode }: EventsPagePro
               <div><span>País</span><strong>{selected.country}</strong></div>
               <div><span>Dispositivo</span><strong className="mono">{selected.device}</strong></div>
               <div><span>Destino</span><strong className="mono">{selected.dst_ip || "—"}:{selected.dst_port ?? "—"}</strong></div>
+              <div><span>MITRE</span><strong className="mono">{String(selected.detail?.mitre ?? "—")}</strong></div>
               <div><span>Timestamp</span><strong>{formatDateTime(selected.timestamp)}</strong></div>
             </div>
             <div className="drawer-message">
