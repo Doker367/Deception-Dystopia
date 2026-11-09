@@ -1,0 +1,14 @@
+[Unit]
+Description=Route only WireGuard honeypot replies via table 100
+Requires=wg-quick@wg0.service
+After=wg-quick@wg0.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStartPre=/usr/local/sbin/dystopia-wg-return.sh check
+ExecStart=/usr/local/sbin/dystopia-wg-return.sh start
+ExecStop=/usr/local/sbin/dystopia-wg-return.sh stop
+
+[Install]
+WantedBy=multi-user.target

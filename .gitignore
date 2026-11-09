@@ -4,9 +4,12 @@ config/.fernet_key
 # Herramientas locales de diseño (no forman parte del producto)
 .taste-skill/
 
-# Web frontend
+# Web frontend and browser tests
 node_modules/
 web/dist/
+.npm-cache/
+playwright-report/
+test-results/
 
 # Python
 __pycache__/
@@ -72,6 +75,10 @@ config/baselines/
 
 # Secretos locales (no commitear)
 config/alertmanager.yml
+# GeoIP actualizada y configuración local de red: nunca versionar.
+deploy/local/geoip/
+deploy/vps/dnat.env
+deploy/server/wg0.conf
 
 # Logs
 *.log
