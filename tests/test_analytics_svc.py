@@ -121,7 +121,7 @@ def test_origins_split_by_us_state(tmp_path, monkeypatch):
             ("2026-11-05T12:01:00+00:00", "srv-files-01", "198.51.100.20", 44444,
              "ssh", "connect", None, None, '{"engine":"cowrie"}'),
         )
-    states = {"203.0.113.7": ("California", "CA", 34.05, -118.24),
+    states = {"203.0.113.7": ("California", "CA", 34.05, -118.0),
               "198.51.100.20": ("Texas", "TX", 30.27, -97.74)}
 
     def lookup(ip):
@@ -132,9 +132,20 @@ def test_origins_split_by_us_state(tmp_path, monkeypatch):
     monkeypatch.setattr(geoip_svc, "lookup", lookup)
     service = analytics_svc.AnalyticsService(analytics_svc.AnalyticsConfig(db_path=path))
     origins = service.origins("2026-11-05T11:00:00+00:00", "2026-11-05T13:00:00+00:00")["origins"]
-    assert {origin["regionCode"] for origin in origins} == {"CA", "TX"}
-    assert {origin["region"] for origin in origins} == {"California", "Texas"}
+    assert len(origins) == 2
+    by_state = {origin["regionCode"]: origin for origin in origins}
+    assert set(by_state) == {"CA", "TX"}
     assert all(origin["countryCode"] == "US" for origin in origins)
+    assert by_state["CA"]["region"] == "California"
+    assert by_state["CA"]["ip"] == "203.0.113.7"
+    assert by_state["CA"]["events"] == 2
+    assert by_state["CA"]["uniqueSources"] == 1
+    assert by_state["CA"]["lng"] == -118.0  # regresión: no descartar longitudes negativas
+    assert by_state["TX"]["region"] == "Texas"
+    assert by_state["TX"]["ip"] == "198.51.100.20"
+    assert by_state["TX"]["events"] == 1
+    assert by_state["TX"]["uniqueSources"] == 1
+    assert by_state["TX"]["lng"] == -97.74
 
 
 def test_origins_split_by_mexican_state(tmp_path, monkeypatch):

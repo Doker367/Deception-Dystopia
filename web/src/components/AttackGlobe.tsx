@@ -263,6 +263,8 @@ export function AttackGlobe({
     ...countries.filter((feature) => !availableRegions.has(String(feature.properties?.ISO_A2 ?? ""))),
     ...Array.from(availableRegions.values()).flat(),
   ], [countries, availableRegions]);
+  const activeRegions = new Set(points.filter((origin) => origin.regionCode)
+    .map((origin) => `${origin.countryCode}|${origin.regionCode}`)).size;
   const areaTotals = useMemo<AreaTotals>(() => {
     const byCountry = new Map<string, AreaTotal>();
     const byRegion = new Map<string, AreaTotal>();
@@ -337,7 +339,8 @@ export function AttackGlobe({
 
   return (
     <div className={`globe-shell ${minimal ? "globe-minimal" : ""}`} ref={containerRef} style={{ height }}>
-      <div className="globe-canvas">
+      <div className="globe-canvas" role="img"
+        aria-label={`Globo de ataques: ${points.length} ${points.length === 1 ? "origen" : "orígenes"} y ${activeRegions} ${activeRegions === 1 ? "región activa" : "regiones activas"}.`}>
         <Globe
           ref={globeRef}
           width={size.width}
