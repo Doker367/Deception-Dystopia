@@ -41,6 +41,30 @@ export async function login(username: string, password: string): Promise<string>
   return payload.access_token;
 }
 
+export async function apiPut<T>(path: string, body: unknown): Promise<T> {
+  const token = getToken();
+  if (!token) throw new ApiError("Inicia sesión para guardar cambios", 401);
+  const response = await fetch(path, {
+    method: "PUT",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (response.status === 401) {
+    clearToken();
+    throw new ApiError("Sesión expirada; inicia sesión de nuevo", 401);
+  }
+  if (!response.ok) {
+    let detail = response.status === 409 ? "Cambios en conflicto: recarga la ficha antes de guardar" :
+      response.status === 403 ? "Tu rol no permite editar esta información" : "No se pudieron guardar los cambios";
+    try {
+      const payload = (await response.json()) as { detail?: string };
+      if (typeof payload.detail === "string" && response.status !== 422) detail = payload.detail;
+    } catch { /* Keep actionable message. */ }
+    throw new ApiError(detail, response.status);
+  }
+  return (await response.json()) as T;
+}
+
 export async function apiGet<T>(path: string, signal?: AbortSignal): Promise<T> {
   const token = getToken();
   const headers: Record<string, string> = { Accept: "application/json" };

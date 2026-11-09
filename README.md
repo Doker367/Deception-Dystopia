@@ -90,6 +90,85 @@ Planos:
 - **Ingesta/proceso:** recepción, normalización, deduplicación y persistencia.
 - **Analítica:** Dystopia Web y BFF sobre SQLite; no sustituye la topología.
 
+### Fichas de origen y configuración de honeypots
+
+En **Honeypots**, cada IP observada abre una ficha con los eventos, acciones,
+protocolos, sensores, dispositivos y detalles capturados disponibles durante los
+últimos 90 días. También se puede consultar una IP específica aunque no aparezca
+en la muestra inicial de 100 eventos. La consulta está acotada por
+`DYSTOPIA_ANALYTICS_MAX_ROWS` (20 000 por defecto, por IP); no se debe interpretar
+como un historial sin límite. Una IP observada no prueba la identidad humana de
+un atacante. Las notas, etiquetas, alias y clasificación son anotaciones
+separadas: **nunca modifican los eventos originales**.
+
+La ficha permite descargar la evidencia normalizada en CSV o JSON con
+`GET /api/investigations/attackers/{ip}/export?format=csv|json&limit=5000`.
+Requiere una sesión humana con rol `viewer` o superior (no API keys); el límite
+válido es de 1 a 10 000 y la exportación nunca excede
+`DYSTOPIA_ANALYTICS_MAX_ROWS`. Usa la misma ventana de 90 días y muestra acotada
+por IP que la ficha: `total` cuenta solo las filas consultadas, `exported` las
+incluidas y `truncated` indica si el límite de exportación dejó filas fuera de
+esa muestra. **No es un historial exhaustivo.** No exporta notas, alias,
+etiquetas ni clasificación del analista: son anotaciones privadas separadas.
+La descarga no escribe en el almacén original ni crea `investigations.db`.
+La ficha pagina la evidencia de `deception_events` por `(src_ip, ts DESC, id DESC)`
+con `offset` (0–10 000) y `limit` (1–100); los empates de tiempo se
+ordenan por ID. `summary=false` en páginas adicionales omite los agregados
+(que la interfaz reutiliza de la primera página) y evita volver a leer toda
+la muestra. El GET predeterminado mantiene la respuesta completa. `total`
+sigue limitado a las 20 000 filas recientes por IP
+(o al valor configurado), no representa un histórico exhaustivo. Si llegan
+nuevos eventos entre peticiones, el desplazamiento puede cambiar; no es una
+instantánea transaccional entre páginas.
+
+El **timeline** de analítica agrega eventos dentro de la ventana seleccionada
+(hasta 90 días) con un máximo de `DYSTOPIA_ANALYTICS_MAX_ROWS` filas por
+consulta. La **búsqueda global** de la barra superior filtra los datos ya
+cargados en cada vista; en vivo, los eventos precargados son como máximo 100.
+Para buscar en la muestra acotada del almacén, la API
+`GET /api/analytics/events?q=texto&limit=25&offset=0` filtra hasta el mismo
+máximo de filas (no busca en todo el histórico). Para investigar una IP fuera
+de la muestra global, ábrela directamente desde Honeypots: su autocompletado
+usa `GET /api/investigations/attackers?query=203.0.113.&limit=20`, una
+búsqueda por prefijo de IP acotada por el mismo límite de filas.
+
+Un usuario autenticado con rol `viewer` puede consultar las fichas y los borradores;
+`operator` o `admin` pueden guardar anotaciones y solo `admin` puede guardar
+borradores de sensores. Se usa control optimista de revisiones (HTTP 409 si otro
+operador guardó antes). Los borradores editables incluyen nombre visible,
+descripción, memoria, CPU y límite de procesos; el inventario estático y el
+runtime permanecen intactos. La ruta de aplicación devuelve HTTP 409 de forma
+intencional: **no existe todavía verificador independiente del aislamiento ni
+un ciclo de vida autorizado para aplicar cambios a contenedores**.
+
+Las anotaciones y borradores se guardan en `investigations.db` dentro de
+`DYSTOPIA_CONTROL_STATE`. Ese directorio debe estar provisionado previamente,
+con propiedad del servicio y permisos privados (0700); el servicio no crea el
+directorio por sí mismo. Los GET no crean bases de datos. Para usar la pantalla
+con evidencia real, se necesita iniciar sesión y tener el colector conectado al
+almacén SQLite; sin sesión la pantalla indica explícitamente que es una demo.
+
+### Trazabilidad y plan de cambios
+
+Cada guardado de anotaciones o borradores añade, en la misma transacción, una
+fila a `audit` en `investigations.db` con actor, revisión, estado anterior y
+nuevo. `AUDIT_MAX_ROWS` conserva por defecto las **10 000 filas más recientes**
+de auditoría y poda solo las más antiguas al guardar. La retención es por
+**número de filas, no por tiempo**; nunca poda `profiles`, `sensor_drafts` ni
+los eventos capturados. El almacén privado tiene un presupuesto de **64 MiB**
+para que la auditoría acotada por filas no agote el archivo antes de podar.
+`GET /api/investigations/attackers/{ip}/history` y
+`GET /api/investigations/honeypots/{sensor}/history` devuelven el historial
+(diferencias por campo y quién las hizo), visible para `viewer`. El historial no
+se puede editar ni borrar desde la API.
+
+`GET /api/investigations/honeypots/{sensor}/plan` compara el borrador con el
+inventario estático `deploy/honeypots/inventory.yaml` y devuelve el diff por
+campo, un `plan_sha256` determinista y los motivos de bloqueo. El plan es
+descriptivo: **no autoriza ni ejecuta nada**. `POST .../apply` sigue respondiendo
+`409` e incluye el prefijo del hash del plan para que el operador sepa qué
+borrador intentó aplicarse.
+
 ## Requisitos
 
 | Tipo | RAM | Disco | Notas |

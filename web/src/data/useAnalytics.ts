@@ -114,7 +114,7 @@ interface ApiAnalyticsHealth {
   };
 }
 
-const DEMO_OVERVIEW: AnalyticsOverview = {
+export const DEMO_OVERVIEW: AnalyticsOverview = {
   totalEvents: 12_847,
   uniqueSources: 1_204,
   alerts: 17,

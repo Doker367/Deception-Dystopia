@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { KeyRound, LockKeyhole, ShieldCheck, X } from "lucide-react";
-import { BrandMark } from "./Brand";
 import { ApiError, login } from "../lib/api";
+import logoUrl from "../../../dystopia-logo-icon.png";
 
 interface LoginDialogProps {
   open: boolean;
@@ -36,7 +36,7 @@ export function LoginDialog({ open, onClose, onSuccess }: LoginDialogProps) {
     <div className="auth-backdrop" onMouseDown={onClose}>
       <div className="auth-dialog" role="dialog" aria-modal="true" aria-labelledby="login-title" onMouseDown={(event) => event.stopPropagation()}>
         <button className="icon-button auth-close" onClick={onClose} aria-label="Cerrar"><X size={18} /></button>
-        <div className="auth-brand"><BrandMark className="auth-mark" /><span>DYSTOPIA</span></div>
+        <div className="auth-brand"><img className="auth-logo-image" src={logoUrl} alt="DYSTOPIA" /><span>DYSTOPIA</span></div>
         <span className="eyebrow">Control plane / session</span>
         <h2 id="login-title">Conectar datos en vivo</h2>
         <p>Inicia sesión con una cuenta local de Dystopia para consultar el almacén SQLite local a través del BFF analítico. La ruta de la base nunca se envía al navegador.</p>

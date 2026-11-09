@@ -332,6 +332,10 @@ class AnalyticsService:
 
     def _control_record(self, row: sqlite3.Row) -> Optional[EventRecord]:
         detail = _json_object(row["detail"])
+        if row["username"] is not None:
+            detail["username"] = str(row["username"])
+        if row["success"] is not None:
+            detail["success"] = bool(row["success"])
         source = str(row["src_ip"] or "")
         kind = str(row["event_type"] or "other")
         geo = self._geo(source) or {}
@@ -486,6 +490,214 @@ class AnalyticsService:
                 }
                 for row in page
             ],
+        }
+
+    def _source_rows(self, source: str, start: datetime, end: datetime) -> list[EventRecord]:
+        """Query the indexed source directly rather than losing older IPs to the global cap."""
+        conn = self._connect()
+        if conn is None:
+            return []
+        try:
+            schema = self._schema(conn)
+            if schema == "runtime":
+                raw = conn.execute(
+                    "SELECT sensor,event_id,device,observed_at,kind,source,payload FROM events "
+                    "WHERE source=? AND observed_at>=? AND observed_at<=? ORDER BY observed_at DESC LIMIT ?",
+                    (source, _iso(start), _iso(end), self.config.max_rows),
+                ).fetchall()
+                return [record for row in raw if (record := self._runtime_record(row)) is not None and record.source == source]
+            if schema == "control":
+                raw = conn.execute(
+                    "SELECT id,ts,device_id,src_ip,src_port,proto,event_type,username,success,detail "
+                    "FROM deception_events WHERE src_ip=? AND ts>=? AND ts<=? ORDER BY ts DESC, id DESC LIMIT ?",
+                    (source, _iso(start), _iso(end), self.config.max_rows),
+                ).fetchall()
+                return [record for row in raw if (record := self._control_record(row)) is not None]
+            return []
+        except sqlite3.Error as exc:
+            raise AnalyticsUnavailable("source event query failed") from exc
+        finally:
+            conn.close()
+
+    def attacker_timeline(self, source: str, interval: str = "1h") -> dict[str, Any]:
+        """Group at most max_rows source timestamps into nonempty UTC buckets."""
+        end = datetime.now(timezone.utc)
+        start = end - MAX_WINDOW
+        conn = self._connect()
+        stamps: list[str] = []
+        if conn is not None:
+            try:
+                schema = self._schema(conn)
+                if schema in ("runtime", "control"):
+                    table, column, stamp = (("events", "source", "observed_at") if schema == "runtime"
+                                            else ("deception_events", "src_ip", "ts"))
+                    stamps = [row[0] for row in conn.execute(
+                        f"SELECT {stamp} FROM {table} WHERE {column}=? AND {stamp}>=? AND {stamp}<=? "
+                        f"ORDER BY {stamp} DESC LIMIT ?",
+                        (source, _iso(start), _iso(end), self.config.max_rows),
+                    )]
+            except sqlite3.Error as exc:
+                raise AnalyticsUnavailable("source timeline query failed") from exc
+            finally:
+                conn.close()
+        times = []
+        for stamp in stamps:
+            try:
+                times.append(_parse_time(stamp, end))
+            except (ValueError, TypeError, AttributeError):
+                continue
+        def grouped(step: int) -> Counter[int]:
+            return Counter(int(time.timestamp()) // step * step for time in times)
+
+        counts = grouped(INTERVALS[interval])
+        if len(counts) > 100:
+            interval = "1d"
+            counts = grouped(INTERVALS[interval])
+        return {"source": source, "interval": interval,
+                "buckets": [{"at": _iso(datetime.fromtimestamp(at, timezone.utc)), "count": count}
+                            for at, count in sorted(counts.items())],
+                "total": len(stamps), "scanned_limit": self.config.max_rows}
+
+    def search_attackers(self, query: str, limit: int = 20) -> dict[str, Any]:
+        """Sample at most max_rows indexed prefix matches before sorting activity."""
+        end = datetime.now(timezone.utc)
+        start = end - MAX_WINDOW
+        conn = self._connect()
+        if conn is None:
+            return {"items": [], "scanned_limit": self.config.max_rows}
+        try:
+            schema = self._schema(conn)
+            if schema not in ("runtime", "control"):
+                return {"items": [], "scanned_limit": self.config.max_rows}
+            table, column, stamp = (("events", "source", "observed_at") if schema == "runtime"
+                                    else ("deception_events", "src_ip", "ts"))
+            rows = conn.execute(
+                f"SELECT origin, COUNT(*) AS events, MAX(seen) AS last_seen FROM ("
+                f"SELECT {column} AS origin, {stamp} AS seen FROM {table} "
+                f"WHERE {column}>=? AND {column}<? AND {stamp}>=? AND {stamp}<=? "
+                "LIMIT ?) "
+                "GROUP BY origin ORDER BY last_seen DESC, origin LIMIT ?",
+                (query, query + ";", _iso(start), _iso(end), self.config.max_rows, limit),
+            ).fetchall()
+            return {"items": [{"source": row[0], "events": row[1], "last_seen": row[2]}
+                              for row in rows], "scanned_limit": self.config.max_rows}
+        except sqlite3.Error as exc:
+            raise AnalyticsUnavailable("source search query failed") from exc
+        finally:
+            conn.close()
+
+    @staticmethod
+    def _evidence_item(row: EventRecord) -> dict[str, Any]:
+        return {"id": row.id, "timestamp": row.timestamp, "sensor": row.sensor,
+                "device": row.device, "kind": row.kind, "action": row.action,
+                "proto": row.proto, "port": row.port, "severity": row.severity,
+                "message": row.message, "detail": row.detail}
+
+    def export_attacker(self, source: str, limit: int = 5000) -> dict[str, Any]:
+        """Export the same bounded, normalized 90-day sample as the IP profile."""
+        end = datetime.now(timezone.utc)
+        start = end - MAX_WINDOW
+        rows = self._source_rows(source, start, end)
+        items = [self._evidence_item(row) for row in rows[:min(limit, self.config.max_rows)]]
+        return {"source": source, "exported_at": _iso(end),
+                "window": {"from": _iso(start), "to": _iso(end)},
+                "total": len(rows), "exported": len(items),
+                "truncated": len(items) < len(rows), "items": items}
+
+    def _control_attacker(self, conn: sqlite3.Connection, source: str, start: datetime,
+                          end: datetime, offset: int, limit: int,
+                          include_summary: bool = True) -> dict[str, Any]:
+        """Page indexed evidence in SQL; aggregate only the bounded IP sample."""
+        window = (source, _iso(start), _iso(end))
+        cap = self.config.max_rows
+        total = conn.execute(
+            "SELECT COUNT(*) FROM (SELECT 1 FROM deception_events "
+            "WHERE src_ip=? AND ts>=? AND ts<=? ORDER BY ts DESC, id DESC LIMIT ?)",
+            (*window, cap),
+        ).fetchone()[0]
+        result: dict[str, Any] = {"source": source, "total": total,
+                                  "window": {"from": _iso(start), "to": _iso(end)},
+                                  "scanned_limit": cap}
+        if not total:
+            return {**result, "items": []}
+        # id breaks timestamp ties, preventing duplicates between adjacent pages.
+        page_size = min(max(limit, 1), 100, max(0, cap - offset))
+        raw = conn.execute(
+            "SELECT id,ts,device_id,src_ip,src_port,proto,event_type,username,success,detail "
+            "FROM deception_events WHERE src_ip=? AND ts>=? AND ts<=? "
+            "ORDER BY ts DESC, id DESC LIMIT ? OFFSET ?",
+            (*window, page_size, max(0, offset)),
+        ).fetchall() if page_size else []
+        page = [record for row in raw if (record := self._control_record(row)) is not None]
+        if not include_summary:
+            return {**result, "items": [self._evidence_item(row) for row in page]}
+        # Grouping runs inside SQLite; never transfer/normalize all 20k raw events
+        # again when the browser asks for another 50 items.
+        groups = conn.execute(
+            """WITH sample AS MATERIALIZED (
+                   SELECT device_id,proto,event_type,detail FROM deception_events
+                   WHERE src_ip=? AND ts>=? AND ts<=?
+                   ORDER BY ts DESC, id DESC LIMIT ?
+               ), labels AS (
+                   SELECT 'protocols' AS category, COALESCE(proto, '') AS value FROM sample
+                   UNION ALL SELECT 'devices', COALESCE(device_id, '') FROM sample
+                   UNION ALL SELECT 'kinds', COALESCE(NULLIF(event_type, ''), 'other') FROM sample
+                   UNION ALL SELECT 'sensors', COALESCE(
+                       NULLIF(CAST(json_extract(CASE WHEN json_valid(detail) THEN detail ELSE '{}' END, '$.engine') AS TEXT), ''),
+                       NULLIF(CAST(json_extract(CASE WHEN json_valid(detail) THEN detail ELSE '{}' END, '$.sensor') AS TEXT), ''),
+                       device_id, '') FROM sample
+               ) SELECT category,value,COUNT(*) FROM labels
+                 WHERE value<>'' GROUP BY category,value""",
+            (*window, cap),
+        ).fetchall()
+        counts: dict[str, dict[str, int]] = {key: {} for key in ("protocols", "sensors", "kinds", "devices")}
+        for category, value, count in groups:
+            counts[category][value] = count
+        last = conn.execute(
+            "SELECT ts FROM deception_events WHERE src_ip=? AND ts>=? AND ts<=? "
+            "ORDER BY ts DESC, id DESC LIMIT 1 OFFSET ?", (*window, total - 1),
+        ).fetchone()
+        first = conn.execute(
+            "SELECT ts FROM deception_events WHERE src_ip=? AND ts>=? AND ts<=? "
+            "ORDER BY ts DESC, id DESC LIMIT 1", window,
+        ).fetchone()
+        geo = self._geo(source) or {}
+        return {**result, "first_seen": str(last[0] or ""), "last_seen": str(first[0] or ""),
+                "country": str(geo.get("country") or ""), "countryCode": str(geo.get("country_code") or ""),
+                "city": str(geo.get("city") or ""), "lat": _num(geo.get("lat")), "lng": _num(geo.get("lon")),
+                **counts, "items": [self._evidence_item(row) for row in page]}
+
+    def attacker(self, source: str, offset: int = 0, limit: int = 50,
+                 include_summary: bool = True) -> dict[str, Any]:
+        """Bounded 90-day profile from normalized evidence, not inferred identity."""
+        end = datetime.now(timezone.utc)
+        start = end - MAX_WINDOW
+        conn = self._connect()
+        if conn is not None:
+            try:
+                if self._schema(conn) == "control":
+                    return self._control_attacker(conn, source, start, end, offset, limit, include_summary)
+            except sqlite3.Error as exc:
+                raise AnalyticsUnavailable("source event query failed") from exc
+            finally:
+                conn.close()
+        rows = self._source_rows(source, start, end)
+        if not rows:
+            return {"source": source, "total": 0, "items": [], "window": {"from": _iso(start), "to": _iso(end)},
+                    "scanned_limit": self.config.max_rows}
+        protocols = Counter(row.proto for row in rows if row.proto)
+        sensors = Counter(row.sensor for row in rows if row.sensor)
+        kinds = Counter(row.kind for row in rows if row.kind)
+        devices = Counter(row.device for row in rows if row.device)
+        geo = next((row for row in rows if row.country or row.city), rows[0])
+        return {
+            "source": source, "total": len(rows), "first_seen": rows[-1].timestamp,
+            "last_seen": rows[0].timestamp, "country": geo.country, "countryCode": geo.countryCode,
+            "city": geo.city, "lat": geo.lat, "lng": geo.lng,
+            "protocols": dict(protocols), "sensors": dict(sensors), "kinds": dict(kinds),
+            "devices": dict(devices), "window": {"from": _iso(start), "to": _iso(end)},
+            "scanned_limit": self.config.max_rows,
+            "items": [self._evidence_item(row) for row in rows[offset:offset + limit]],
         }
 
     def health(self) -> dict[str, Any]:

@@ -87,7 +87,7 @@ export function App() {
           {page === "overview" && <OverviewPage search={search} range={range} data={analytics} onNavigate={navigate} />}
           {page === "map" && <MapPage search={search} origins={analytics.origins} mode={analytics.mode} onRefresh={analytics.refresh} onOpenEvents={(origin) => openEventsFor(origin.ip)} />}
           {page === "events" && <EventsPage search={search} range={range} events={analytics.events} total={analytics.totalEvents} mode={analytics.mode} />}
-          {page === "honeypots" && <HoneypotsPage onRefresh={analytics.refresh} onOpenEvents={openEventsFor} />}
+          {page === "honeypots" && <HoneypotsPage onRefresh={analytics.refresh} onOpenEvents={openEventsFor} events={analytics.events} mode={analytics.mode} />}
           {page === "devices" && <DevicesPage />}
           {page === "ingest" && <IngestPage />}
           {page === "admin" && <AdminPage />}

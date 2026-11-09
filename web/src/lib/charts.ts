@@ -3,6 +3,47 @@ import type { EChartsOption } from "echarts";
 const AXIS = { color: "#71849b", fontSize: 10, fontFamily: "JetBrains Mono, monospace" };
 const GRID = { color: "rgba(108, 150, 177, 0.12)", type: "dashed" as const };
 
+export function attackerTimelineOption(
+  buckets: Array<{ at: string; count: number }>,
+  interval: "1h" | "1d",
+): EChartsOption {
+  // Etiquetas cortas: la hora sola en 1h y el día en 1d. El tooltip conserva
+  // la fecha completa para no perder contexto.
+  const label = (stamp: number) => new Intl.DateTimeFormat("es-MX", {
+    timeZone: "UTC",
+    ...(interval === "1h"
+      ? { hour: "2-digit", minute: "2-digit", hourCycle: "h23" as const }
+      : { day: "2-digit", month: "2-digit" }),
+  }).format(stamp);
+  const tooltipLabel = (stamp: number) => new Intl.DateTimeFormat("es-MX", {
+    timeZone: "UTC", day: "2-digit", month: "2-digit",
+    hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+  }).format(stamp);
+  return {
+    backgroundColor: "transparent",
+    animationDuration: 300,
+    grid: { top: 18, right: 16, bottom: 38, left: 36 },
+    tooltip: {
+      trigger: "axis", backgroundColor: "#0b1520", borderColor: "rgba(93, 170, 196, 0.3)",
+      textStyle: { color: "#dbe7f3", fontSize: 11 },
+      formatter: (params: unknown) => {
+        const point = (params as Array<{ dataIndex: number; value: number }>)[0];
+        const bucket = point ? buckets[point.dataIndex] : undefined;
+        return bucket ? `${tooltipLabel(Date.parse(bucket.at))} UTC<br/>${bucket.count} eventos` : "";
+      },
+    },
+    // Eje de categorías: las etiquetas corresponden exactamente a los buckets y
+    // no se duplican ni se extienden a días vacíos como ocurre con el eje time.
+    xAxis: { type: "category", data: buckets.map(({ at }) => label(Date.parse(at))),
+      axisLabel: { ...AXIS, hideOverlap: true },
+      axisLine: { lineStyle: GRID }, axisTick: { show: false }, splitLine: { show: false } },
+    yAxis: { type: "value", minInterval: 1, axisLabel: AXIS, splitLine: { lineStyle: GRID } },
+    series: [{ type: "bar", barMaxWidth: 15, barMinWidth: 3,
+      itemStyle: { color: "#42c6d5", borderRadius: [3, 3, 0, 0] },
+      data: buckets.map(({ count }) => count) }],
+  };
+}
+
 export function horizontalBarOption(
   labels: string[],
   values: number[],

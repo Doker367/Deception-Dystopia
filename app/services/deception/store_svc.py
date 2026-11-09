@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS deception_events (
 CREATE INDEX IF NOT EXISTS idx_deception_events_ts ON deception_events(ts);
 CREATE INDEX IF NOT EXISTS idx_deception_events_dev ON deception_events(device_id);
 CREATE INDEX IF NOT EXISTS idx_deception_events_src ON deception_events(src_ip);
+CREATE INDEX IF NOT EXISTS idx_deception_events_src_ts_id ON deception_events(src_ip, ts DESC, id DESC);
 CREATE TABLE IF NOT EXISTS collector_offsets (
     engine TEXT PRIMARY KEY,
     path TEXT NOT NULL,
