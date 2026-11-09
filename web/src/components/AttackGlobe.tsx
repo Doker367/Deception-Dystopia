@@ -203,6 +203,8 @@ export function AttackGlobe({
   }, []);
 
   const polygons = useMemo(() => [...countries, ...states], [countries, states]);
+  const activeStates = new Set(points.filter((origin) => origin.countryCode === "US" && origin.regionCode)
+    .map((origin) => origin.regionCode)).size;
   const areaTotals = useMemo(() => {
     const byCountry = new Map<string, { events: number; severity: Severity }>();
     const byState = new Map<string, { events: number; severity: Severity }>();
@@ -272,7 +274,8 @@ export function AttackGlobe({
 
   return (
     <div className={`globe-shell ${minimal ? "globe-minimal" : ""}`} ref={containerRef} style={{ height }}>
-      <div className="globe-canvas">
+      <div className="globe-canvas" role="img"
+        aria-label={`Globo de ataques: ${points.length} ${points.length === 1 ? "origen" : "orígenes"} y ${activeStates} ${activeStates === 1 ? "estado activo" : "estados activos"} de Estados Unidos.`}>
         <Globe
           ref={globeRef}
           width={size.width}
