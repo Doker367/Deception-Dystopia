@@ -245,6 +245,20 @@ def _endlessh_type(raw: dict) -> str:
     return "other"
 
 
+# HTTP request line sent to a non-HTTP listener (nmap, curl, bots). Cowrie may
+# log this as ``login.success`` after accepting an empty Telnet credential; it
+# is a protocol probe, not a credential compromise.
+_HTTP_PROBE = re.compile(r"^(?:GET|POST|HEAD|PUT|OPTIONS|DELETE|TRACE|CONNECT|PATCH)\s+\S+", re.IGNORECASE)
+
+_MITRE = {
+    "login_attempt": "T1110",
+    "login_success": "T1110",
+    "command": "T1059",
+    "file_download": "T1105",
+    "port_scan": "T1046",
+    "http_request": "T1190",
+}
+
 _SOCKET = re.compile(
     r"(?:host=)?(?P<ip>(?:\d{1,3}(?:\.\d{1,3}){3})|(?:\[[0-9a-fA-F:]+\])|"
     r"(?:[0-9a-fA-F]{0,4}:){2,}[0-9a-fA-F:.]*)"
@@ -344,6 +358,34 @@ def _src_port(raw: dict):
     return None
 
 
+def _dst_ip(raw: dict):
+    """Destination address as reported by the sensor, canonical or None."""
+    value = _text(raw, "dst_ip", "dst_host", "destination_ip", "destination_host")
+    connection = _first_mapping(raw.get("connection"))
+    value = value or _text(connection, "dst_ip", "dst_host", "destination_ip")
+    return canonical_ip(value)
+
+
+def _dst_port(raw: dict):
+    value = raw.get("dst_port") or raw.get("destination_port")
+    connection = _first_mapping(raw.get("connection"))
+    value = value or connection.get("dst_port") or connection.get("destination_port")
+    return _int(value)
+
+
+def _protocol_probe(raw: dict, etype: str) -> bool:
+    """True when credential-like events actually carry an HTTP request line."""
+    if etype not in ("login_attempt", "login_success"):
+        return False
+    candidates = [
+        _text(raw, "username", "user"),
+        raw.get("input"),
+        raw.get("command"),
+        raw.get("payload"),
+    ]
+    return any(isinstance(value, str) and _HTTP_PROBE.match(value.strip()) for value in candidates)
+
+
 def _detail(raw: dict, engine: str, etype: str) -> dict:
     """Bounded, redacted detail. Passwords and tokens never leave the sensor."""
     detail: dict = {}
@@ -377,6 +419,18 @@ def _detail(raw: dict, engine: str, etype: str) -> dict:
     message = _redact_message(_text(raw, "message", "msg"), raw)
     if message:
         detail["message"] = message
+    mitre = _MITRE.get(etype)
+    if mitre:
+        detail.setdefault("mitre", mitre)
+    # OpenCanary keeps the useful HTTP/credential fields inside ``logdata``.
+    logdata = raw.get("logdata")
+    if isinstance(logdata, dict):
+        for key, target in (("path", "path"), ("useragent", "useragent"),
+                            ("method", "method"), ("host", "host"),
+                            ("USERNAME", "username"), ("SESSION", "session")):
+            value = logdata.get(key)
+            if value not in (None, "") and target not in detail:
+                detail[target] = str(value)
     bounded = {}
     for key, value in detail.items():
         if value is None:
@@ -470,7 +524,12 @@ def normalize_raw(engine: str, device_id: str, raw, observed_at=None) -> dict | 
         return None
 
     src_ip = _src_ip(record)
-    etype = _resolve_type(record, engine)
+    original_type = _resolve_type(record, engine)
+    probe = _protocol_probe(record, original_type)
+    # A bare HTTP request line accepted by a Telnet listener is a protocol
+    # probe, not a successful credential login. Keep the captured bytes but
+    # correct the classification before it reaches the panel.
+    etype = "connect" if probe else original_type
     proto = resolve_protocol(record, engine)
     observed = observed_at or normalize_timestamp(
         record.get("timestamp") or record.get("utc_time") or record.get("local_time") or record.get("time")
@@ -487,7 +546,19 @@ def normalize_raw(engine: str, device_id: str, raw, observed_at=None) -> dict | 
     src_port = _src_port(record)
     if src_port is not None:
         event["src_port"] = src_port
+    dst_ip = _dst_ip(record)
+    if dst_ip:
+        event["dst_ip"] = dst_ip
+    dst_port = _dst_port(record)
+    if dst_port:
+        event["dst_port"] = dst_port
     detail = _detail(record, engine, etype)
+    if probe:
+        detail["classification"] = "protocol_probe"
+        detail["probe_protocol"] = "http"
+        detail["original_type"] = original_type
+        detail["mitre"] = "T1046"
+        detail["message"] = "Protocol probe: HTTP request on a non-HTTP listener"
     if detail:
         event["detail"] = detail
     # validate_event raises ValueError on any contract violation.

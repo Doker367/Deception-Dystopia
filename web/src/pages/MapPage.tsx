@@ -22,6 +22,21 @@ import { formatNumber } from "../lib/format";
 import { SeverityBadge } from "../components/SeverityBadge";
 import { useToast } from "../components/Toast";
 import { downloadJson } from "../lib/download";
+import { apiGet, getToken } from "../lib/api";
+
+interface Campaign {
+  campaign_id: string;
+  source: string;
+  events: number;
+  distinct_sensors: number;
+  distinct_ports: number;
+  sensors: string[];
+  ports: number[];
+  first_seen: string;
+  last_seen: string;
+  summary: string;
+  severity: "critical" | "high" | "medium" | "low" | "info";
+}
 
 interface MapPageProps {
   search: string;
@@ -53,6 +68,19 @@ export function MapPage({ search, origins, mode, onRefresh, onOpenEvents }: MapP
   const [protocol, setProtocol] = useState("all");
   const [region, setRegion] = useState("all");
   const [following, setFollowing] = useState(false);
+  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+
+  useEffect(() => {
+    if (mode !== "live" || !getToken()) {
+      setCampaigns([]);
+      return;
+    }
+    const controller = new AbortController();
+    apiGet<{ campaigns: Campaign[] }>("/api/analytics/campaigns", controller.signal)
+      .then((data) => { if (!controller.signal.aborted) setCampaigns(data.campaigns); })
+      .catch(() => { if (!controller.signal.aborted) setCampaigns([]); });
+    return () => controller.abort();
+  }, [mode, origins]);
 
   const countryOptions = useMemo(() => Array.from(new Set(origins.map((origin) => origin.country))).sort(), [origins]);
   const sensorOptions = useMemo(() => Array.from(new Set(origins.map((origin) => origin.sensor))).sort(), [origins]);
@@ -259,6 +287,26 @@ export function MapPage({ search, origins, mode, onRefresh, onOpenEvents }: MapP
                 </button>
               ))}
             </div>
+          </Panel>
+
+          <Panel
+            className="map-campaigns"
+            eyebrow="Correlación"
+            title="Campañas detectadas"
+            description="Misma IP contra varios señuelos o puertos en una ventana de 5 minutos."
+            actions={<span className="signal-pill"><ShieldAlert size={13} /> {campaigns.length}</span>}
+          >
+            {campaigns.length ? <div className="campaign-list">{campaigns.slice(0, 5).map((campaign) => (
+              <div className="campaign-row" key={campaign.campaign_id}>
+                <SeverityBadge severity={campaign.severity} />
+                <div className="campaign-copy">
+                  <strong className="mono">{campaign.source}</strong>
+                  <span>{campaign.summary}</span>
+                  <small className="muted">{campaign.sensors.join(" · ")}{campaign.ports.length ? ` · puertos ${campaign.ports.join(", ")}` : ""}</small>
+                </div>
+                <span className="campaign-stats mono">{formatNumber(campaign.events)} ev</span>
+              </div>
+            ))}</div> : <p className="muted">Sin campañas de escaneo en la ventana consultada.</p>}
           </Panel>
 
           <Panel

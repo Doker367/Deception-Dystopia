@@ -190,7 +190,7 @@ def test_runtime_schema_is_supported(tmp_path, geo):
     events = service.events(*window, limit=10)
     assert events["total"] == 1
     assert events["items"][0]["sensor"] == "cowrie"
-    assert events["items"][0]["severity"] == "critical"
+    assert events["items"][0]["severity"] == "medium"
     assert events["items"][0]["source"] == "203.0.113.7"
 
 
@@ -267,3 +267,48 @@ def test_control_schema_wins_when_both_tables_exist(tmp_path, geo):
     events = service.events(*window, limit=10)
     assert events["total"] == 2
     assert {e["source"] for e in events["items"]} == {"203.0.113.7"}
+
+
+def test_probe_login_is_corrected_on_read(tmp_path, geo):
+    path = tmp_path / "events.db"
+    _control_db(path)
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            "INSERT INTO deception_events(ts,device_id,src_ip,src_port,proto,event_type,username,success,detail) "
+            "VALUES(?,?,?,?,?,?,?,?,?)",
+            ("2026-11-05T12:02:00+00:00", "srv-files-01", "203.0.113.7", 55555,
+             "telnet", "login_success", "GET / HTTP/1.0", 1,
+             '{"engine":"cowrie","username":"GET / HTTP/1.0","message":"login attempt [GET / HTTP/1.0/] succeeded"}'),
+        )
+    service = analytics_svc.AnalyticsService(analytics_svc.AnalyticsConfig(db_path=path))
+    items = service.events("2026-11-05T11:00:00+00:00", "2026-11-05T13:00:00+00:00")["items"]
+    probe = next(item for item in items if item["timestamp"].startswith("2026-11-05T12:02"))
+    assert probe["kind"] == "connect"
+    assert probe["severity"] == "low"
+    profile = service.attacker("203.0.113.7", 0, 10)
+    detailed = next(item for item in profile["items"] if item["timestamp"].startswith("2026-11-05T12:02"))
+    assert detailed["detail"]["classification"] == "protocol_probe"
+    assert detailed["detail"]["mitre"] == "T1046"
+
+
+def test_campaigns_detect_multi_sensor_scan(tmp_path, geo):
+    path = tmp_path / "events.db"
+    _control_db(path)
+    with sqlite3.connect(path) as conn:
+        for minute, engine in ((1, "cowrie"), (2, "opencanary"), (3, "heralding")):
+            conn.execute(
+                "INSERT INTO deception_events(ts,device_id,src_ip,src_port,proto,event_type,username,success,detail) "
+                "VALUES(?,?,?,?,?,?,?,?,?)",
+                (f"2026-11-05T12:0{minute}:00+00:00", f"sensor-{engine}",
+                 "203.0.113.7", 40000 + minute, "tcp", "connect", None, 0,
+                 f'{{"engine":"{engine}"}}'),
+            )
+    service = analytics_svc.AnalyticsService(analytics_svc.AnalyticsConfig(db_path=path))
+    result = service.campaigns("2026-11-05T11:00:00+00:00", "2026-11-05T13:00:00+00:00")
+    assert len(result["campaigns"]) == 1
+    campaign = result["campaigns"][0]
+    assert campaign["source"] == "203.0.113.7"
+    assert campaign["kind"] == "port_scan"
+    assert campaign["severity"] == "high"
+    assert campaign["mitre"] == "T1046"
+    assert campaign["distinct_sensors"] == 3

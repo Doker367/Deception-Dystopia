@@ -25,9 +25,11 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import sqlite3
 from typing import Any, Mapping, Optional
 
@@ -75,11 +77,12 @@ def _collector_health(db_path: Path) -> dict[str, Any]:
         "interval": interval,
     }
 KIND_SEVERITY = {
-    "login_success": "critical",
-    "file_download": "critical",
+    # En un honeypot, un login aceptado no es compromiso real: es interacción.
+    "login_success": "medium",
+    "file_download": "high",
     "command": "high",
     "port_scan": "high",
-    "login_attempt": "medium",
+    "login_attempt": "low",
     "http_request": "medium",
     "other": "medium",
     "connect": "low",
@@ -96,6 +99,19 @@ KIND_ACTION = {
     "http_request": "Petición HTTP",
     "other": "Evento",
 }
+
+# MITRE ATT&CK mínimo por tipo de interacción observada.
+_MITRE = {
+    "login_attempt": "T1110",
+    "login_success": "T1110",
+    "command": "T1059",
+    "file_download": "T1105",
+    "port_scan": "T1046",
+    "http_request": "T1190",
+}
+
+# Una línea HTTP aceptada por un listener Telnet/SSH no es un login válido.
+_HTTP_PROBE = re.compile(r"^(?:GET|POST|HEAD|PUT|OPTIONS|DELETE|TRACE|CONNECT|PATCH)\s+\S+", re.IGNORECASE)
 
 
 class AnalyticsError(RuntimeError):
@@ -169,6 +185,8 @@ class EventRecord:
     kind: str
     proto: str
     port: Optional[int]
+    dst_ip: str
+    dst_port: Optional[int]
     action: str
     severity: str
     message: str
@@ -200,6 +218,30 @@ def _window(from_time: str | None, to_time: str | None) -> tuple[datetime, datet
 
 def _iso(value: datetime) -> str:
     return value.astimezone(timezone.utc).isoformat()
+
+
+def _has_column(conn: sqlite3.Connection, table: str, column: str) -> bool:
+    return any(row[1] == column for row in conn.execute(f"PRAGMA table_info({table})"))
+
+
+def _dst_select(conn: sqlite3.Connection) -> str:
+    """Select destination columns, or NULL aliases for pre-migration stores."""
+    if _has_column(conn, "deception_events", "dst_ip") and _has_column(conn, "deception_events", "dst_port"):
+        return "dst_ip, dst_port"
+    return "NULL AS dst_ip, NULL AS dst_port"
+
+
+def _classify(kind: str, detail: dict[str, Any]) -> str:
+    username = detail.get("username")
+    if kind == "login_success" and isinstance(username, str) and _HTTP_PROBE.match(username.strip()):
+        detail.setdefault("classification", "protocol_probe")
+        detail.setdefault("original_type", "login_success")
+        detail["mitre"] = "T1046"
+        detail["message"] = "Protocol probe: HTTP request on a non-HTTP listener"
+        return "connect"
+    if kind in _MITRE:
+        detail.setdefault("mitre", _MITRE[kind])
+    return kind
 
 
 def _severity(kind: str) -> str:
@@ -300,11 +342,12 @@ class AnalyticsService:
                 ).fetchall()
                 return [record for row in raw_rows if (record := self._runtime_record(row)) is not None]
             if schema == "control":
+                dst = _dst_select(conn)
                 raw_rows = conn.execute(
-                    """SELECT id, ts, device_id, src_ip, src_port, proto, event_type,
-                              username, success, detail
-                       FROM deception_events WHERE ts >= ? AND ts <= ?
-                       ORDER BY ts DESC LIMIT ?""",
+                    f"""SELECT id, ts, device_id, src_ip, src_port, {dst}, proto, event_type,
+                               username, success, detail
+                        FROM deception_events WHERE ts >= ? AND ts <= ?
+                        ORDER BY ts DESC LIMIT ?""",
                     (_iso(start), _iso(end), self.config.max_rows),
                 ).fetchall()
                 return [record for row in raw_rows if (record := self._control_record(row)) is not None]
@@ -319,6 +362,7 @@ class AnalyticsService:
         source = str(payload.get("src_ip") or row["source"] or "")
         kind = str(payload.get("type") or row["kind"] or "other")
         detail = _json_object(payload.get("detail"))
+        kind = _classify(kind, detail)
         geo = self._geo(source) or {}
         return EventRecord(
             id=str(payload.get("event_id") or row["event_id"] or ""),
@@ -336,6 +380,8 @@ class AnalyticsService:
             kind=kind,
             proto=str(payload.get("proto") or "tcp"),
             port=int(payload["src_port"]) if isinstance(payload.get("src_port"), int) else None,
+            dst_ip=str(payload.get("dst_ip") or ""),
+            dst_port=int(payload["dst_port"]) if isinstance(payload.get("dst_port"), int) else None,
             action=_action(kind),
             severity=_severity(kind),
             message=str(detail.get("message") or detail.get("eventid") or _action(kind)),
@@ -350,6 +396,7 @@ class AnalyticsService:
             detail["success"] = bool(row["success"])
         source = str(row["src_ip"] or "")
         kind = str(row["event_type"] or "other")
+        kind = _classify(kind, detail)
         geo = self._geo(source) or {}
         sensor = str(detail.get("engine") or detail.get("sensor") or row["device_id"] or "")
         return EventRecord(
@@ -368,6 +415,8 @@ class AnalyticsService:
             kind=kind,
             proto=str(row["proto"] or ""),
             port=int(row["src_port"]) if row["src_port"] is not None else None,
+            dst_ip=str(row["dst_ip"] or ""),
+            dst_port=int(row["dst_port"]) if row["dst_port"] is not None else None,
             action=_action(kind),
             severity=_severity(kind),
             message=str(detail.get("message") or detail.get("command") or _action(kind)),
@@ -509,6 +558,8 @@ class AnalyticsService:
                     "kind": row.kind,
                     "proto": row.proto,
                     "port": row.port,
+                    "dst_ip": row.dst_ip,
+                    "dst_port": row.dst_port,
                     "action": row.action,
                     "severity": row.severity,
                     "message": row.message,
@@ -532,8 +583,9 @@ class AnalyticsService:
                 ).fetchall()
                 return [record for row in raw if (record := self._runtime_record(row)) is not None and record.source == source]
             if schema == "control":
+                dst = _dst_select(conn)
                 raw = conn.execute(
-                    "SELECT id,ts,device_id,src_ip,src_port,proto,event_type,username,success,detail "
+                    f"SELECT id,ts,device_id,src_ip,src_port,{dst},proto,event_type,username,success,detail "
                     "FROM deception_events WHERE src_ip=? AND ts>=? AND ts<=? ORDER BY ts DESC, id DESC LIMIT ?",
                     (source, _iso(start), _iso(end), self.config.max_rows),
                 ).fetchall()
@@ -615,8 +667,69 @@ class AnalyticsService:
     def _evidence_item(row: EventRecord) -> dict[str, Any]:
         return {"id": row.id, "timestamp": row.timestamp, "sensor": row.sensor,
                 "device": row.device, "kind": row.kind, "action": row.action,
-                "proto": row.proto, "port": row.port, "severity": row.severity,
-                "message": row.message, "detail": row.detail}
+                "proto": row.proto, "port": row.port,
+                "dst_ip": row.dst_ip, "dst_port": row.dst_port,
+                "severity": row.severity, "message": row.message, "detail": row.detail}
+
+    def campaigns(self, from_time: str | None, to_time: str | None,
+                  window_seconds: int = 300, min_sensors: int = 3,
+                  min_ports: int = 5) -> dict[str, Any]:
+        """Correlate one source hitting several decoys/ports inside a short window."""
+        start, end = _window(from_time, to_time)
+        rows = self._rows(start, end)
+        by_source: dict[str, list[EventRecord]] = defaultdict(list)
+        for row in rows:
+            if row.source:
+                by_source[row.source].append(row)
+        found: list[dict[str, Any]] = []
+        for source, items in by_source.items():
+            items.sort(key=lambda row: row.timestamp)
+            best = None
+            for index, first_row in enumerate(items):
+                first = _parse_time(first_row.timestamp, end)
+                sensors: set[str] = set()
+                ports: set[int] = set()
+                count = 0
+                last = first
+                for candidate in items[index:]:
+                    moment = _parse_time(candidate.timestamp, end)
+                    if (moment - first).total_seconds() > window_seconds:
+                        break
+                    sensors.add(candidate.sensor or candidate.device)
+                    if candidate.dst_port:
+                        ports.add(candidate.dst_port)
+                    count += 1
+                    last = moment
+                if len(sensors) >= min_sensors or len(ports) >= min_ports:
+                    score = len(sensors) + len(ports)
+                    if best is None or score > best["score"]:
+                        best = {"score": score, "sensors": sensors, "ports": ports,
+                                "first": first, "last": last, "events": count}
+            if best is None:
+                continue
+            campaign_id = hashlib.sha256(
+                f"{source}|{best['first'].isoformat()}|{best['last'].isoformat()}".encode()
+            ).hexdigest()[:16]
+            found.append({
+                "campaign_id": campaign_id,
+                "source": source,
+                "kind": "port_scan",
+                "severity": "high",
+                "mitre": "T1046",
+                "events": best["events"],
+                "distinct_sensors": len(best["sensors"]),
+                "distinct_ports": len(best["ports"]),
+                "sensors": sorted(best["sensors"]),
+                "ports": sorted(best["ports"]),
+                "first_seen": _iso(best["first"]),
+                "last_seen": _iso(best["last"]),
+                "summary": f"Escaneo de servicios contra {len(best['sensors'])} sensores"
+                           + (f" y {len(best['ports'])} puertos" if best["ports"] else ""),
+            })
+        found.sort(key=lambda item: item["last_seen"], reverse=True)
+        return {"campaigns": found[:50], "window_seconds": window_seconds,
+                "min_sensors": min_sensors, "min_ports": min_ports,
+                "scanned_limit": self.config.max_rows}
 
     def export_attacker(self, source: str, limit: int = 5000) -> dict[str, Any]:
         """Export the same bounded, normalized 90-day sample as the IP profile."""
@@ -647,8 +760,9 @@ class AnalyticsService:
             return {**result, "items": []}
         # id breaks timestamp ties, preventing duplicates between adjacent pages.
         page_size = min(max(limit, 1), 100, max(0, cap - offset))
+        dst = _dst_select(conn)
         raw = conn.execute(
-            "SELECT id,ts,device_id,src_ip,src_port,proto,event_type,username,success,detail "
+            f"SELECT id,ts,device_id,src_ip,src_port,{dst},proto,event_type,username,success,detail "
             "FROM deception_events WHERE src_ip=? AND ts>=? AND ts<=? "
             "ORDER BY ts DESC, id DESC LIMIT ? OFFSET ?",
             (*window, page_size, max(0, offset)),

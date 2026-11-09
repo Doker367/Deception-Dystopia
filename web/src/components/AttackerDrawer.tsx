@@ -24,6 +24,8 @@ interface Evidence {
   action: string;
   proto: string;
   port: number | null;
+  dst_ip?: string;
+  dst_port?: number | null;
   severity: string;
   message: string;
   country?: string;
@@ -269,7 +271,7 @@ export function AttackerDrawer({ source, mode, sample, onClose }: {
             {!evidence.length && <p className="muted">No hay eventos de este origen en la ventana consultada.</p>}
             {evidence.map((item, index) => <details className="investigation-event" key={`${item.sensor}-${item.id}-${index}`}>
               <summary><time>{formatTime(item.timestamp)}</time><strong>{item.action}</strong><span className="mono">{item.sensor} · {item.proto}</span></summary>
-              <div className="investigation-event-body"><p>{item.message}</p><p className="muted">ID {item.id} · Dispositivo {item.device || "Sin dato"} · Puerto origen {item.port ?? "Sin dato"} · Severidad {item.severity}</p><span className="eyebrow">Detalle capturado</span><pre>{JSON.stringify(item.detail, null, 2)}</pre></div>
+              <div className="investigation-event-body"><p>{item.message}</p><p className="muted">ID {item.id} · Dispositivo {item.device || "Sin dato"} · Origen {item.port ?? "Sin dato"} · Destino {item.dst_ip || "Sin dato"}:{item.dst_port ?? "Sin dato"} · Severidad {item.severity}</p><span className="eyebrow">Detalle capturado</span><pre>{JSON.stringify(item.detail, null, 2)}</pre></div>
             </details>)}
             {!demo && offset < (profile?.total ?? 0) && <button className="button ghost" disabled={loading} onClick={loadMore}>{loading ? "Cargando…" : "Cargar otros 50 eventos"}</button>}
           </section>

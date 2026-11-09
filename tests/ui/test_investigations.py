@@ -149,7 +149,7 @@ def test_export_json_limits_sample_and_validation(client_roles, monkeypatch):
     assert data["exported_at"] and data["window"]["from"] and data["window"]["to"]
     assert data["total"] == client.get(path.removesuffix("/export"), headers=tokens["viewer"]).json()["total"] == 4
     assert data["exported"] == len(data["items"]) == 2 and data["truncated"] is True
-    assert set(data["items"][0]) == {"id", "timestamp", "sensor", "device", "kind", "action", "proto", "port", "severity", "message", "detail"}
+    assert set(data["items"][0]) == {"id", "timestamp", "sensor", "device", "kind", "action", "proto", "port", "dst_ip", "dst_port", "severity", "message", "detail"}
     assert response.headers["x-export-rows"] == "2" and response.headers["x-export-truncated"] == "true"
     assert response.headers["cache-control"] == "no-store"
     assert response.headers["content-disposition"].endswith('.json"')

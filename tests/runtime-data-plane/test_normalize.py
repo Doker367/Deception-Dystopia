@@ -151,3 +151,38 @@ def test_redis_addr_field_is_parsed_as_source_and_port():
     assert event["src_ip"] == "203.0.113.50"
     assert event["src_port"] == 41234
     assert event["type"] == "connect"
+
+
+def test_cowrie_http_probe_is_not_a_login_success():
+    raw = {
+        "eventid": "cowrie.login.success", "protocol": "telnet",
+        "src_ip": "203.0.113.9", "src_port": 40001,
+        "dst_ip": "172.19.0.2", "dst_port": 2223,
+        "username": "GET / HTTP/1.0", "password": "",
+        "timestamp": "2026-11-09T22:47:49.534339Z",
+        "message": "login attempt [GET / HTTP/1.0/] succeeded",
+    }
+    event = normalize_raw("cowrie", "srv-files-01", raw)
+    assert event is not None
+    assert event["type"] == "connect"
+    assert event["dst_ip"] == "172.19.0.2"
+    assert event["dst_port"] == 2223
+    assert event["detail"]["classification"] == "protocol_probe"
+    assert event["detail"]["mitre"] == "T1046"
+    assert "succeeded" not in event["detail"]["message"].lower()
+
+
+def test_cowrie_real_login_success_keeps_type():
+    raw = {
+        "eventid": "cowrie.login.success", "protocol": "ssh",
+        "src_ip": "203.0.113.10", "src_port": 40002,
+        "dst_ip": "172.19.0.2", "dst_port": 2222,
+        "username": "root", "password": "demo-password",
+        "timestamp": "2026-11-09T22:48:00Z",
+        "message": "login attempt [root/demo-password] succeeded",
+    }
+    event = normalize_raw("cowrie", "srv-files-01", raw)
+    assert event is not None
+    assert event["type"] == "login_success"
+    assert event["detail"]["mitre"] == "T1110"
+    assert "demo-password" not in json.dumps(event)

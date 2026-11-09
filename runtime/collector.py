@@ -422,6 +422,8 @@ class Collector:
             device_id=event["device_id"],
             src_ip=event["src_ip"],
             src_port=event.get("src_port"),
+            dst_ip=event.get("dst_ip"),
+            dst_port=event.get("dst_port"),
             proto=event.get("proto", "tcp"),
             type=_event_type(etype),
             detail=detail,

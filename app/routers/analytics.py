@@ -75,6 +75,16 @@ def origins(
     return _safe(lambda: analytics_svc.service().origins(from_time, to_time, limit))
 
 
+@router.get("/campaigns")
+def campaigns(
+    request: Request,
+    from_time: str | None = Query(default=None, alias="from", max_length=64),
+    to_time: str | None = Query(default=None, alias="to", max_length=64),
+):
+    _human_session(request)
+    return _safe(lambda: analytics_svc.service().campaigns(from_time, to_time))
+
+
 @router.get("/events")
 def events(
     request: Request,

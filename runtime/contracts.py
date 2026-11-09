@@ -37,7 +37,7 @@ def encode(value):
 
 def validate_event(event):
     required = {"event_id", "device_id", "observed_at", "src_ip", "type", "proto"}
-    optional = {"src_port", "detail"}
+    optional = {"src_port", "dst_ip", "dst_port", "detail"}
     if not isinstance(event, dict) or not required <= event.keys() or event.keys() - required - optional:
         raise ValueError("invalid event fields (identity and simulation flags are not accepted)")
     if len(encode(event)) > MAX_EVENT_BYTES:
@@ -65,6 +65,19 @@ def validate_event(event):
     port = event.get("src_port")
     if port is not None and (type(port) is not int or not 1 <= port <= 65535):
         raise ValueError("invalid source port")
+    dst_ip = event.get("dst_ip")
+    if dst_ip is not None:
+        if not isinstance(dst_ip, str) or "%" in dst_ip:
+            raise ValueError("invalid destination address")
+        try:
+            canonical_dst = str(ip_address(dst_ip))
+        except ValueError:
+            raise ValueError("invalid destination address") from None
+        if dst_ip != canonical_dst:
+            raise ValueError("canonical destination address required")
+    dst_port = event.get("dst_port")
+    if dst_port is not None and (type(dst_port) is not int or not 1 <= dst_port <= 65535):
+        raise ValueError("invalid destination port")
     detail = event.get("detail", {})
     # Opaque hostile strings only, no nested objects or execution semantics.
     if not isinstance(detail, dict) or len(detail) > 16:
