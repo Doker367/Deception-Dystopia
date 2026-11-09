@@ -44,7 +44,9 @@ RUN git clone https://github.com/DinoTools/dionaea.git /src \
 
 RUN mkdir -p /src/build \
     && cd /src/build \
-    && cmake -DCMAKE_INSTALL_PREFIX:PATH=/opt/dionaea -DCMAKE_BUILD_TYPE=RelWithDebInfo .. \
+    && cmake -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+          -DCMAKE_INSTALL_PREFIX:PATH=/opt/dionaea \
+          -DCMAKE_BUILD_TYPE=RelWithDebInfo .. \
     && make -j"$(nproc)" \
     && make install
 
