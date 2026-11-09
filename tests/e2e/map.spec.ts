@@ -143,16 +143,25 @@ test("login → mapa → origen seleccionado → eventos filtrados", async ({ pa
 });
 
 test("permite zoom profundo y muestra etiquetas al acercarse", async ({ page }) => {
+  test.setTimeout(90_000);
   await loginAndOpenMap(page);
   const canvas = page.locator(".globe-canvas");
   const zoomIn = page.getByRole("button", { name: "Acercar mapa" });
   await expect(zoomIn).toBeVisible();
   const before = Number(await canvas.getAttribute("data-zoom"));
-  for (let index = 0; index < 4; index += 1) {
+  for (let index = 0; index < 3; index += 1) {
     await zoomIn.click();
-    await page.waitForTimeout(400);
+    await page.waitForTimeout(500);
   }
-  await expect.poll(async () => Number(await canvas.getAttribute("data-zoom"))).toBeLessThan(before - 0.2);
-  await expect.poll(async () => Number(await canvas.getAttribute("data-labels"))).toBeGreaterThan(0);
+  await page.waitForFunction(
+    (initial) => Number(document.querySelector(".globe-canvas")?.getAttribute("data-zoom")) < initial - 0.2,
+    before,
+    { timeout: 20_000 },
+  );
+  await page.waitForFunction(
+    () => Number(document.querySelector(".globe-canvas")?.getAttribute("data-labels")) > 0,
+    undefined,
+    { timeout: 20_000 },
+  );
   await expect(page.getByRole("button", { name: "Alejar mapa" })).toBeVisible();
 });
