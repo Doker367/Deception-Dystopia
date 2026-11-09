@@ -83,17 +83,17 @@ async function loginAndOpenMap(page: Page) {
 test("filtra California y Texas sin mezclar sus orígenes", async ({ page }) => {
   await loginAndOpenMap(page);
   const state = page.getByRole("combobox", { name: "Estado / región" });
-  await expect(state.getByRole("option", { name: "California" })).toBeAttached();
-  await expect(state.getByRole("option", { name: "Texas" })).toBeAttached();
+  await expect(state.getByRole("option", { name: /California/ })).toBeAttached();
+  await expect(state.getByRole("option", { name: /Texas/ })).toBeAttached();
 
-  await state.selectOption("California");
+  await state.selectOption("US|CA");
   await expect(page.locator(".map-filter-bar .filter-count")).toHaveText("1 de 2 orígenes");
   await expect(page.locator(".map-rank .rank-row")).toHaveCount(1);
   await expect(page.locator(".map-focus")).toContainText(CA_IP);
   await expect(page.locator(".map-rank")).not.toContainText("Texas");
   await expect(page.getByRole("img", { name: /1 origen y 1 región activa/ })).toBeVisible();
 
-  await state.selectOption("Texas");
+  await state.selectOption("US|TX");
   await expect(page.locator(".map-rank .rank-row")).toHaveCount(1);
   await expect(page.locator(".map-focus")).toContainText(TX_IP);
   await expect(page.locator(".map-rank")).not.toContainText("California");
