@@ -46,6 +46,7 @@ RUN mkdir -p /src/build \
     && cd /src/build \
     && cmake -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
           -DWITH_MODULE_EMU=OFF \
+          -DRELEASE_BUILD=ON \
           -DCMAKE_INSTALL_PREFIX:PATH=/opt/dionaea \
           -DCMAKE_BUILD_TYPE=RelWithDebInfo .. \
     && make -j"$(nproc)" \
