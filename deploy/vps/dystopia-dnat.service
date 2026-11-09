@@ -1,0 +1,16 @@
+[Unit]
+Description=Dystopia eight-port DNAT to WireGuard honeypots (no SNAT)
+Wants=network-online.target
+Requires=wg-quick@wg0.service
+After=network-online.target wg-quick@wg0.service ufw.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+EnvironmentFile=/etc/dystopia/dnat.env
+ExecStartPre=/usr/local/sbin/dystopia-dnat.sh check
+ExecStart=/usr/local/sbin/dystopia-dnat.sh start
+ExecStop=/usr/local/sbin/dystopia-dnat.sh stop
+
+[Install]
+WantedBy=multi-user.target

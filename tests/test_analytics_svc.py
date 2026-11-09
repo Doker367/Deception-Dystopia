@@ -148,6 +148,39 @@ def test_origins_split_by_us_state(tmp_path, monkeypatch):
     assert by_state["TX"]["lng"] == -97.74
 
 
+def test_origins_split_by_mexican_state(tmp_path, monkeypatch):
+    path = tmp_path / "mexico.db"
+    _control_db(path)  # Dos eventos de una IP de documentación en Chiapas.
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            "INSERT INTO deception_events(ts,device_id,src_ip,src_port,proto,event_type,username,success,detail) "
+            "VALUES(?,?,?,?,?,?,?,?,?)",
+            ("2026-11-05T12:01:00+00:00", "srv-files-01", "198.51.100.20", 44444,
+             "ssh", "connect", None, None, '{"engine":"cowrie"}'),
+        )
+    states = {
+        "203.0.113.7": ("Chiapas", "CHP", "Tuxtla Gutiérrez", 16.75, -93.12),
+        "198.51.100.20": ("Jalisco", "JAL", "Guadalajara", 20.66, -103.35),
+    }
+
+    def lookup(ip):
+        name, code, city, lat, lon = states[ip]
+        return {"country_code": "MX", "country": "Mexico", "subdivision": name,
+                "subdivision_code": code, "city": city, "lat": lat, "lon": lon}
+
+    monkeypatch.setattr(geoip_svc, "lookup", lookup)
+    service = analytics_svc.AnalyticsService(analytics_svc.AnalyticsConfig(db_path=path))
+    origins = service.origins("2026-11-05T11:00:00+00:00", "2026-11-05T13:00:00+00:00")["origins"]
+    assert len(origins) == 2  # No se fusionan los tres eventos por país.
+    by_state = {origin["regionCode"]: origin for origin in origins}
+    assert set(by_state) == {"CHP", "JAL"}
+    assert all(origin["countryCode"] == "MX" for origin in origins)
+    assert by_state["CHP"]["region"] == "Chiapas"
+    assert by_state["CHP"]["events"] == 2
+    assert by_state["JAL"]["city"] == "Guadalajara"
+    assert by_state["JAL"]["events"] == 1
+    assert by_state["JAL"]["lng"] == -103.35
+
 
 def test_runtime_schema_is_supported(tmp_path, geo):
     path = tmp_path / "runtime.db"

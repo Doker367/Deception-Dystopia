@@ -46,6 +46,21 @@ npm run build
 El build queda en `web/dist` con base `/static/web/` para servirlo desde
 FastAPI.
 
+## Pruebas end-to-end (sin backend real)
+
+Desde la raíz del repositorio:
+
+```bash
+npm ci
+npm --prefix web ci
+npx playwright install chromium
+npx playwright test
+```
+
+Playwright inicia Vite en `127.0.0.1:5179` e intercepta **todas** las peticiones
+`/api/**` con datos sintéticos; ninguna prueba usa eventos ni credenciales del
+servidor. Los resultados y trazas locales quedan fuera de Git.
+
 ## Contrato de datos
 
 La UI consume el BFF de Dystopia, nunca SQLite directamente:
