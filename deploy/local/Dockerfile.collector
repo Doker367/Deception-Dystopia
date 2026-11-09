@@ -1,0 +1,25 @@
+# Colector local de honeypots — imagen mínima solo para el laboratorio.
+#
+# Reutiliza el código real (runtime/ + app/) sin tocar la lógica del colector.
+# El colector no necesita red: lee volúmenes de logs y escribe en la SQLite
+# compartida con el control plane.
+FROM python:3.12-slim-bookworm
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/srv/app
+
+WORKDIR /srv/app
+
+RUN pip install --no-cache-dir --no-compile pydantic pyyaml
+
+COPY app/ /srv/app/app/
+COPY runtime/ /srv/app/runtime/
+COPY deploy/honeypots/inventory.yaml /srv/app/deploy/honeypots/inventory.yaml
+COPY deploy/honeypots/fixtures/ /srv/app/deploy/honeypots/fixtures/
+
+USER 2000:2000
+
+CMD ["python", "-m", "runtime.collector", \
+     "--inventory", "/srv/app/deploy/honeypots/inventory.yaml", \
+     "--data-root", "/data/honeypots", "--interval", "10"]

@@ -8,6 +8,14 @@ supports both local event schemas used in the laboratory:
 - ``deception_events``: the control-plane store used by the native engine and
   the simulator.
 
+By default both schemas are read from the control-plane SQLite file
+(``DECEPTION_DB`` in ``app.core.settings``), i.e. the exact same file written
+by ``app.services.deception.store_svc``. The ``DYSTOPIA_ANALYTICS_DB``
+environment variable is an optional override for advanced deployments (for
+example, a read replica or a pre-built analytics snapshot). Leave it unset so
+the BFF always follows the live control-plane store and never ends up pointing
+at a second, divergent database.
+
 Elasticsearch is not part of this path. GeoIP is local (MaxMind/GeoLite2); no
 external lookup service is used.
 """
@@ -30,6 +38,42 @@ MAX_WINDOW = timedelta(days=90)
 DEFAULT_MAX_ROWS = 20_000
 INTERVALS = {"1m": 60, "5m": 300, "15m": 900, "30m": 1800, "1h": 3600, "3h": 10800, "6h": 21600, "12h": 43200, "1d": 86400, "7d": 604800}
 SEVERITY_ORDER = {"critical": 4, "high": 3, "medium": 2, "low": 1, "info": 0}
+
+
+def _collector_health(db_path: Path) -> dict[str, Any]:
+    """Estado del colector según su heartbeat, sin abrir la BD en escritura."""
+    path = Path(db_path)
+    if not path.exists():
+        return {"status": "missing", "reason": "db_not_found"}
+    try:
+        conn = sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True, timeout=2)
+        try:
+            row = conn.execute(
+                """SELECT last_poll_at, polls, ingested, interval, status
+                   FROM collector_heartbeat WHERE id = 1"""
+            ).fetchone()
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return {"status": "missing", "reason": "no_heartbeat"}
+    if not row:
+        return {"status": "missing", "reason": "no_heartbeat"}
+    last_poll, polls, ingested, interval, status = row
+    try:
+        age = (datetime.now(timezone.utc)
+               - datetime.fromisoformat(str(last_poll).replace("Z", "+00:00"))
+               ).total_seconds()
+    except ValueError:
+        age = float("inf")
+    stale_after = max(90.0, float(interval or 30.0) * 3)
+    return {
+        "status": "stale" if age > stale_after else (status or "ok"),
+        "last_poll_at": last_poll,
+        "age_seconds": round(age, 1),
+        "polls": polls,
+        "ingested": ingested,
+        "interval": interval,
+    }
 KIND_SEVERITY = {
     "login_success": "critical",
     "file_download": "critical",
@@ -74,6 +118,13 @@ class AnalyticsConfig:
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> "AnalyticsConfig":
+        """Build the config from the environment.
+
+        ``DYSTOPIA_ANALYTICS_DB`` is only an optional override; when it is
+        unset (or empty) the path falls back to ``DECEPTION_DB`` from
+        ``app.core.settings``, the single source of truth shared with
+        ``store_svc``.
+        """
         values = os.environ if env is None else env
         raw_path = values.get("DYSTOPIA_ANALYTICS_DB", "").strip()
         raw_rows = values.get("DYSTOPIA_ANALYTICS_MAX_ROWS", "").strip()
@@ -89,6 +140,16 @@ class AnalyticsConfig:
         if not self.db_path.is_absolute():
             return self
         return self
+
+    @property
+    def resolved_db_path(self) -> Path:
+        """Absolute, normalised path of the SQLite store actually read."""
+        return self.db_path.expanduser().resolve()
+
+    @property
+    def db_exists(self) -> bool:
+        """Whether the resolved SQLite store exists on disk."""
+        return self.resolved_db_path.is_file()
 
 
 @dataclass
@@ -188,11 +249,11 @@ class AnalyticsService:
         return self._geo_cache[ip]
 
     def _connect(self) -> Optional[sqlite3.Connection]:
-        path = self.config.db_path
+        path = self.config.resolved_db_path
         if not path.is_file():
             return None
         try:
-            conn = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True, timeout=2)
+            conn = sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True, timeout=2)
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA query_only=ON")
             conn.execute("PRAGMA temp_store=MEMORY")
@@ -205,10 +266,13 @@ class AnalyticsService:
             row[0]
             for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
         }
-        if "events" in tables:
-            return "runtime"
+        # La BD del control plane puede contener ambas tablas (runtime v1 y la
+        # nativa). El colector escribe en ``deception_events``; si existe, esa
+        # es la fuente de verdad para no leer una tabla ``events`` obsoleta.
         if "deception_events" in tables:
             return "control"
+        if "events" in tables:
+            return "runtime"
         return "none"
 
     def _rows(self, start: datetime, end: datetime) -> list[EventRecord]:
@@ -425,9 +489,20 @@ class AnalyticsService:
         }
 
     def health(self) -> dict[str, Any]:
+        db_path = self.config.resolved_db_path
+        db_exists = self.config.db_exists
+        collector = _collector_health(db_path)
         conn = self._connect()
         if conn is None:
-            return {"status": "empty", "store": "sqlite", "documents": 0, "schema": "none"}
+            return {
+                "status": "empty",
+                "store": "sqlite",
+                "documents": 0,
+                "schema": "none",
+                "db": str(db_path),
+                "db_exists": db_exists,
+                "collector": collector,
+            }
         try:
             schema = self._schema(conn)
             table = "events" if schema == "runtime" else "deception_events" if schema == "control" else None
@@ -437,6 +512,9 @@ class AnalyticsService:
                 "store": "sqlite",
                 "schema": schema,
                 "documents": documents,
+                "db": str(db_path),
+                "db_exists": db_exists,
+                "collector": collector,
                 "geoip": geoip_svc.available(),
             }
         finally:

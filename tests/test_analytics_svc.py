@@ -131,9 +131,68 @@ def test_missing_store_is_empty_not_an_error(tmp_path):
     assert service.health()["status"] == "empty"
 
 
+def test_health_reports_resolved_db_path(tmp_path):
+    path = tmp_path / "missing.db"
+    service = analytics_svc.AnalyticsService(analytics_svc.AnalyticsConfig(db_path=path))
+    health = service.health()
+    assert health["db"] == str(path.resolve())
+    assert health["db_exists"] is False
+
+    existing = tmp_path / "existing.db"
+    _control_db(existing)
+    health = analytics_svc.AnalyticsService(analytics_svc.AnalyticsConfig(db_path=existing)).health()
+    assert health["db"] == str(existing.resolve())
+    assert health["db_exists"] is True
+
+
+def test_analytics_and_store_resolve_the_same_control_plane_db():
+    from app.core import settings
+    from app.services.deception import store_svc
+
+    default = analytics_svc.AnalyticsConfig.from_env({})
+    assert default.db_path == settings.DECEPTION_DB
+    assert default.db_path == store_svc.DB_PATH
+    assert analytics_svc.AnalyticsConfig().db_path == store_svc.DB_PATH
+    # An empty override must not silently point analytics at a second store.
+    empty = analytics_svc.AnalyticsConfig.from_env({"DYSTOPIA_ANALYTICS_DB": "  "})
+    assert empty.db_path == settings.DECEPTION_DB
+
+
+def test_analytics_db_override_is_opt_in(tmp_path):
+    override = tmp_path / "analytics.db"
+    config = analytics_svc.AnalyticsConfig.from_env({"DYSTOPIA_ANALYTICS_DB": str(override)})
+    assert config.db_path == override
+
+
 def test_invalid_window_is_rejected(tmp_path):
     service = analytics_svc.AnalyticsService(analytics_svc.AnalyticsConfig(db_path=tmp_path / "missing.db"))
     with pytest.raises(ValueError):
         service.overview("2026-11-05T13:00:00+00:00", "2026-11-05T11:00:00+00:00")
     with pytest.raises(ValueError):
         service.timeline(None, None, "2h")
+
+
+def test_control_schema_wins_when_both_tables_exist(tmp_path, geo):
+    """El colector escribe deception_events: si hay tabla runtime obsoleta,
+    analytics no debe leerla por prioridad."""
+    path = tmp_path / "both.db"
+    _control_db(path)
+    with sqlite3.connect(path) as conn:
+        conn.executescript("""
+            CREATE TABLE events (
+                sensor TEXT, event_id TEXT, device TEXT, observed_at TEXT,
+                kind TEXT, source TEXT, severity TEXT, message TEXT, payload TEXT
+            );
+        """)
+        conn.execute(
+            "INSERT INTO events VALUES(?,?,?,?,?,?,?,?,?)",
+            ("cowrie", "legacy-1", "srv-files-01", "2026-11-05T12:00:00+00:00",
+             "login_attempt", "198.51.100.9", "critical", "", "{}"),
+        )
+    service = analytics_svc.AnalyticsService(analytics_svc.AnalyticsConfig(db_path=path))
+    window = ("2026-11-05T11:00:00+00:00", "2026-11-05T13:00:00+00:00")
+    overview = service.overview(*window)
+    assert overview["total_events"] == 2  # solo deception_events
+    events = service.events(*window, limit=10)
+    assert events["total"] == 2
+    assert {e["source"] for e in events["items"]} == {"203.0.113.7"}
