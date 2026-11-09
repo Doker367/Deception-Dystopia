@@ -47,6 +47,7 @@ export function MapPage({ search, origins, mode, onRefresh, onOpenEvents }: MapP
   const { notify } = useToast();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [country, setCountry] = useState("all");
+  const [subdivision, setSubdivision] = useState("all");
   const [severity, setSeverity] = useState("all");
   const [sensor, setSensor] = useState("all");
   const [protocol, setProtocol] = useState("all");
@@ -56,21 +57,26 @@ export function MapPage({ search, origins, mode, onRefresh, onOpenEvents }: MapP
   const countryOptions = useMemo(() => Array.from(new Set(origins.map((origin) => origin.country))).sort(), [origins]);
   const sensorOptions = useMemo(() => Array.from(new Set(origins.map((origin) => origin.sensor))).sort(), [origins]);
   const protocolOptions = useMemo(() => Array.from(new Set(origins.map((origin) => origin.protocol))).sort(), [origins]);
+  const subdivisionOptions = useMemo(
+    () => Array.from(new Set(origins.map((origin) => origin.region).filter((item): item is string => Boolean(item)))).sort(),
+    [origins],
+  );
 
   const points = useMemo(() => {
     const query = search.trim().toLowerCase();
     return origins.filter((origin) => {
       if (country !== "all" && origin.country !== country) return false;
+      if (subdivision !== "all" && origin.region !== subdivision) return false;
       if (region !== "all" && regionFor(origin.countryCode) !== region) return false;
       if (severity !== "all" && origin.severity !== severity) return false;
       if (sensor !== "all" && origin.sensor !== sensor) return false;
       if (protocol !== "all" && origin.protocol !== protocol) return false;
       if (!query) return true;
-      return [origin.country, origin.city, origin.ip, origin.protocol, origin.sensor].join(" ").toLowerCase().includes(query);
+      return [origin.country, origin.region, origin.city, origin.ip, origin.protocol, origin.sensor].join(" ").toLowerCase().includes(query);
     });
-  }, [country, origins, protocol, region, search, sensor, severity]);
+  }, [country, origins, protocol, region, search, sensor, severity, subdivision]);
 
-  const filtersActive = country !== "all" || severity !== "all" || sensor !== "all" || protocol !== "all" || region !== "all";
+  const filtersActive = country !== "all" || subdivision !== "all" || severity !== "all" || sensor !== "all" || protocol !== "all" || region !== "all";
   const regionCounts = useMemo(() => {
     const counts: Record<string, number> = { AMER: 0, EMEA: 0, APAC: 0, OTROS: 0 };
     for (const origin of origins) counts[regionFor(origin.countryCode)] += 1;
@@ -85,6 +91,7 @@ export function MapPage({ search, origins, mode, onRefresh, onOpenEvents }: MapP
 
   function resetFilters() {
     setCountry("all");
+    setSubdivision("all");
     setSeverity("all");
     setSensor("all");
     setProtocol("all");
@@ -94,6 +101,7 @@ export function MapPage({ search, origins, mode, onRefresh, onOpenEvents }: MapP
   const selected = points.find((origin) => origin.id === selectedId) ?? points[0] ?? null;
   const totalEvents = points.reduce((total, origin) => total + origin.events, 0);
   const maxEvents = Math.max(...points.map((origin) => origin.events), 1);
+  const areaCount = new Set(points.map((origin) => origin.regionCode ? `${origin.countryCode}-${origin.regionCode}` : origin.countryCode)).size;
 
   return (
     <div className="page page-map">
@@ -109,7 +117,7 @@ export function MapPage({ search, origins, mode, onRefresh, onOpenEvents }: MapP
                 features: points.map((origin) => ({
                   type: "Feature",
                   geometry: { type: "Point", coordinates: [origin.lng, origin.lat] },
-                  properties: { country: origin.country, countryCode: origin.countryCode, city: origin.city, ip: origin.ip, events: origin.events, severity: origin.severity, protocol: origin.protocol, sensor: origin.sensor },
+                  properties: { country: origin.country, countryCode: origin.countryCode, region: origin.region, regionCode: origin.regionCode, city: origin.city, ip: origin.ip, events: origin.events, severity: origin.severity, protocol: origin.protocol, sensor: origin.sensor },
                 })),
               };
               downloadJson("dystopia-origins.geojson", geojson);
@@ -150,6 +158,15 @@ export function MapPage({ search, origins, mode, onRefresh, onOpenEvents }: MapP
             {countryOptions.map((item) => <option key={item} value={item}>{item}</option>)}
           </select>
         </label>
+        {subdivisionOptions.length > 0 && (
+          <label className="filter-select">
+            <span>Estado / región</span>
+            <select value={subdivision} onChange={(event) => { setSubdivision(event.target.value); setSelectedId(null); }}>
+              <option value="all">Todos</option>
+              {subdivisionOptions.map((item) => <option key={item} value={item}>{item}</option>)}
+            </select>
+          </label>
+        )}
         <label className="filter-select">
           <span>Severidad</span>
           <select value={severity} onChange={(event) => { setSeverity(event.target.value); setSelectedId(null); }}>
@@ -184,15 +201,15 @@ export function MapPage({ search, origins, mode, onRefresh, onOpenEvents }: MapP
           <AttackGlobe points={points} height={660} onSelect={(origin) => setSelectedId(origin.id)} />
           <div className="map-bottom-strip">
             <div><span className="eyebrow">Eventos geolocalizados</span><strong>{formatNumber(totalEvents)}</strong></div>
-            <div><span className="eyebrow">Países</span><strong>{points.length}</strong></div>
+            <div><span className="eyebrow">Países / estados</span><strong>{areaCount}</strong></div>
             <div><span className="eyebrow">Core</span><strong>{DATACENTER.city}</strong></div>
-            <div><span className="eyebrow">Precisión</span><strong>ciudad</strong></div>
+            <div><span className="eyebrow">Precisión</span><strong>estado / ciudad</strong></div>
             <div><span className="eyebrow">Fuente</span><strong>SQLite local</strong></div>
           </div>
         </Panel>
 
         <div className="map-side">
-          <Panel className="map-focus" eyebrow="Origen seleccionado" title={selected ? `${selected.city}, ${selected.country}` : "Selecciona un origen"}>
+          <Panel className="map-focus" eyebrow="Origen seleccionado" title={selected ? [selected.city, selected.region, selected.country].filter(Boolean).join(", ") : "Selecciona un origen"}>
             {selected ? (
               <div className="origin-detail">
                 <div className="origin-detail-head">
@@ -211,7 +228,7 @@ export function MapPage({ search, origins, mode, onRefresh, onOpenEvents }: MapP
                 </div>
                 <div className="origin-route">
                   <MapPin size={14} />
-                  <span>{selected.city}</span>
+                  <span>{selected.city}{selected.region ? ` · ${selected.region}` : ""}</span>
                   <span className="route-line" />
                   <ScanLine size={14} />
                   <span>{DATACENTER.city}</span>
@@ -252,7 +269,7 @@ export function MapPage({ search, origins, mode, onRefresh, onOpenEvents }: MapP
                 >
                   <span className="rank-number">{String(index + 1).padStart(2, "0")}</span>
                   <span className="rank-flag">{origin.countryCode}</span>
-                  <span className="rank-country"><strong>{origin.country}</strong><small>{origin.city}</small></span>
+                  <span className="rank-country"><strong>{origin.country}</strong><small>{origin.region || origin.city}</small></span>
                   <span className="rank-bar"><i style={{ width: `${(origin.events / maxEvents) * 100}%` }} /></span>
                   <span className="rank-value mono">{formatNumber(origin.events)}</span>
                 </button>

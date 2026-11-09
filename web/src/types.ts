@@ -13,6 +13,10 @@ export interface AttackOrigin {
   id: string;
   country: string;
   countryCode: string;
+  /** Estado/provincia cuando GeoIP lo conoce (p. ej. California). */
+  region?: string;
+  /** Código ISO 3166-2 sin prefijo de país (p. ej. CA). */
+  regionCode?: string;
   city: string;
   ip: string;
   lat: number;

@@ -61,7 +61,7 @@ function tooltipFor(origin: AttackOrigin) {
     <div class="globe-tooltip">
       <div class="globe-tooltip-head">
         <span class="globe-tooltip-dot" style="background:${SEVERITY_COLOR[origin.severity]}"></span>
-        <strong>${origin.city}, ${origin.country}</strong>
+        <strong>${[origin.city, origin.region, origin.country].filter(Boolean).join(", ")}</strong>
         <span class="globe-tooltip-badge">${SEVERITY_LABEL[origin.severity]}</span>
       </div>
       <div class="globe-tooltip-row"><span>Origen</span><b class="mono">${origin.ip}</b></div>
@@ -93,6 +93,7 @@ export function AttackGlobe({
   const globeRef = useRef<GlobeMethods | undefined>(undefined);
   const containerRef = useRef<HTMLDivElement>(null);
   const [countries, setCountries] = useState<CountryFeature[]>([]);
+  const [states, setStates] = useState<CountryFeature[]>([]);
   const [size, setSize] = useState({ width: 640, height });
   const [rotating, setRotating] = useState(autoRotate);
   const [interactionPaused, setInteractionPaused] = useState(false);
@@ -112,13 +113,25 @@ export function AttackGlobe({
 
   useEffect(() => {
     let cancelled = false;
-    fetch(`${import.meta.env.BASE_URL}world.geo.json`)
-      .then((response) => response.json())
-      .then((data) => {
-        if (!cancelled && Array.isArray(data?.features)) setCountries(data.features as CountryFeature[]);
+    Promise.all([
+      fetch(`${import.meta.env.BASE_URL}world.geo.json`).then((response) => response.json()),
+      // Si falta el GeoJSON de estados, se conserva el polígono de EE. UU.
+      fetch(`${import.meta.env.BASE_URL}us-states.geo.json`).then((response) => response.json()).catch(() => ({ features: [] })),
+    ])
+      .then(([world, us]) => {
+        if (cancelled) return;
+        const stateFeatures = Array.isArray(us?.features) ? (us.features as CountryFeature[]) : [];
+        setStates(stateFeatures.map((feature) => ({
+          ...feature,
+          properties: { ...feature.properties, __layer: "state" },
+        })));
+        const countryFeatures = Array.isArray(world?.features) ? (world.features as CountryFeature[]) : [];
+        setCountries(stateFeatures.length
+          ? countryFeatures.filter((feature) => String(feature.properties?.ISO_A2 ?? "") !== "US")
+          : countryFeatures);
       })
       .catch(() => {
-        if (!cancelled) setCountries([]);
+        if (!cancelled) { setCountries([]); setStates([]); }
       });
     return () => {
       cancelled = true;
@@ -189,7 +202,25 @@ export function AttackGlobe({
     };
   }, []);
 
-  const originByCode = useMemo(() => new Map(points.map((origin) => [origin.countryCode, origin])), [points]);
+  const polygons = useMemo(() => [...countries, ...states], [countries, states]);
+  const areaTotals = useMemo(() => {
+    const byCountry = new Map<string, { events: number; severity: Severity }>();
+    const byState = new Map<string, { events: number; severity: Severity }>();
+    const rank: Record<Severity, number> = { info: 0, low: 1, medium: 2, high: 3, critical: 4 };
+    for (const origin of points) {
+      const isState = origin.countryCode === "US" && Boolean(origin.regionCode);
+      const target = isState ? byState : byCountry;
+      const key = isState ? String(origin.regionCode) : origin.countryCode;
+      const current = target.get(key);
+      if (!current) {
+        target.set(key, { events: origin.events, severity: origin.severity });
+      } else {
+        current.events += origin.events;
+        if (rank[origin.severity] > rank[current.severity]) current.severity = origin.severity;
+      }
+    }
+    return { byCountry, byState };
+  }, [points]);
   const pointData = useMemo<GlobePoint[]>(
     () => [
       ...points.map((origin) => ({
@@ -252,25 +283,37 @@ export function AttackGlobe({
           atmosphereColor="#35e6c4"
           atmosphereAltitude={0.16}
           showGraticules
-          polygonsData={countries}
+          polygonsData={polygons}
           polygonAltitude={(feature: object) => {
-            const iso = String((feature as CountryFeature).properties?.ISO_A2 ?? "");
-            return originByCode.has(iso) ? 0.012 : 0.004;
+            const properties = (feature as CountryFeature).properties ?? {};
+            const active = properties.__layer === "state"
+              ? areaTotals.byState.has(String(properties.code ?? ""))
+              : areaTotals.byCountry.has(String(properties.ISO_A2 ?? ""));
+            return active ? 0.012 : 0.004;
           }}
           polygonCapColor={(feature: object) => {
-            const iso = String((feature as CountryFeature).properties?.ISO_A2 ?? "");
-            const origin = originByCode.get(iso);
-            if (!origin) return "rgba(17, 34, 46, 0.82)";
-            return withAlpha(SEVERITY_COLOR[origin.severity], 0.34 + (origin.events / maxEvents) * 0.42);
+            const properties = (feature as CountryFeature).properties ?? {};
+            const isState = properties.__layer === "state";
+            const total = isState
+              ? areaTotals.byState.get(String(properties.code ?? ""))
+              : areaTotals.byCountry.get(String(properties.ISO_A2 ?? ""));
+            if (!total) return "rgba(17, 34, 46, 0.82)";
+            return withAlpha(SEVERITY_COLOR[total.severity], 0.34 + (total.events / maxEvents) * 0.42);
           }}
           polygonSideColor={() => "rgba(0, 0, 0, 0)"}
-          polygonStrokeColor={() => "rgba(91, 184, 190, 0.18)"}
+          polygonStrokeColor={(feature: object) => String((feature as CountryFeature).properties?.__layer ?? "") === "state"
+            ? "rgba(91, 184, 190, 0.3)"
+            : "rgba(91, 184, 190, 0.18)"}
           polygonLabel={(feature: object) => {
             const properties = (feature as CountryFeature).properties ?? {};
-            const iso = String(properties.ISO_A2 ?? "");
-            const origin = originByCode.get(iso);
-            const name = String(properties.NAME_ES ?? properties.ADMIN ?? properties.NAME ?? "País");
-            return `<div class="globe-tooltip globe-tooltip-small"><strong>${name}</strong><span>${origin ? `${origin.events.toLocaleString("es-MX")} eventos` : "Sin actividad en la ventana"}</span></div>`;
+            const isState = properties.__layer === "state";
+            const total = isState
+              ? areaTotals.byState.get(String(properties.code ?? ""))
+              : areaTotals.byCountry.get(String(properties.ISO_A2 ?? ""));
+            const name = isState
+              ? String(properties.name ?? properties.code ?? "Estado")
+              : String(properties.NAME_ES ?? properties.ADMIN ?? properties.NAME ?? "País");
+            return `<div class="globe-tooltip globe-tooltip-small"><strong>${name}</strong><span>${total ? `${total.events.toLocaleString("es-MX")} eventos` : "Sin actividad en la ventana"}</span></div>`;
           }}
           pointsData={pointData}
           pointLat="lat"

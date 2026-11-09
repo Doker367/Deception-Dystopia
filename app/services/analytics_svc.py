@@ -161,6 +161,8 @@ class EventRecord:
     source: str
     country: str
     countryCode: str
+    region: str
+    regionCode: str
     city: str
     lat: Optional[float]
     lng: Optional[float]
@@ -225,14 +227,22 @@ def _json_object(raw: Any) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
-def _num(value: Any) -> Optional[float]:
+def _coord(value: Any, limit: float) -> Optional[float]:
     if isinstance(value, bool):
         return None
     try:
         number = float(value)
     except (TypeError, ValueError):
         return None
-    return number if -90 <= number <= 180 else None
+    return number if -limit <= number <= limit else None
+
+
+def _lat(value: Any) -> Optional[float]:
+    return _coord(value, 90)
+
+
+def _lon(value: Any) -> Optional[float]:
+    return _coord(value, 180)
 
 
 class AnalyticsService:
@@ -318,9 +328,11 @@ class AnalyticsService:
             source=source,
             country=str(geo.get("country") or ""),
             countryCode=str(geo.get("country_code") or ""),
+            region=str(geo.get("subdivision") or ""),
+            regionCode=str(geo.get("subdivision_code") or ""),
             city=str(geo.get("city") or ""),
-            lat=_num(geo.get("lat")),
-            lng=_num(geo.get("lon")),
+            lat=_lat(geo.get("lat")),
+            lng=_lon(geo.get("lon")),
             kind=kind,
             proto=str(payload.get("proto") or "tcp"),
             port=int(payload["src_port"]) if isinstance(payload.get("src_port"), int) else None,
@@ -348,9 +360,11 @@ class AnalyticsService:
             source=source,
             country=str(geo.get("country") or ""),
             countryCode=str(geo.get("country_code") or ""),
+            region=str(geo.get("subdivision") or ""),
+            regionCode=str(geo.get("subdivision_code") or ""),
             city=str(geo.get("city") or ""),
-            lat=_num(geo.get("lat")),
-            lng=_num(geo.get("lon")),
+            lat=_lat(geo.get("lat")),
+            lng=_lon(geo.get("lon")),
             kind=kind,
             proto=str(row["proto"] or ""),
             port=int(row["src_port"]) if row["src_port"] is not None else None,
@@ -408,7 +422,14 @@ class AnalyticsService:
         for row in rows:
             if not row.countryCode or row.lat is None or row.lng is None:
                 continue
-            group = groups[row.countryCode]
+            # Un origen es país + subdivisión (estado/provincia) cuando GeoIP la
+            # conoce. En EE. UU. esto permite pintar solo el estado afectado en
+            # lugar de teñir todo el país.
+            key = f"{row.countryCode}|{row.regionCode or ''}"
+            group = groups[key]
+            group["countryCode"] = row.countryCode
+            group["region"] = group.get("region") or row.region
+            group["regionCode"] = group.get("regionCode") or row.regionCode
             group["country"] = row.country or row.countryCode
             group["city"] = group.get("city") or row.city
             group["ip"] = group.get("ip") or row.source
@@ -423,10 +444,12 @@ class AnalyticsService:
             if row.timestamp > group["last"]:
                 group["last"] = row.timestamp
         result = []
-        for code, group in groups.items():
+        for group in groups.values():
             result.append({
-                "countryCode": code,
-                "country": group.get("country") or code,
+                "countryCode": group.get("countryCode") or "",
+                "country": group.get("country") or group.get("countryCode") or "",
+                "region": group.get("region") or "",
+                "regionCode": group.get("regionCode") or "",
                 "city": group.get("city") or "",
                 "ip": group.get("ip") or "",
                 "lat": group.get("lat"),
@@ -664,7 +687,7 @@ class AnalyticsService:
         geo = self._geo(source) or {}
         return {**result, "first_seen": str(last[0] or ""), "last_seen": str(first[0] or ""),
                 "country": str(geo.get("country") or ""), "countryCode": str(geo.get("country_code") or ""),
-                "city": str(geo.get("city") or ""), "lat": _num(geo.get("lat")), "lng": _num(geo.get("lon")),
+                "city": str(geo.get("city") or ""), "lat": _lat(geo.get("lat")), "lng": _lon(geo.get("lon")),
                 **counts, "items": [self._evidence_item(row) for row in page]}
 
     def attacker(self, source: str, offset: int = 0, limit: int = 50,
