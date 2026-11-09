@@ -7,6 +7,7 @@ scratch database, following the same offline discipline as the rest of the
 runtime data-plane tests.
 """
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -130,10 +131,13 @@ def test_file_rotation_resets_the_offset(db, tmp_path):
     collector = make_collector(log, tmp_path / "ledger.json", db)
     collector.poll_once()
 
-    # Rotación estilo Windows/unlink+recreate: inodo nuevo, el lector reinicia.
-    log.unlink()
-    log.write_text(cowrie_record({**COWRIE_CONNECT, "src_port": 40099}),
-                   encoding="utf-8")
+    # Rotación rename+recreate. El fichero de reemplazo coexiste con el
+    # original, así que el sistema de archivos no puede reutilizar su inodo
+    # (unlink+recreate sí puede hacerlo en Linux y volvía la prueba flaky).
+    rotated = tmp_path / "cowrie.jsonl.new"
+    rotated.write_text(cowrie_record({**COWRIE_CONNECT, "src_port": 40099}),
+                       encoding="utf-8")
+    os.replace(rotated, log)
     result = collector.poll_once()
     assert result["ingested"] == 1
     assert collector.health()["reader"]["sources"][0]["offset"] == log.stat().st_size
