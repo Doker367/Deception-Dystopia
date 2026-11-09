@@ -83,6 +83,17 @@ flowchart LR
     CTRL --> WEB
 ```
 
+### Mapa por país y estado
+
+GeoLite2 aporta la subdivisión administrativa (estado/provincia) además del
+país. El BFF agrupa los orígenes por `país + subdivisión` y expone `region` y
+`regionCode`. En el globo, EE. UU. se dibuja con los polígonos de
+`web/public/us-states.geo.json` y **solo se colorea el estado afectado**; el
+resto de países se colorea a nivel de país. Si GeoIP no conoce la subdivisión,
+el origen se muestra como punto sin teñir todo el territorio. La vista permite
+filtrar por estado/región y mantiene la precisión declarada como
+`estado / ciudad`.
+
 Planos:
 
 - **Control:** API, topología, usuarios, consola y contratos.

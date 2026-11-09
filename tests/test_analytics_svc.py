@@ -111,6 +111,32 @@ def test_control_schema_overview_timeline_and_origins(tmp_path, geo):
     assert events["items"][0]["severity"] == "high"
 
 
+def test_origins_split_by_us_state(tmp_path, monkeypatch):
+    path = tmp_path / "events.db"
+    _control_db(path)
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            "INSERT INTO deception_events(ts,device_id,src_ip,src_port,proto,event_type,username,success,detail) "
+            "VALUES(?,?,?,?,?,?,?,?,?)",
+            ("2026-11-05T12:01:00+00:00", "srv-files-01", "198.51.100.20", 44444,
+             "ssh", "connect", None, None, '{"engine":"cowrie"}'),
+        )
+    states = {"203.0.113.7": ("California", "CA", 34.05, -118.24),
+              "198.51.100.20": ("Texas", "TX", 30.27, -97.74)}
+
+    def lookup(ip):
+        name, code, lat, lon = states[ip]
+        return {"country_code": "US", "country": "United States", "subdivision": name,
+                "subdivision_code": code, "city": name, "lat": lat, "lon": lon}
+
+    monkeypatch.setattr(geoip_svc, "lookup", lookup)
+    service = analytics_svc.AnalyticsService(analytics_svc.AnalyticsConfig(db_path=path))
+    origins = service.origins("2026-11-05T11:00:00+00:00", "2026-11-05T13:00:00+00:00")["origins"]
+    assert {origin["regionCode"] for origin in origins} == {"CA", "TX"}
+    assert {origin["region"] for origin in origins} == {"California", "Texas"}
+    assert all(origin["countryCode"] == "US" for origin in origins)
+
+
 def test_runtime_schema_is_supported(tmp_path, geo):
     path = tmp_path / "runtime.db"
     _runtime_db(path)

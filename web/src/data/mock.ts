@@ -95,6 +95,8 @@ export const ATTACK_ORIGINS: AttackOrigin[] = [
     id: "us-ashburn",
     country: "Estados Unidos",
     countryCode: "US",
+    region: "Virginia",
+    regionCode: "VA",
     city: "Ashburn",
     ip: "44.208.17.93",
     lat: 39.0438,

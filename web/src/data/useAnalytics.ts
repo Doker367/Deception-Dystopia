@@ -32,6 +32,8 @@ interface ApiTimeline {
 interface ApiOrigin {
   countryCode: string;
   country: string;
+  region?: string;
+  regionCode?: string;
   city: string;
   ip: string;
   lat: number | null;
@@ -173,9 +175,11 @@ function normalizeOrigins(payload: ApiOrigins): AttackOrigin[] {
     const lng = typeof origin.lng === "number" ? origin.lng : fallback?.lng;
     if (typeof lat !== "number" || typeof lng !== "number") return [];
     return [{
-      id: `${origin.countryCode}-${index}`,
+      id: `${origin.countryCode}-${origin.regionCode || index}`,
       country: origin.country || fallback?.country || origin.countryCode,
       countryCode: origin.countryCode || fallback?.countryCode || "??",
+      region: origin.region || "",
+      regionCode: origin.regionCode || "",
       city: origin.city || fallback?.city || "",
       ip: origin.ip || fallback?.ip || "—",
       lat,
