@@ -617,5 +617,7 @@ def test_no_backup_artifacts_are_tracked():
         pytest.skip("git unavailable")
     assert not [path for path in tracked if "backups/" in path]
     assert not [path for path in tracked if Path(path).name == "manifest.json"]
-    assert "deploy/elastic/.env" not in tracked
-    assert "deploy/elastic/.env.example" in tracked
+    # El stack Elastic fue retirado; el contrato sigue siendo que ningún .env
+    # real se versiona y que el ejemplo canónico permanece en el árbol.
+    assert not [path for path in tracked if Path(path).name == ".env"]
+    assert ".env.example" in tracked

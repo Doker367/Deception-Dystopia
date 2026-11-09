@@ -81,6 +81,7 @@ class EventStore:
                     observed_at TEXT NOT NULL, kind TEXT NOT NULL, source TEXT NOT NULL,
                     payload BLOB NOT NULL, PRIMARY KEY(sensor,event_id));
                 CREATE INDEX IF NOT EXISTS brute ON events(sensor,device,source,kind,received_epoch);
+                CREATE INDEX IF NOT EXISTS idx_events_source_observed ON events(source,observed_at);
                 CREATE INDEX IF NOT EXISTS received_order ON events(received_epoch DESC,sensor DESC,event_id DESC);
                 CREATE TABLE IF NOT EXISTS outbox (
                     sensor TEXT NOT NULL, event_id TEXT NOT NULL, rule TEXT NOT NULL,

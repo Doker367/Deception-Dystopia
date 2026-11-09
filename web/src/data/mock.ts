@@ -260,6 +260,26 @@ export const ATTACK_ORIGINS: AttackOrigin[] = [
 
 export const EVENTS: EventRow[] = [];
 
+// Muestra sintética para la ficha de origen en modo demostración. No pretende
+// representar el total del panel: solo permite recorrer la pantalla sin sesión.
+export const DEMO_EVENTS: EventRow[] = ATTACK_ORIGINS.flatMap((origin, originIndex) =>
+  Array.from({ length: 3 }, (_, sampleIndex) => ({
+    id: `demo-${origin.id}-${sampleIndex}`,
+    timestamp: new Date(Date.now() - (originIndex * 11 + sampleIndex * 4 + 1) * 60_000).toISOString(),
+    sensor: origin.sensor,
+    device: `sensor-${origin.sensor}`,
+    source: origin.ip,
+    country: origin.country,
+    countryCode: origin.countryCode,
+    kind: "alert",
+    proto: origin.protocol,
+    port: origin.protocol === "SSH" ? 22 : origin.protocol === "HTTP" ? 80 : 0,
+    action: `Intento observado · ${origin.protocol}`,
+    severity: origin.severity,
+    message: `Actividad de demostración atribuida a ${origin.city} (${origin.country}).`,
+  })),
+);
+
 export const HONEYPOTS: Honeypot[] = [
   {
     id: "cowrie",

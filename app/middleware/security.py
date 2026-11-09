@@ -87,6 +87,10 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         if "server" in headers:
             del headers["server"]
 
+        # Per-IP evidence and private analyst notes must never be cached.
+        if request.url.path.startswith("/api/investigations/"):
+            headers["Cache-Control"] = "no-store"
+
         # No cachear el HTML/JS del dashboard (evita servir JS viejo tras
         # una actualización y que el usuario tenga que forzar recarga).
         if request.url.path in ("/", "/app", "/favicon.svg"):
