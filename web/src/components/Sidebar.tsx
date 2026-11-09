@@ -44,9 +44,10 @@ interface SidebarProps {
   mobileOpen: boolean;
   onCloseMobile: () => void;
   dataMode: DataMode;
+  collectorStatus: "ok" | "stale" | "missing" | null;
 }
 
-export function Sidebar({ active, onNavigate, mobileOpen, onCloseMobile, dataMode }: SidebarProps) {
+export function Sidebar({ active, onNavigate, mobileOpen, onCloseMobile, dataMode, collectorStatus }: SidebarProps) {
   let lastGroup: NavItem["group"] | null = null;
   return (
     <>
@@ -94,6 +95,10 @@ export function Sidebar({ active, onNavigate, mobileOpen, onCloseMobile, dataMod
               <strong>Entorno de laboratorio</strong>
             </div>
             <p>SQLite local · {dataMode === "live" ? "datos en vivo" : dataMode === "error" ? "BFF sin conexión" : "datos de demostración"}</p>
+            <p className="collector-state" title={collectorStatus === "ok" ? "El colector está escribiendo en SQLite" : collectorStatus === "stale" ? "Sin latido del colector; revisa el servicio" : "No hay heartbeat del colector"}>
+              <span className={`status-dot ${collectorStatus ?? "missing"}`} />
+              {dataMode !== "live" ? "colector no aplica (demo)" : collectorStatus === "ok" ? "colector activo" : collectorStatus === "stale" ? "colector sin latido" : "colector desconectado"}
+            </p>
             <div className="system-meta">
               <span><ShieldCheck size={13} /> Sin cambios de red</span>
               <span className="mono">c1</span>

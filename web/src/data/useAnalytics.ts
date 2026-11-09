@@ -92,7 +92,26 @@ export interface AnalyticsSnapshot {
   origins: AttackOrigin[];
   events: EventRow[];
   totalEvents: number;
+  collectorHealth: CollectorHealth | null;
   refresh: () => void;
+}
+
+export type CollectorStatus = "ok" | "stale" | "missing";
+
+export interface CollectorHealth {
+  status: CollectorStatus;
+  lastPollAt: string | null;
+  ageSeconds: number | null;
+  polls: number | null;
+}
+
+interface ApiAnalyticsHealth {
+  collector?: {
+    status?: string;
+    last_poll_at?: string | null;
+    age_seconds?: number | null;
+    polls?: number | null;
+  };
 }
 
 const DEMO_OVERVIEW: AnalyticsOverview = {
@@ -182,8 +201,45 @@ export function useAnalytics(range: string): AnalyticsSnapshot {
   const [origins, setOrigins] = useState<AttackOrigin[]>(demoOrigins);
   const [events, setEvents] = useState<EventRow[]>(demoEvents);
   const [totalEvents, setTotalEvents] = useState(DEMO_OVERVIEW.totalEvents);
+  const [collectorHealth, setCollectorHealth] = useState<CollectorHealth | null>(null);
 
   const refresh = useCallback(() => setNonce((value) => value + 1), []);
+
+  useEffect(() => {
+    if (mode !== "live") {
+      setCollectorHealth(null);
+      return;
+    }
+    let cancelled = false;
+    const controller = new AbortController();
+    const load = () => {
+      apiGet<ApiAnalyticsHealth>("/api/analytics/health", controller.signal)
+        .then((payload) => {
+          if (cancelled) return;
+          const collector = payload.collector;
+          const status: CollectorStatus =
+            collector?.status === "ok" || collector?.status === "stale" ? collector.status : "missing";
+          setCollectorHealth({
+            status,
+            lastPollAt: collector?.last_poll_at ?? null,
+            ageSeconds: collector?.age_seconds ?? null,
+            polls: collector?.polls ?? null,
+          });
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setCollectorHealth({ status: "missing", lastPollAt: null, ageSeconds: null, polls: null });
+          }
+        });
+    };
+    load();
+    const timer = window.setInterval(load, 30_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      controller.abort();
+    };
+  }, [mode, nonce]);
 
   useEffect(() => {
     const token = getToken();
@@ -247,8 +303,8 @@ export function useAnalytics(range: string): AnalyticsSnapshot {
   }, [nonce, range]);
 
   return useMemo(
-    () => ({ mode, loading, error, overview, timeline, origins, events, totalEvents, refresh }),
-    [mode, loading, error, overview, timeline, origins, events, totalEvents, refresh],
+    () => ({ mode, loading, error, overview, timeline, origins, events, totalEvents, collectorHealth, refresh }),
+    [mode, loading, error, overview, timeline, origins, events, totalEvents, collectorHealth, refresh],
   );
 }
 
