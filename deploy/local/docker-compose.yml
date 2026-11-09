@@ -88,7 +88,9 @@ services:
 
   dionaea:
     <<: *honeypot
-    build: {context: ../../docker/deception/dionaea, dockerfile: Dockerfile}
+    # Imagen prebuilt: el master upstream ya no compila con Python 3.14
+    # (módulo Python/Cython). La imagen 0.12.5 existe en el servidor y se
+    # reconstruye con `make dionaea-image` cuando upstream lo permita.
     image: dystopia/honeypot-dionaea:0.12.5
     user: "2000:2000"
     cap_add: [NET_BIND_SERVICE]
