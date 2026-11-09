@@ -317,6 +317,13 @@ def _src_ip(raw: dict) -> str:
     ip = canonical_ip(value)
     if ip:
         return ip
+    # RedisHoneyPot escribe ``addr: "ip:puerto"`` en vez de un campo src_ip.
+    addr = _text(raw, "addr")
+    if addr:
+        host = addr.rsplit(":", 1)[0] if ":" in addr else addr
+        ip = canonical_ip(host)
+        if ip:
+            return ip
     # OpenCanary ``src_host`` is a hostname in the fixture; fall back to its
     # nested logdata when present, otherwise fail closed.
     logdata = raw.get("logdata")
@@ -328,7 +335,13 @@ def _src_ip(raw: dict) -> str:
 
 
 def _src_port(raw: dict):
-    return _int(raw.get("src_port") or raw.get("source_port") or raw.get("remote_port"))
+    port = _int(raw.get("src_port") or raw.get("source_port") or raw.get("remote_port"))
+    if port is not None:
+        return port
+    addr = _text(raw, "addr")
+    if addr and ":" in addr:
+        return _int(addr.rsplit(":", 1)[1])
+    return None
 
 
 def _detail(raw: dict, engine: str, etype: str) -> dict:

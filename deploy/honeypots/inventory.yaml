@@ -125,7 +125,7 @@ engines:
       local_image: dystopia/honeypot-dionaea:0.12.5
       base_reference: ubuntu:26.04
       base_digest: sha256:6a06111c3b0a8600feadb270aec771dc239bf407b25625f93f44ab00e11f4d3c
-      upstream_commit: 78af2ff2a0f1b62ac7cc5858bac2ab46898c9cc0
+      upstream_commit: 4e459f1b672a5b4c1e8335c0bff1b93738019215
     config:
       file: dionaea.cfg
       target: /opt/dionaea/etc/dionaea/dionaea.cfg

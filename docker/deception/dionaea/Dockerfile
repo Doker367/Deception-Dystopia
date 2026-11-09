@@ -1,7 +1,7 @@
 # Dionaea — Dystopia sensor artifact.
 #
-# Built from a pinned upstream commit (no `latest`). Upstream 0.12.5 vendors
-# libemu, so the build no longer depends on archived Debian packages.
+# Built from a pinned upstream commit (no `latest`). El master actual ya no
+# vendoriza libemu; se desactiva el módulo emu (no hace falta para FTP/SMB).
 #
 # Upstream: https://github.com/DinoTools/dionaea
 # Upstream license: GPL-2.0-or-later (see the upstream LICENSES directory).
@@ -13,7 +13,9 @@
 FROM ubuntu:26.04@sha256:6a06111c3b0a8600feadb270aec771dc239bf407b25625f93f44ab00e11f4d3c AS builder
 
 ARG DEBIAN_FRONTEND=noninteractive
-ARG DIONAEA_COMMIT=78af2ff2a0f1b62ac7cc5858bac2ab46898c9cc0
+# Upstream reescribió el commit 78af2ff (ya no existe). Pin al HEAD
+# verificado de master el 2026-11-08.
+ARG DIONAEA_COMMIT=4e459f1b672a5b4c1e8335c0bff1b93738019215
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -42,7 +44,11 @@ RUN git clone https://github.com/DinoTools/dionaea.git /src \
 
 RUN mkdir -p /src/build \
     && cd /src/build \
-    && cmake -DCMAKE_INSTALL_PREFIX:PATH=/opt/dionaea -DCMAKE_BUILD_TYPE=RelWithDebInfo .. \
+    && cmake -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+          -DWITH_MODULE_EMU=OFF \
+          -DRELEASE_BUILD=ON \
+          -DCMAKE_INSTALL_PREFIX:PATH=/opt/dionaea \
+          -DCMAKE_BUILD_TYPE=RelWithDebInfo .. \
     && make -j"$(nproc)" \
     && make install
 

@@ -28,6 +28,13 @@ RUN groupadd --gid 2000 opencanary \
 
 COPY --chown=2000:2000 opencanary.conf /etc/opencanaryd/opencanary.conf
 
+# El wrapper opencanaryd usa `sudo -E` incluso cuando ya corre como usuario
+# sin privilegios. Un shim que solo elimina -E y executa el comando evita
+# instalar sudo real (y no eleva privilegios: USER 2000 no puede).
+RUN printf '#!/bin/sh\n[ "$1" = "-E" ] && shift\nexec "$@"\n' \
+      > /usr/local/bin/sudo \
+    && chmod 0755 /usr/local/bin/sudo
+
 USER 2000:2000
 
 # Process-level liveness check. Avoids self-connections that would create

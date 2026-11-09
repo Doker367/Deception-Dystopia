@@ -607,9 +607,29 @@ pre {
   background: var(--faint);
 }
 
-.status-dot.live {
+.status-dot.live,
+.status-dot.ok {
   background: var(--cyan);
   box-shadow: 0 0 0 3px rgba(53, 230, 196, 0.1), 0 0 10px rgba(53, 230, 196, 0.35);
+}
+
+.status-dot.stale {
+  background: #f5b84b;
+  box-shadow: 0 0 0 3px rgba(245, 184, 75, 0.12);
+}
+
+.status-dot.missing {
+  background: #ff6b6b;
+  box-shadow: 0 0 0 3px rgba(255, 107, 107, 0.12);
+}
+
+.collector-state {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--muted);
 }
 
 .dropdown {

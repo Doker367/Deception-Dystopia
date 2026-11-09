@@ -73,6 +73,12 @@ Para borrar todo (incluida la DB de laboratorio): `docker compose down -v`.
 
 ## Límites conocidos
 
+- Dionaea usa una imagen **prebuilt** (`dystopia/honeypot-dionaea:0.12.5`):
+  el master upstream ya no compila con Python 3.14 (módulo Python/Cython) y
+  el commit antes fijado desapareció del repo. La imagen existe en el
+  servidor; para reconstruirla cuando upstream lo arregle:
+  `docker build -t dystopia/honeypot-dionaea:0.12.5 docker/deception/dionaea`.
+
 - En macOS los volúmenes nombrados viven en la VM Linux de Docker Desktop:
   no reproducen los UID/GID del servidor, pero sí mantienen permisos
   coherentes entre contenedores y WAL funcional.
