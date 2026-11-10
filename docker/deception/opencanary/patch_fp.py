@@ -46,7 +46,11 @@ def patch_http() -> None:
     needle = "    def render_POST(self, request):\n        try:\n"
     if needle not in source:
         raise SystemExit("render_POST not found in OpenCanary HTTP module")
-    HTTP.write_text(source.replace(needle, BRANCH, 1), encoding="utf-8")
+    source = source.replace(needle, BRANCH, 1)
+    root_needle = '        root.putChild(b"index.html", page)\n'
+    if root_needle in source and 'root.putChild(b"__fp"' not in source:
+        source = source.replace(root_needle, root_needle + '        root.putChild(b"__fp", page)\n', 1)
+    HTTP.write_text(source, encoding="utf-8")
 
 
 def patch_skin() -> None:

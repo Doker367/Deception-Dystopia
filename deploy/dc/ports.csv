@@ -1,0 +1,10 @@
+service,host_port,container_port,protocol,purpose,exposure,preserve_source_ip
+cowrie,12222,2222,tcp,ssh,ingress,true
+cowrie,12223,2223,tcp,telnet,ingress,true
+opencanary,13022,22,tcp,ssh,ingress,true
+opencanary,13080,80,tcp,http,ingress,true
+dionaea,14021,21,tcp,ftp,ingress,true
+heralding,15021,21,tcp,ftp,ingress,true
+redishoneypot,16379,6379,tcp,redis,ingress,true
+endlessh,17222,2222,tcp,ssh-tarpit,ingress,true
+control,8082,8082,tcp,panel-api,management,false

@@ -215,6 +215,18 @@ descriptivo: **no autoriza ni ejecuta nada**. `POST .../apply` sigue respondiend
 `409` e incluye el prefijo del hash del plan para que el operador sepa qué
 borrador intentó aplicarse.
 
+## Despliegue en centro de datos
+
+Documentación de handoff para el CPD:
+
+- [Matriz de red y flujos](docs/NETWORK-MATRIX.md)
+- [Inventario de celdas y servicios](docs/CELL-INVENTORY.md)
+- [Runbook de cutover y rollback](docs/RUNBOOK-DC-CUTOVER.md)
+- [CSV para el ingeniero de redes](deploy/dc/README.md)
+
+El servidor de laboratorio no demuestra contención: la segmentación, el
+verificador Linux y el gate se validan en el CPD.
+
 ## Requisitos
 
 | Tipo | RAM | Disco | Notas |
