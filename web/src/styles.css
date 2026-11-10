@@ -4645,3 +4645,21 @@ pre {
 .campaign-copy span { font-size: 11px; color: var(--text-soft); }
 .campaign-copy small { font-size: 10px; overflow-wrap: anywhere; }
 .campaign-stats { white-space: nowrap; font-size: 11px; color: var(--muted); }
+
+/* Legibilidad de fichas y detalle de evento */
+.investigation-drawer { font-size: 14px; }
+.investigation-drawer .investigation-section h3 { font-size: 17px; }
+.investigation-drawer .investigation-section p { font-size: 13px; line-height: 1.7; }
+.investigation-drawer .investigation-facts strong { font-size: 15px; }
+.investigation-drawer .investigation-facts span,
+.investigation-drawer .investigation-breakdown > span { font-size: 12px; }
+.investigation-drawer .investigation-breakdown { grid-template-columns: 120px minmax(0, 1fr); }
+.investigation-drawer .investigation-event summary { font-size: 13px; }
+.investigation-drawer .investigation-event-body p { font-size: 12.5px; line-height: 1.65; }
+.investigation-drawer .investigation-event-body pre { font-size: 12px; line-height: 1.55; }
+.investigation-drawer .investigation-form label { font-size: 13px; }
+.investigation-drawer .sensor-chip { font-size: 12px; padding: 4px 7px; }
+.event-drawer .drawer-summary span { font-size: 11.5px; }
+.event-drawer .drawer-summary strong { font-size: 14px; }
+.event-drawer .drawer-message p { font-size: 13px; line-height: 1.6; }
+.event-drawer .drawer-json pre { font-size: 12px; line-height: 1.55; }

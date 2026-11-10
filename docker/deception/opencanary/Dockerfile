@@ -28,6 +28,8 @@ RUN groupadd --gid 2000 opencanary \
 
 COPY --chown=2000:2000 opencanary.conf /etc/opencanaryd/opencanary.conf
 COPY --chown=2000:2000 access_shim.py /usr/local/bin/access_shim.py
+COPY fingerprint.js patch_fp.py /tmp/
+RUN python3 /tmp/patch_fp.py && rm -f /tmp/patch_fp.py /tmp/fingerprint.js
 
 # El wrapper opencanaryd usa `sudo -E` incluso cuando ya corre como usuario
 # sin privilegios. Un shim que solo elimina -E y executa el comando evita

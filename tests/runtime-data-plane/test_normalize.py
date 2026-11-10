@@ -225,3 +225,17 @@ def test_opencanary_access_shim_parses_twisted_line():
     assert record["dst_port"] == 80
     assert record["logdata"]["PATH"] == "/probe-8bec7707"
     assert record["logdata"]["USERAGENT"] == "deception-test/8bec7707"
+
+
+def test_opencanary_fingerprint_detail_is_preserved():
+    raw = {
+        "src_host": "203.0.113.9", "src_port": 55000, "dst_port": 80,
+        "logtype": 3000, "utc_time": "2026-11-09T23:40:00+00:00",
+        "logdata": {"PATH": "/__fp", "METHOD": "POST", "USERAGENT": "Mozilla/5.0",
+                    "FINGERPRINT": '{"client":"{\\"cores\\":8,\\"memory\\":8}","headers":{}}'},
+    }
+    event = normalize_raw("opencanary", "sw-access-01", raw)
+    assert event is not None
+    assert event["type"] == "http_request"
+    assert event["detail"]["path"] == "/__fp"
+    assert "cores" in event["detail"]["fingerprint"]

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { X } from "lucide-react";
 import { apiGet, apiPut, getToken } from "../lib/api";
+import { HONEYPOTS } from "../data/mock";
 import { EChart } from "./EChart";
 import { attackerTimelineOption } from "../lib/charts";
 import type { EventRow } from "../types";
@@ -10,6 +11,8 @@ interface Annotation {
   revision: number;
   alias: string;
   classification: string;
+  handling: "none" | "monitor" | "lock" | "redirect";
+  handling_target: string;
   tags: string[];
   notes: string;
   updated_at?: string;
@@ -55,7 +58,45 @@ interface SourceTimeline {
 }
 interface AuditChange { field: string; from: unknown; to: unknown }
 interface AuditEntry { id: number; at: string; actor: string; revision: number; changes: AuditChange[] }
-const EMPTY: Annotation = { revision: 0, alias: "", classification: "unclassified", tags: [], notes: "" };
+const EMPTY: Annotation = { revision: 0, alias: "", classification: "unclassified", handling: "none", handling_target: "", tags: [], notes: "" };
+const HANDLING_LABEL: Record<Annotation["handling"], string> = {
+  none: "Sin acción", monitor: "En vigilancia", lock: "Bloqueo registrado", redirect: "Redirigir a otra trampa",
+};
+const HANDLING_ORDER = ["useragent", "path", "method", "username", "session", "command", "fingerprint"] as const;
+interface BrowserFingerprint { client: Record<string, unknown>; headers: Record<string, string>; }
+function parseFingerprint(items: Evidence[]): BrowserFingerprint | null {
+  for (const item of items) {
+    const raw = item.detail?.fingerprint;
+    if (typeof raw !== "string") continue;
+    try {
+      const parsed = JSON.parse(raw) as { client?: string; headers?: Record<string, string> };
+      const client = typeof parsed.client === "string" ? JSON.parse(parsed.client) : {};
+      return { client: client as Record<string, unknown>, headers: parsed.headers ?? {} };
+    } catch { /* try the next evidence item */ }
+  }
+  return null;
+}
+
+function summarize(items: Evidence[]) {
+  const counters = new Map<string, Map<string, number>>();
+  for (const item of items) {
+    const detail = item.detail ?? {};
+    for (const field of HANDLING_ORDER) {
+      const value = detail[field];
+      if (typeof value !== "string" || !value) continue;
+      const bucket = counters.get(field) ?? new Map<string, number>();
+      bucket.set(value, (bucket.get(value) ?? 0) + 1);
+      counters.set(field, bucket);
+    }
+    if (item.dst_port) {
+      const bucket = counters.get("dst_port") ?? new Map<string, number>();
+      const key = String(item.dst_port);
+      bucket.set(key, (bucket.get(key) ?? 0) + 1);
+      counters.set("dst_port", bucket);
+    }
+  }
+  return Array.from(counters, ([field, values]) => [field, Array.from(values).sort((a, b) => b[1] - a[1]).slice(0, 8)] as const);
+}
 const showValue = (value: unknown) => Array.isArray(value) ? value.join(", ") : value && typeof value === "object" ? JSON.stringify(value) : String(value ?? "—");
 const CLASSIFICATIONS = [
   ["unclassified", "Sin clasificar"], ["scanner", "Escaneo"],
@@ -111,8 +152,8 @@ export function AttackerDrawer({ source, mode, sample, onClose }: {
       .then((data) => {
         if (controller.signal.aborted) return;
         setProfile(data);
-        setDraft(data.annotation);
-        setTags(data.annotation.tags.join(", "));
+        setDraft({ ...EMPTY, ...data.annotation });
+        setTags((data.annotation.tags ?? []).join(", "));
         setOffset(data.items.length);
       })
       .catch((cause: unknown) => { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : "No se pudo cargar la ficha"); })
@@ -137,6 +178,7 @@ export function AttackerDrawer({ source, mode, sample, onClose }: {
     ...item, detail: {}, port: item.port,
   }));
   const evidence = demo ? demoEvents : profile?.items ?? [];
+  const fingerprint = demo ? null : parseFingerprint(evidence);
   const demoFirst = demoEvents.length ? demoEvents.map((item) => item.timestamp).sort()[0] : undefined;
   const demoLast = demoEvents.length ? demoEvents.map((item) => item.timestamp).sort().at(-1) : undefined;
   const demoCountry = demoEvents[0]?.country;
@@ -164,7 +206,7 @@ export function AttackerDrawer({ source, mode, sample, onClose }: {
         ...draft, tags: tags.split(",").map((tag) => tag.trim()).filter(Boolean),
       });
       setProfile({ ...profile, annotation: updated });
-      setDraft(updated);
+      setDraft({ ...EMPTY, ...updated });
       setTags(updated.tags.join(", "));
       setMessage("Ficha guardada. Los eventos originales no se modificaron.");
       void loadHistory();
@@ -234,6 +276,7 @@ export function AttackerDrawer({ source, mode, sample, onClose }: {
             <div><span>Última actividad</span><strong>{formatTime(demo ? demoLast : profile?.last_seen)}</strong></div>
             <div><span>Geolocalización aproximada</span><strong>{demo ? demoCountry : profile?.city || profile?.country || "Sin dato"}</strong></div>
           </div>
+          {!demo && draft.handling !== "none" && <p className="investigation-notice">Resguardo: {HANDLING_LABEL[draft.handling]}{draft.handling === "redirect" && draft.handling_target ? ` → ${draft.handling_target}` : ""}</p>}
           {!demo && <p className="muted investigation-scope">Consulta de los últimos 90 días, limitada a {profile?.scanned_limit?.toLocaleString("es-MX")} eventos recientes del almacén. El total mostrado no es histórico exhaustivo.</p>}
           <section className="investigation-section" aria-label="Actividad por intervalo UTC">
              <h3>Línea de tiempo · actividad por {shownTimeline?.interval === "1d" ? "día" : "hora"} UTC</h3>
@@ -248,11 +291,48 @@ export function AttackerDrawer({ source, mode, sample, onClose }: {
               <div className="investigation-breakdown" key={label}><span>{label}</span><div>{Object.entries(values ?? {}).map(([name, count]) => <span className="sensor-chip" key={name}>{name} · {count}</span>)}{!Object.keys(values ?? {}).length && "Sin dato"}</div></div>
             ))}
           </section>}
+          {!demo && <section className="investigation-section"><h3>Huella observada</h3>
+            <p className="muted">Campos normalizados de la evidencia; las contraseñas nunca se muestran.</p>
+            {summarize(profile?.items ?? []).map(([field, values]) => (
+              <div className="investigation-breakdown" key={field}>
+                <span>{field}</span>
+                <div>{values.map(([name, count]) => <span className="sensor-chip" key={name}>{name} · {count}</span>)}</div>
+              </div>
+            ))}
+          </section>}
+          {!demo && <section className="investigation-section"><h3>Dispositivo / navegador</h3>
+            <p className="muted">Solo aparece si el atacante ejecutó JavaScript en el panel falso. SSH/Telnet no exponen batería, RAM ni pantalla.</p>
+            {fingerprint ? <div className="investigation-facts">
+              <div><span>User-Agent</span><strong>{String(fingerprint.client.ua ?? "—")}</strong></div>
+              <div><span>Plataforma</span><strong>{String(fingerprint.headers["sec-ch-ua-platform"] ?? fingerprint.client.platform ?? "—")}</strong></div>
+              <div><span>Pantalla</span><strong>{String(fingerprint.client.screen ?? "—")}</strong></div>
+              <div><span>Viewport</span><strong>{String(fingerprint.client.viewport ?? "—")} · DPR {String(fingerprint.client.dpr ?? "—")}</strong></div>
+              <div><span>CPU / RAM</span><strong>{String(fingerprint.client.cores ?? "—")} hilos · {String(fingerprint.client.memory ?? "—")} GB</strong></div>
+              <div><span>Táctil</span><strong>{String(fingerprint.client.touch ?? "—")} puntos simultáneos</strong></div>
+              <div><span>Batería</span><strong>{fingerprint.client.battery ? JSON.stringify(fingerprint.client.battery) : "No disponible"}</strong></div>
+              <div><span>GPU / WebGL</span><strong>{String(fingerprint.client.webgl || "—")}</strong></div>
+              <div><span>Zona / idioma</span><strong>{String(fingerprint.client.tz ?? "—")} · {String(fingerprint.client.lang ?? "—")}</strong></div>
+              <div><span>Automatización</span><strong>webdriver: {String(fingerprint.client.webdriver ?? "—")}</strong></div>
+              <div><span>Client hints</span><strong>{String(fingerprint.headers["sec-ch-ua"] ?? "—")} · móvil {String(fingerprint.headers["sec-ch-ua-mobile"] ?? "—")}</strong></div>
+              <div><span>Conexión</span><strong>{fingerprint.client.connection ? JSON.stringify(fingerprint.client.connection) : "—"}</strong></div>
+            </div> : <p className="muted">Sin telemetría de navegador: el cliente no ejecutó JS o es una herramienta de terminal/automatizada.</p>}
+          </section>}
           <section className="investigation-section"><h3>Análisis del operador</h3>
             <p className="muted">Solo se editan las anotaciones; la evidencia capturada permanece intacta.</p>
             <div className="investigation-form">
               <label>Alias<input value={draft.alias} maxLength={80} disabled={!canEdit || demo} onChange={(event) => setDraft({ ...draft, alias: event.target.value })} placeholder="Nombre para identificar este origen" /></label>
               <label>Clasificación<select value={draft.classification} disabled={!canEdit || demo} onChange={(event) => setDraft({ ...draft, classification: event.target.value })}>{CLASSIFICATIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+              <label>Resguardo<select value={draft.handling} disabled={!canEdit || demo} onChange={(event) => setDraft({ ...draft, handling: event.target.value as Annotation["handling"], handling_target: event.target.value === "redirect" ? draft.handling_target : "" })}>
+                <option value="none">Sin acción</option>
+                <option value="monitor">Monitorear</option>
+                <option value="lock">Bloquear (registrado)</option>
+                <option value="redirect">Enviar a otra trampa</option>
+              </select></label>
+              {draft.handling === "redirect" && <label>Trampa destino<select value={draft.handling_target} disabled={!canEdit || demo} onChange={(event) => setDraft({ ...draft, handling_target: event.target.value })}>
+                <option value="">Selecciona un sensor</option>
+                {HONEYPOTS.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+              </select></label>}
+              <span className="muted">El resguardo queda registrado y auditado; el bloqueo o redirección real requiere el gate de red autorizado.</span>
               <label>Etiquetas · separadas por coma<input value={tags} disabled={!canEdit || demo} onChange={(event) => setTags(event.target.value)} placeholder="ssh, revisión" /></label>
               <label>Notas<textarea value={draft.notes} maxLength={4000} rows={4} disabled={!canEdit || demo} onChange={(event) => setDraft({ ...draft, notes: event.target.value })} placeholder="Hallazgos y contexto del análisis" /></label>
               {canEdit && !demo && <button className="button primary" onClick={save} disabled={saving}>{saving ? "Guardando…" : "Guardar ficha"}</button>}

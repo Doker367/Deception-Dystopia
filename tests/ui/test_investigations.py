@@ -72,7 +72,7 @@ def test_attacker_profile_evidence_roles_and_conflicts(client_roles):
     trail = client.get(path + "/history", headers=tokens["viewer"]).json()["items"]
     assert len(trail) == 1
     assert trail[0]["actor"] == "operator" and trail[0]["revision"] == 1
-    assert {change["field"] for change in trail[0]["changes"]} == {"alias", "classification", "tags", "notes"}
+    assert {change["field"] for change in trail[0]["changes"]} == {"alias", "classification", "handling", "handling_target", "tags", "notes"}
     with sqlite3.connect(db) as conn:
         assert conn.execute("SELECT detail FROM deception_events WHERE id=1").fetchone()[0] == '{"engine":"cowrie","command":"id"}'
 
@@ -259,3 +259,24 @@ def test_attacker_prefix_search_validation_and_bound(client_roles, monkeypatch, 
     assert client.get(url, params={"query": "203"}, headers=tokens["viewer"]).json()["items"] == []
     assert client.get("/api/investigations/attackers/203.0.113.7/timeline", headers=tokens["viewer"]).json()["total"] == 0
     assert not missing.exists()
+
+
+def test_attacker_handling_is_validated_and_audited(client_roles):
+    client, tokens, _, _ = client_roles
+    path = "/api/investigations/attackers/203.0.113.7/annotation"
+    base = {"revision": 0, "alias": "watch", "classification": "other",
+            "handling": "redirect", "handling_target": "unknown", "tags": [], "notes": ""}
+    assert client.put(path, json=base, headers=tokens["operator"]).status_code == 422
+    base["handling_target"] = "cowrie"
+    saved = client.put(path, json=base, headers=tokens["operator"])
+    assert saved.status_code == 200
+    assert saved.json()["handling"] == "redirect"
+    assert saved.json()["handling_target"] == "cowrie"
+
+    monitor = {**base, "revision": 1, "handling": "monitor", "handling_target": ""}
+    updated = client.put(path, json=monitor, headers=tokens["operator"])
+    assert updated.status_code == 200
+    assert updated.json()["handling"] == "monitor"
+    assert updated.json()["handling_target"] == ""
+    trail = client.get(path.replace("/annotation", "/history"), headers=tokens["viewer"]).json()["items"]
+    assert any(change["field"] == "handling" for change in trail[0]["changes"])

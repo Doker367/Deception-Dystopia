@@ -97,6 +97,17 @@ OpenCanary registra las peticiones HTTP arbitrarias (incluidos 404) en el log
 de Twisted; un shim las replica como JSONL en `opencanary.log` para que el
 colector guarde `path`, `method` y `useragent` como `http_request` (T1190).
 
+La ficha permite marcar el **resguardo** de una IP: sin acción, monitorear,
+bloqueo registrado o redirección a otra trampa (con sensor destino validado).
+El estado queda auditado; la aplicación real de bloqueo/redirección sigue
+requiriendo el gate de red autorizado.
+
+El panel HTTP falso incluye un beacon de navegador (`/__fp`) que, solo si el
+atacante ejecuta JavaScript, registra plataforma, pantalla, CPU/RAM estimadas,
+puntos táctiles, batería, WebGL, zona horaria y client hints. SSH/Telnet no
+pueden aportar esos datos de dispositivo. El fingerprint se muestra en la
+ficha; si no hay telemetría se indica que el cliente fue de terminal o no-JS.
+
 `GET /api/analytics/campaigns` correlaciona una misma IP que toca varios
 señuelos o puertos en una ventana de cinco minutos. Devuelve una campaña
 `port_scan` de severidad `high`, MITRE `T1046`, con sensores, puertos y ventana.

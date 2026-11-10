@@ -29,7 +29,7 @@ MAX_BYTES = 64 * 1024 * 1024
 AUDIT_MAX_ROWS = 10_000
 SENSORS = frozenset({"cowrie", "opencanary", "dionaea", "heralding", "redishoneypot", "endlessh"})
 DRAFT_FIELDS = ("display_name", "description", "memory_mib", "cpus", "pids_limit")
-PROFILE_FIELDS = ("alias", "classification", "tags", "notes")
+PROFILE_FIELDS = ("alias", "classification", "handling", "handling_target", "tags", "notes")
 # Nombres visibles de la interfaz. El inventario estricto no admite campos extra,
 # así que esta etiqueta vive con el servicio y no altera su contrato.
 DISPLAY_NAMES = {"cowrie": "Cowrie", "opencanary": "OpenCanary", "dionaea": "Dionaea",
