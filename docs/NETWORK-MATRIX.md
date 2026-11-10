@@ -118,3 +118,10 @@ matriz y el preflight de bindings.
 > El estado actual del laboratorio no demuestra contención. La evidencia Linux
 > del verificador y el gate siguen siendo obligatorios antes de afirmar
 > aislamiento.
+
+**Nota de laboratorio:** si se usan reglas `from <subred Docker> lookup 100`
+para el retorno por WireGuard, añadir `ip rule add to 172.16.0.0/12 lookup main
+priority 999` antes del default de la tabla 100. Sin esa excepción, el propio
+host envía el tráfico a los contenedores por `wg0` y `127.0.0.1:<puerto>` deja
+de responder. En el CPD usar el diseño de marca de conntrack aprobado, no
+copiar el script del laboratorio.

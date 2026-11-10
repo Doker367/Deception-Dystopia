@@ -57,8 +57,11 @@ El panel de control publica `8082` solo en loopback y en la IP de Tailscale
   `DYSTOPIA_ANALYTICS_MAX_ROWS` (20 000 por defecto).
 - Auditoría de investigaciones: **10 000 filas** más recientes; presupuesto
   `investigations.db` **64 MiB**.
-- Logs de honeypots: sin rotación automática todavía; debe definirse en CPD.
-- Backups: **no hay timer programado**; solo snapshots manuales.
+- Logs de honeypots: rotación diaria del laboratorio con `copytruncate`,
+  7 rotaciones y corte a 50 MB (`deploy/server/lab/logrotate.d-dystopia`).
+- Backups del laboratorio: timer diario 03:15, retención local de 14 días en
+  `/var/backups/dystopia`, con `.backup` de SQLite, configuración y manifiesto
+  SHA-256. **Debe copiarse fuera del host antes del CPD.**
 
 ## 4. Identidades y permisos del host
 

@@ -1,0 +1,11 @@
+[Unit]
+Description=Dystopia private state backup
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/dystopia-backup.sh
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
