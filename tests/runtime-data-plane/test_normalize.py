@@ -216,6 +216,7 @@ def test_opencanary_access_shim_parses_twisted_line():
     shim = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(shim)
     record = shim.access_record(
+        '2026-11-09T23:30:00+0000 [twisted.python.log#info] '
         '"203.0.113.9" - - [09/Nov/2026:23:30:00 +0000] '
         '"GET /probe-8bec7707 HTTP/1.1" 404 266 "-" "deception-test/8bec7707"'
     )

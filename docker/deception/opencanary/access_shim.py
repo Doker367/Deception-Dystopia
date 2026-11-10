@@ -21,14 +21,14 @@ import sys
 
 LOG_PATH = os.environ.get("OPENCANARY_ACCESS_LOG", "/var/log/opencanary/opencanary.log")
 ACCESS = re.compile(
-    r'^"(?P<ip>[^"]+)" \S+ \S+ \[(?P<ts>[^\]]+)\] '
+    r'"(?P<ip>[^"]+)" \S+ \S+ \[(?P<ts>[^\]]+)\] '
     r'"(?P<method>[A-Z]+) (?P<path>\S+) (?P<proto>[^"]+)" '
     r'(?P<status>\d{3}) \S+ "(?P<ref>[^"]*)" "(?P<ua>[^"]*)"'
 )
 
 
 def access_record(line: str) -> dict | None:
-    match = ACCESS.match(line.strip())
+    match = ACCESS.search(line.strip())
     if match is None:
         return None
     try:
