@@ -143,10 +143,12 @@ probe externo autorizado y una ventana UTC de ≤10 minutos. Solo se comparte
 
 ## 7. Pendientes conocidos del laboratorio
 
-- Proxy Docker que dejó inaccesible `127.0.0.1:13080` desde el host tras
-  recrear OpenCanary; verificar antes de migrar.
-- MariaDB `3306` del host de laboratorio no forma parte de Dystopia; cerrar.
+- ~~Proxy Docker que dejó inaccesible `127.0.0.1:13080`~~: corregido con la
+  regla `to 172.16.0.0/12 lookup main pref 999` y persistido en
+  `dystopia-routing.sh`.
+- ~~MariaDB `3306`~~: cerrada a loopback y reglas UFW eliminadas.
+- ~~Backups programados~~: timer diario y restore de prueba PASS en el
+  laboratorio; falta copiar el backup fuera del host.
 - Debian 13 vs Ubuntu 24.04.
-- Backups programados y restauración aún no automatizados.
 - Verificador Linux/gate sin evidencia firmada: la contención sigue sin
   declararse.

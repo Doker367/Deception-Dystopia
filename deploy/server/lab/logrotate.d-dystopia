@@ -1,0 +1,29 @@
+/var/lib/docker/volumes/dystopia-local_cowrie_var/_data/log/cowrie/*.json
+/var/lib/docker/volumes/dystopia-local_opencanary_log/_data/*.log
+/var/lib/docker/volumes/dystopia-local_dionaea_var/_data/log/*.log
+/var/lib/docker/volumes/dystopia-local_heralding_log/_data/*.log
+/var/lib/docker/volumes/dystopia-local_heralding_log/_data/*.jsonl
+/var/lib/docker/volumes/dystopia-local_heralding_log/_data/*.csv
+/var/lib/docker/volumes/dystopia-local_redishoneypot_log/_data/*.log
+/var/lib/docker/volumes/dystopia-local_endlessh_log/_data/*.log
+{
+    daily
+    rotate 7
+    maxsize 50M
+    missingok
+    notifempty
+    copytruncate
+    compress
+    delaycompress
+    su root root
+}
+
+/var/log/dystopia-backup.log {
+    weekly
+    rotate 8
+    missingok
+    notifempty
+    copytruncate
+    compress
+    delaycompress
+}
