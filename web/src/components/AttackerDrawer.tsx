@@ -62,7 +62,7 @@ const EMPTY: Annotation = { revision: 0, alias: "", classification: "unclassifie
 const HANDLING_LABEL: Record<Annotation["handling"], string> = {
   none: "Sin acción", monitor: "En vigilancia", lock: "Bloqueo registrado", redirect: "Redirigir a otra trampa",
 };
-const HANDLING_ORDER = ["useragent", "path", "method", "username", "session", "command", "fingerprint"] as const;
+const HANDLING_ORDER = ["useragent", "path", "method", "username", "session", "command"] as const;
 interface BrowserFingerprint { client: Record<string, unknown>; headers: Record<string, string>; }
 function parseFingerprint(items: Evidence[]): BrowserFingerprint | null {
   for (const item of items) {
@@ -309,12 +309,12 @@ export function AttackerDrawer({ source, mode, sample, onClose }: {
               <div><span>Viewport</span><strong>{String(fingerprint.client.viewport ?? "—")} · DPR {String(fingerprint.client.dpr ?? "—")}</strong></div>
               <div><span>CPU / RAM</span><strong>{String(fingerprint.client.cores ?? "—")} hilos · {String(fingerprint.client.memory ?? "—")} GB</strong></div>
               <div><span>Táctil</span><strong>{String(fingerprint.client.touch ?? "—")} puntos simultáneos</strong></div>
-              <div><span>Batería</span><strong>{fingerprint.client.battery ? JSON.stringify(fingerprint.client.battery) : "No disponible"}</strong></div>
+              <div><span>Batería</span><strong>{fingerprint.client.battery ? `${String((fingerprint.client.battery as { level?: number }).level ?? "—")}% · ${(fingerprint.client.battery as { charging?: boolean }).charging ? "cargando" : "descargando"}` : "No disponible"}</strong></div>
               <div><span>GPU / WebGL</span><strong>{String(fingerprint.client.webgl || "—")}</strong></div>
               <div><span>Zona / idioma</span><strong>{String(fingerprint.client.tz ?? "—")} · {String(fingerprint.client.lang ?? "—")}</strong></div>
               <div><span>Automatización</span><strong>webdriver: {String(fingerprint.client.webdriver ?? "—")}</strong></div>
               <div><span>Client hints</span><strong>{String(fingerprint.headers["sec-ch-ua"] ?? "—")} · móvil {String(fingerprint.headers["sec-ch-ua-mobile"] ?? "—")}</strong></div>
-              <div><span>Conexión</span><strong>{fingerprint.client.connection ? JSON.stringify(fingerprint.client.connection) : "—"}</strong></div>
+              <div><span>Conexión</span><strong>{fingerprint.client.connection ? `${String((fingerprint.client.connection as { type?: string }).type ?? "—")}${(fingerprint.client.connection as { down?: number }).down ? ` · ${(fingerprint.client.connection as { down?: number }).down} Mbps` : ""}${(fingerprint.client.connection as { rtt?: number }).rtt ? ` · ${(fingerprint.client.connection as { rtt?: number }).rtt} ms` : ""}` : "—"}</strong></div>
             </div> : <p className="muted">Sin telemetría de navegador: el cliente no ejecutó JS o es una herramienta de terminal/automatizada.</p>}
           </section>}
           <section className="investigation-section"><h3>Análisis del operador</h3>
