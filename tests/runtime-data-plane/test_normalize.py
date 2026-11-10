@@ -47,7 +47,7 @@ def test_expected_type_and_proto_mapping(normalized):
     assert all(e["proto"] == "ssh" for e in by_engine["cowrie"])
 
     opencanary = by_engine["opencanary"]
-    assert [e["type"] for e in opencanary] == ["connect", "login_attempt", "login_attempt"]
+    assert [e["type"] for e in opencanary] == ["http_request", "login_attempt", "login_attempt"]
     assert [e["proto"] for e in opencanary] == ["http", "ssh", "mysql"]
 
     assert [e["type"] for e in by_engine["dionaea"]] == ["login_attempt", "login_attempt", "file_download"]
@@ -186,3 +186,41 @@ def test_cowrie_real_login_success_keeps_type():
     assert event["type"] == "login_success"
     assert event["detail"]["mitre"] == "T1110"
     assert "demo-password" not in json.dumps(event)
+
+
+def test_opencanary_http_access_becomes_http_request():
+    raw = {
+        "src_host": "203.0.113.9", "src_port": -1, "dst_host": "",
+        "dst_port": 80, "logtype": 3000, "utc_time": "2026-11-09T23:30:00+00:00",
+        "logdata": {"PATH": "/probe-8bec7707", "USERAGENT": "deception-test/8bec7707",
+                    "METHOD": "GET", "STATUS": "404", "PROTO": "HTTP/1.1"},
+        "message": '"203.0.113.9" - - [09/Nov/2026:23:30:00 +0000] "GET /probe-8bec7707 HTTP/1.1" 404 266 "-" "deception-test/8bec7707"',
+    }
+    event = normalize_raw("opencanary", "sw-access-01", raw)
+    assert event is not None
+    assert event["type"] == "http_request"
+    assert event["proto"] == "http"
+    assert event["detail"]["path"] == "/probe-8bec7707"
+    assert event["detail"]["useragent"] == "deception-test/8bec7707"
+    assert event["detail"]["method"] == "GET"
+    assert event["detail"]["mitre"] == "T1190"
+
+
+def test_opencanary_access_shim_parses_twisted_line():
+    import importlib.util
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[2] / "docker/deception/opencanary/access_shim.py"
+    spec = importlib.util.spec_from_file_location("opencanary_access_shim", path)
+    assert spec and spec.loader
+    shim = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(shim)
+    record = shim.access_record(
+        '"203.0.113.9" - - [09/Nov/2026:23:30:00 +0000] '
+        '"GET /probe-8bec7707 HTTP/1.1" 404 266 "-" "deception-test/8bec7707"'
+    )
+    assert record is not None
+    assert record["src_host"] == "203.0.113.9"
+    assert record["dst_port"] == 80
+    assert record["logdata"]["PATH"] == "/probe-8bec7707"
+    assert record["logdata"]["USERAGENT"] == "deception-test/8bec7707"
