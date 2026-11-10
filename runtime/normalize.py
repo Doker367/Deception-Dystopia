@@ -431,7 +431,8 @@ def _detail(raw: dict, engine: str, etype: str) -> dict:
                             ("useragent", "useragent"), ("USERAGENT", "useragent"),
                             ("method", "method"), ("METHOD", "method"),
                             ("host", "host"), ("HOSTNAME", "host"),
-                            ("USERNAME", "username"), ("SESSION", "session")):
+                            ("USERNAME", "username"), ("SESSION", "session"),
+                            ("FINGERPRINT", "fingerprint")):
             value = logdata.get(key)
             if value not in (None, "") and target not in detail:
                 detail[target] = str(value)

@@ -52,6 +52,8 @@ class ProfileEdit(BaseModel):
     revision: int = Field(ge=0)
     alias: str = Field(default="", max_length=80)
     classification: str = Field(default="unclassified", pattern="^(unclassified|scanner|brute_force|targeted|benign|other)$")
+    handling: str = Field(default="none", pattern="^(none|monitor|lock|redirect)$")
+    handling_target: str = Field(default="", max_length=64)
     tags: list[str] = Field(default_factory=list, max_length=12)
     notes: str = Field(default="", max_length=4000)
 
@@ -119,7 +121,7 @@ def attacker(source: str, offset: int = Query(default=0, ge=0, le=10000),
     except (analytics_svc.AnalyticsUnavailable, OSError, sqlite3.Error, PermissionError, RuntimeError) as exc:
         storage_error(exc)
     return {**evidence, "annotation": annotation or {"revision": 0, "alias": "", "classification": "unclassified",
-                                                     "tags": [], "notes": ""}}
+                                                     "handling": "none", "handling_target": "", "tags": [], "notes": ""}}
 
 
 EXPORT_COLUMNS = ("timestamp", "sensor", "device", "kind", "action", "proto",
@@ -162,6 +164,10 @@ def export_attacker(source: str, format: Literal["csv", "json"] = "csv",
 @router.put("/attackers/{source}/annotation", dependencies=[Depends(requires_role("operator")), Depends(human)])
 def save_attacker(source: str, body: ProfileEdit, request: Request):
     source = canonical_ip(source)
+    if body.handling == "redirect" and body.handling_target not in investigation_svc.SENSORS:
+        raise HTTPException(422, "Redirect target must be a known honeypot")
+    if body.handling != "redirect":
+        body.handling_target = ""
     try:
         return investigation_svc.save_profile(source, body.model_dump(exclude={"revision"}),
                                                get_current_user(request)["sub"], body.revision)
