@@ -93,6 +93,10 @@ login fallido `low`, login aceptado en señuelo `medium`, comando/descarga/escan
 `high`. El detalle incluye el identificador MITRE ATT&CK aplicable (T1110,
 T1059, T1105, T1046, T1190).
 
+OpenCanary registra las peticiones HTTP arbitrarias (incluidos 404) en el log
+de Twisted; un shim las replica como JSONL en `opencanary.log` para que el
+colector guarde `path`, `method` y `useragent` como `http_request` (T1190).
+
 `GET /api/analytics/campaigns` correlaciona una misma IP que toca varios
 señuelos o puertos en una ventana de cinco minutos. Devuelve una campaña
 `port_scan` de severidad `high`, MITRE `T1046`, con sensores, puertos y ventana.

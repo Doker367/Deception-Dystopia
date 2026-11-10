@@ -194,6 +194,8 @@ def _opencanary_type(raw: dict) -> str:
     username = raw.get("username") or (logdata.get("USERNAME") if isinstance(logdata, dict) else None)
     if any(token in msg for token in ("login", "password", "credential", "auth")) or username:
         return "login_attempt"
+    if isinstance(logdata, dict) and (logdata.get("PATH") or logdata.get("path")):
+        return "http_request"
     if resolve_protocol(raw, "opencanary") == "snmp":
         return "other"
     return "connect"
@@ -425,8 +427,10 @@ def _detail(raw: dict, engine: str, etype: str) -> dict:
     # OpenCanary keeps the useful HTTP/credential fields inside ``logdata``.
     logdata = raw.get("logdata")
     if isinstance(logdata, dict):
-        for key, target in (("path", "path"), ("useragent", "useragent"),
-                            ("method", "method"), ("host", "host"),
+        for key, target in (("path", "path"), ("PATH", "path"),
+                            ("useragent", "useragent"), ("USERAGENT", "useragent"),
+                            ("method", "method"), ("METHOD", "method"),
+                            ("host", "host"), ("HOSTNAME", "host"),
                             ("USERNAME", "username"), ("SESSION", "session")):
             value = logdata.get(key)
             if value not in (None, "") and target not in detail:

@@ -27,6 +27,7 @@ RUN groupadd --gid 2000 opencanary \
     && setcap cap_net_bind_service=+ep "$(readlink -f "$(command -v python3)")"
 
 COPY --chown=2000:2000 opencanary.conf /etc/opencanaryd/opencanary.conf
+COPY --chown=2000:2000 access_shim.py /usr/local/bin/access_shim.py
 
 # El wrapper opencanaryd usa `sudo -E` incluso cuando ya corre como usuario
 # sin privilegios. Un shim que solo elimina -E y executa el comando evita
@@ -44,5 +45,7 @@ HEALTHCHECK --interval=60s --timeout=5s --start-period=30s --retries=3 \
 
 EXPOSE 21 22 23 80 3306
 
-# --dev keeps the process in the foreground for Docker.
-CMD ["opencanaryd", "--dev"]
+# --dev keeps the process in the foreground for Docker. The shim forwards
+# stdout and mirrors Twisted HTTP access lines into the JSON log tailed by the
+# collector, so arbitrary paths and user agents reach the analytics plane.
+CMD ["sh", "-c", "opencanaryd --dev 2>&1 | python3 /usr/local/bin/access_shim.py"]

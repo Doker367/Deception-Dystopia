@@ -10,7 +10,7 @@ MAX_BATCH_BYTES = 262144
 MAX_BATCH_EVENTS = 64
 ID = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}\Z")
 TYPES = {"connect", "disconnect", "login_attempt", "login_success", "command",
-         "file_download", "port_scan", "other"}
+         "file_download", "port_scan", "http_request", "other"}
 
 
 def identifier(value):
