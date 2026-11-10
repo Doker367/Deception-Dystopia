@@ -225,6 +225,10 @@ def test_opencanary_access_shim_parses_twisted_line():
     assert record["dst_port"] == 80
     assert record["logdata"]["PATH"] == "/probe-8bec7707"
     assert record["logdata"]["USERAGENT"] == "deception-test/8bec7707"
+    assert shim.access_record(
+        '"203.0.113.9" - - [09/Nov/2026:23:30:00 +0000] '
+        '"POST /__fp HTTP/1.1" 204 0 "-" "deception-test/8bec7707"'
+    ) is None
 
 
 def test_opencanary_fingerprint_detail_is_preserved():

@@ -28,6 +28,9 @@ ACCESS = re.compile(
 
 
 def access_record(line: str) -> dict | None:
+    # /__fp is already logged with its full fingerprint by the HTTP handler.
+    if " /__fp " in line:
+        return None
     match = ACCESS.search(line.strip())
     if match is None:
         return None
