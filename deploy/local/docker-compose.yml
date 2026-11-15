@@ -198,6 +198,12 @@ services:
       NETPULSE_JWT_SECRET: ${NETPULSE_JWT_SECRET:?Configura un secreto local único de 32 bytes como mínimo}
       NETPULSE_DECEPTION_ENABLED: "false"
       FIREWALL_ENABLED: "false"
+      # Doble gate del Network Fabric (§9.1): cerrado salvo que el operador lo
+      # active explícitamente en .env. Sin él, la API solo lee/valida.
+      DYSTOPIA_FABRIC_ENABLED: ${DYSTOPIA_FABRIC_ENABLED:-false}
+      # Motor del fabric: "stub" (simulado) u "ovs" (requiere OVS y privilegios
+      # en el host; ver docs/FABRIC.md).
+      DYSTOPIA_FABRIC_ENGINE: ${DYSTOPIA_FABRIC_ENGINE:-stub}
       DYSTOPIA_CONTROL_CONFIG: /srv/local-config
       DYSTOPIA_CONTROL_STATE: /srv/state
       NETPULSE_DECEPTION_DATA_DIR: /srv/deception
