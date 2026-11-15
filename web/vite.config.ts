@@ -10,7 +10,7 @@ export default defineConfig(({ command }) => ({
     host: "127.0.0.1",
     port: 5173,
     proxy: {
-      "/api": "http://127.0.0.1:8082",
+      "/api": process.env.VITE_API_TARGET ?? "http://127.0.0.1:8082",
     },
   },
   build: {
