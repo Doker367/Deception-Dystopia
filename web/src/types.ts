@@ -4,6 +4,7 @@ export type PageId =
   | "events"
   | "honeypots"
   | "devices"
+  | "fabric"
   | "ingest"
   | "ai"
   | "admin";

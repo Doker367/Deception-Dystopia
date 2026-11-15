@@ -6,6 +6,7 @@ import {
   Database,
   Globe2,
   LayoutDashboard,
+  Network,
   ScrollText,
   Settings2,
   ShieldCheck,
@@ -30,6 +31,7 @@ const NAV: NavItem[] = [
   { id: "ai", label: "IA", hint: "Memoria y hallazgos", icon: BrainCircuit, group: "monitor" },
   { id: "honeypots", label: "Honeypots", hint: "Sensores activos", icon: Boxes, group: "operate" },
   { id: "devices", label: "Dispositivos", hint: "Topología", icon: Database, group: "operate" },
+  { id: "fabric", label: "Fabric", hint: "Red virtual", icon: Network, group: "operate" },
   { id: "ingest", label: "Ingesta", hint: "Pipeline", icon: Activity, group: "operate" },
   { id: "admin", label: "Administración", hint: "Acceso y claves", icon: Settings2, group: "manage" },
 ];

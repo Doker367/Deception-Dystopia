@@ -86,7 +86,7 @@ export async function apiPut<T>(path: string, body: unknown): Promise<T> {
   return apiSend<T>("PUT", path, body);
 }
 
-export async function apiPost<T>(path: string, body: unknown): Promise<T> {
+export async function apiPost<T>(path: string, body?: unknown): Promise<T> {
   return apiSend<T>("POST", path, body);
 }
 

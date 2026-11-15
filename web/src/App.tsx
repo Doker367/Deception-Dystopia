@@ -6,6 +6,7 @@ import { MapPage } from "./pages/MapPage";
 import { EventsPage } from "./pages/EventsPage";
 import { HoneypotsPage } from "./pages/HoneypotsPage";
 import { DevicesPage } from "./pages/DevicesPage";
+import { FabricPage } from "./pages/FabricPage";
 import { IngestPage } from "./pages/IngestPage";
 import { AiPage } from "./pages/AiPage";
 import { AdminPage } from "./pages/AdminPage";
@@ -16,7 +17,7 @@ import { UNAUTHORIZED_EVENT, clearToken, getToken } from "./lib/api";
 import { useTheme } from "./lib/theme";
 import type { PageId } from "./types";
 
-const PAGES: PageId[] = ["overview", "map", "events", "honeypots", "devices", "ingest", "ai", "admin"];
+const PAGES: PageId[] = ["overview", "map", "events", "honeypots", "devices", "fabric", "ingest", "ai", "admin"];
 
 function pageFromHash(): PageId {
   const hash = window.location.hash.replace("#", "") as PageId;
@@ -132,6 +133,7 @@ export function App() {
           {page === "events" && <EventsPage search={search} range={range} events={analytics.events} total={analytics.totalEvents} mode={analytics.mode} onOpenAttacker={setAttackerIp} />}
           {page === "honeypots" && <HoneypotsPage onRefresh={analytics.refresh} onOpenEvents={openEventsFor} events={analytics.events} mode={analytics.mode} />}
           {page === "devices" && <DevicesPage />}
+          {page === "fabric" && <FabricPage />}
           {page === "ingest" && <IngestPage />}
           {page === "ai" && <AiPage onOpenEvents={openEventsFor} />}
           {page === "admin" && <AdminPage />}

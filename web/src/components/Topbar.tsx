@@ -29,6 +29,7 @@ const PAGE_LABEL: Record<PageId, { section: string; title: string }> = {
   ai: { section: "Monitorización", title: "IA de análisis" },
   honeypots: { section: "Operación", title: "Honeypots" },
   devices: { section: "Operación", title: "Dispositivos" },
+  fabric: { section: "Operación", title: "Network Fabric" },
   ingest: { section: "Operación", title: "Ingesta" },
   admin: { section: "Gobierno", title: "Administración" },
 };
