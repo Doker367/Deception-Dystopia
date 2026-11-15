@@ -17,6 +17,9 @@ Dystopia sigue funcionando con sus reglas.
   texto se dividieron para poder buscarlos.
 - **Alerta o sospecha**: una pista que la IA quiere que revises. No es una
   prueba, no confirma un ataque y no bloquea nada.
+- **Buscar**: por defecto consulta ataques reales; los filtros permiten ver
+  notas o documentación. Cada resultado muestra un resumen legible y deja el
+  texto técnico dentro de “Ver detalle técnico”.
 - **Confianza**: cuánto se parece lo observado a un patrón de ataque conocido.
   No es una probabilidad matemática ni una orden.
 - **Aciertos al alertar (precisión)**: de las alertas que una persona revisó,

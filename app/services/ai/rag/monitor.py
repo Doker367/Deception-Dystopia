@@ -43,6 +43,14 @@ _VERDICT_LABEL = {
     "benign": "Tráfico aparentemente benigno",
     "unknown": "Caso sin clasificar",
 }
+_MITRE_LABEL = {
+    "T1046": "escaneo de red",
+    "T1110": "fuerza bruta de contraseñas",
+    "T1078": "uso de cuentas válidas",
+    "T1190": "explotación de una aplicación expuesta",
+    "T1059": "ejecución de comandos",
+    "T1105": "descarga de herramientas",
+}
 
 
 def scan(
@@ -289,8 +297,9 @@ def _evaluate(conn: sqlite3.Connection, embedder, candidate: dict, until: dateti
     if structured:
         verdict = structured["verdict"]
         confidence = structured["confidence"]
-        summary_parts = structured["observed"][:3] + structured["inferred"][:3]
+        summary_parts = structured["observed"][:2] + structured["inferred"][:1]
         summary = _join_sentences(summary_parts) or "Sin detalle estructurado."
+        summary = re.sub(r"\s*\[\d{1,2}\]", "", summary)
         evidence = (result or {}).get("evidence") or []
         model = (result or {}).get("model")
         source = "ai"
@@ -315,7 +324,16 @@ def _evaluate(conn: sqlite3.Connection, embedder, candidate: dict, until: dateti
         )
 
     severity = _severity_for(candidate, verdict, confidence)
-    mitre_text = f" MITRE: {', '.join(mitre[:5])}." if mitre else ""
+    labels = [
+        f"{code} ({_MITRE_LABEL[code]})" if code in _MITRE_LABEL else code
+        for code in mitre[:3]
+    ]
+    mitre_text = f" Técnica posible: {', '.join(labels)}." if labels else ""
+    summary = summary.strip()
+    if summary and not summary.endswith("."):
+        summary += "."
+    if "revisión humana" not in summary.lower():
+        summary += " Requiere revisión humana."
     return {
         "verdict": verdict,
         "confidence": round(float(confidence or 0.0), 4),

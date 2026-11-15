@@ -36,12 +36,36 @@ const metrics = {
 
 const answered = {
   mode: "analysis", question: "¿Qué hizo la IP?",
-  answer: "Se observan intentos de login y un acceso aceptado [1]. Es consistente con T1110 [1].",
+  answer: [
+    "EN UNA FRASE: Se observan intentos de login y un acceso aceptado [1].",
+    "QUÉ SE OBSERVÓ:",
+    "- Varios intentos de login [1]",
+    "- Un acceso aceptado [1]",
+    "QUÉ SIGNIFICA: Es consistente con T1110 (fuerza bruta de contraseñas) [1].",
+    "QUÉ HACER: Revisa el acceso aceptado y las credenciales usadas.",
+  ].join("\n"),
   abstained: false, grounded: true, citations: [1], evidence: [evidence],
   model: "her-9b", retrieval: { mode: "hybrid", degraded: false, count: 1 },
 };
 
-const searched = { query: "fuerza bruta", mode: "hybrid", degraded: false, results: [evidence] };
+const eventEvidence = {
+  n: 1, chunk_id: 12, doc_key: `event:${IP}:2026-11-12T05`, kind: "event", source: "deception_events",
+  src_ip: IP, ts: "2026-11-12T05", heading: `${IP} · 2026-11-12T05`,
+  text: [
+    `Qué pasó: 4 eventos desde ${IP} contra srv-files-01; 0 accesos aceptados.`,
+    `Resumen de honeypot · origen ${IP} · 2026-11-12T05:00 UTC`,
+    "Eventos observados: 4",
+    "Dispositivos señuelo: srv-files-01 (4)",
+    "Tipos: conexiones=1, intentos de acceso=3",
+    "Protocolos: ssh=4",
+    "Destinos: 2222/ssh=4",
+    "Accesos aceptados en señuelo: 0",
+    "MITRE ATT&CK probable (inferido, no confirmado): T1046 Network Service Discovery (Discovery)",
+  ].join("\n"),
+  score: 0.02, similarity: 0.43, matched_by: ["vector"],
+};
+
+const searched = { query: "fuerza bruta", mode: "hybrid", degraded: false, results: [eventEvidence] };
 
 const analytics: Record<string, unknown> = {
   "/api/analytics/health": { collector: { status: "ok" } },
@@ -108,7 +132,7 @@ test("muestra hallazgos, evidencia y acciones de revisión", async ({ page }) =>
   await expect(page.getByText(`Ataque probable · ${IP}`)).toBeVisible();
   await expect(page.getByText("sin revisar", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: /Ver de dónde sale/ }).click();
-  await expect(page.getByText(/4 eventos, 2 intentos de login/)).toBeVisible();
+  await expect(page.getByText(/4 eventos, 2 intentos de login/).first()).toBeVisible();
   await expect(page.getByRole("button", { name: /Buscar amenazas ahora/ })).toBeVisible();
   await expect(page.getByRole("button", { name: /Actualizar memoria/ })).toBeVisible();
   await expect(page.getByRole("button", { name: /Preguntar por esta IP/ })).toBeVisible();
@@ -120,6 +144,8 @@ test("consulta la memoria y exige citas", async ({ page }) => {
   await page.getByLabel("¿Qué quieres saber?").fill("¿Qué hizo 203.0.113.9?");
   await page.getByRole("button", { name: /^Preguntar$/ }).click();
   await expect(page.getByText("respuesta basada en fuentes")).toBeVisible();
+  await expect(page.getByText("EN UNA FRASE")).toBeVisible();
+  await expect(page.getByText("QUÉ HACER", { exact: true })).toBeVisible();
   await expect(page.getByText(/Es consistente con T1110/)).toBeVisible();
   await expect(page.locator(".ai-cite").first()).toHaveText("[1]");
 });
@@ -128,8 +154,10 @@ test("busca en la memoria con procedencia", async ({ page }) => {
   await openAi(page);
   await page.getByRole("tab", { name: "Buscar" }).click();
   await page.getByRole("button", { name: /^Buscar$/ }).click();
-  await expect(page.getByText(/Resumen de honeypot · 4 eventos/)).toBeVisible();
-  await expect(page.getByText("parecido 71%")).toBeVisible();
+  await expect(page.getByText(/Se registraron 4 eventos desde esta IP contra srv-files-01/)).toBeVisible();
+  await expect(page.getByText("sin accesos aceptados")).toBeVisible();
+  await expect(page.getByText(/T1046 · escaneo de red/)).toBeVisible();
+  await expect(page.getByText("parecido 43%")).toBeVisible();
 });
 
 test("muestra precisión y cobertura por separado", async ({ page }) => {

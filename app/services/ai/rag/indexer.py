@@ -28,6 +28,16 @@ _MITRE = {
     "download": "T1105 Ingress Tool Transfer (Command and Control)",
     "file_download": "T1105 Ingress Tool Transfer (Command and Control)",
 }
+_EVENT_LABEL = {
+    "login_attempt": "intentos de acceso",
+    "login_success": "accesos aceptados",
+    "http_request": "peticiones web",
+    "connect": "conexiones",
+    "scan": "escaneos",
+    "command": "comandos",
+    "download": "descargas",
+    "file_download": "descargas",
+}
 _KNOWLEDGE_FILES = ("README.md", "SECURITY.md", "DEPLOYMENT.md", "ROLLBACK.md")
 _KNOWLEDGE_SUFFIXES = {".md", ".txt", ".yaml", ".yml"}
 
@@ -240,11 +250,16 @@ def _event_text(
     successes = sum(1 for event in events if event["success"])
     mitre = sorted({_MITRE[event_type] for event_type in types if event_type in _MITRE})
 
+    device_names = ", ".join(name for name, _ in devices.most_common(3)) or "un señuelo"
     lines = [
+        f"Qué pasó: {len(events)} eventos desde {src_ip} contra {device_names}; "
+        f"{successes} accesos aceptados.",
         f"Resumen de honeypot · origen {src_ip} · {hour}:00 UTC",
         f"Eventos observados: {len(events)}",
         "Dispositivos señuelo: " + ", ".join(f"{name} ({count})" for name, count in devices.most_common(6)),
-        "Tipos: " + ", ".join(f"{name}={count}" for name, count in types.most_common(8)),
+        "Tipos: " + ", ".join(
+            f"{_EVENT_LABEL.get(name, name)}={count}" for name, count in types.most_common(8)
+        ),
         "Protocolos: " + ", ".join(f"{name}={count}" for name, count in protos.most_common(6)),
     ]
     if targets:

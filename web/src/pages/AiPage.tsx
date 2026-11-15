@@ -29,6 +29,7 @@ import { formatDateTime, formatNumber } from "../lib/format";
 import type { Severity } from "../types";
 
 type AiTab = "findings" | "ask" | "memory" | "eval";
+type MemoryKind = "all" | "event" | "note" | "knowledge";
 
 interface AiEvidence {
   n: number;
@@ -153,6 +154,117 @@ function percent(value?: number | null) {
   return value != null ? `${Math.round(value * 100)}%` : "—";
 }
 
+const TECHNIQUE_LABEL: Record<string, string> = {
+  T1046: "escaneo de red",
+  T1110: "fuerza bruta de contraseñas",
+  T1078: "uso de cuentas válidas",
+  T1190: "explotación de una aplicación expuesta",
+  T1059: "ejecución de comandos",
+  T1105: "descarga de herramientas",
+};
+
+const PROTOCOL_LABEL: Record<string, string> = {
+  ssh: "SSH",
+  telnet: "Telnet",
+  http: "HTTP",
+  https: "HTTPS",
+  ftp: "FTP",
+  smb: "SMB",
+  tcp: "TCP",
+  udp: "UDP",
+  redis: "Redis",
+};
+
+function protocolLabel(value: string) {
+  const key = value.trim().toLowerCase();
+  return PROTOCOL_LABEL[key] ?? value.trim();
+}
+
+function cleanText(value: string) {
+  return value.replace(/[`*_>#|]/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function plainPreview(text: string, max = 280) {
+  const clean = text
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/^\s*[-*+]\s+/gm, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  const readable = cleanText(clean);
+  return readable.length > max ? `${readable.slice(0, max).trimEnd()}…` : readable;
+}
+
+interface EventFacts {
+  count: number;
+  devices: string;
+  protocols: string[];
+  targets: string[];
+  successes: number;
+  techniques: string[];
+  summary: string;
+}
+
+function eventFacts(text: string): EventFacts | null {
+  const lines = text.split(/\r?\n/);
+  const field = (prefix: string) => {
+    const found = lines.find((line) => line.startsWith(prefix));
+    if (!found) return "";
+    return found.slice(found.indexOf(":") + 1).trim();
+  };
+  const count = Number(field("Eventos observados")) || 0;
+  if (!count) return null;
+
+  const devices = field("Dispositivos señuelo").replace(/\(\d+\)/g, "").trim();
+  const protocols = field("Protocolos")
+    .split(",")
+    .map((item) => item.split("=")[0].trim())
+    .filter(Boolean);
+  const targets = field("Destinos")
+    .split(",")
+    .map((item) => item.split("=")[0].trim())
+    .filter(Boolean);
+  const successes = Number(field("Accesos aceptados en señuelo")) || 0;
+  const techniques = Array.from(new Set(text.match(/\bT\d{4}\b/g) ?? []));
+
+  const protocolText = protocols.map(protocolLabel).join(", ");
+  const targetText = targets
+    .map((target) => {
+      const [port, proto] = target.split("/");
+      const protoName = proto ? protocolLabel(proto) : "";
+      return protoName && !protocolText.toLowerCase().includes(protoName.toLowerCase())
+        ? `${port} (${protoName})`
+        : port;
+    })
+    .join(", ");
+
+  const intro = [
+    `Se registraron ${count} eventos desde esta IP`,
+    devices ? `contra ${devices}` : "",
+    protocolText ? `usando ${protocolText}` : "",
+    targetText ? `en el puerto ${targetText}` : "",
+  ].filter(Boolean).join(" ").replace(/\.$/, "");
+
+  const outcome = successes > 0
+    ? ` Hubo ${successes} acceso(s) aceptado(s): revísalo cuanto antes.`
+    : " No hubo accesos aceptados.";
+
+  return {
+    count,
+    devices,
+    protocols,
+    targets,
+    successes,
+    techniques,
+    summary: `${intro}.${outcome}`,
+  };
+}
+
+function cleanAnswer(result: AiAsk) {
+  if (!result.abstained) return result.answer;
+  return result.answer.replace(/EVIDENCIA INSUFICIENTE:?\s*/i, "").trim()
+    || "No hay datos suficientes para responder con seguridad. Prueba con otra pregunta, añade la IP o prepara más documentos en la memoria.";
+}
+
 async function safeGet<T>(path: string): Promise<T | null> {
   try {
     return await apiGet<T>(path);
@@ -187,6 +299,7 @@ export function AiPage({ onOpenEvents }: { onOpenEvents: (query: string) => void
   const [query, setQuery] = useState("fuerza bruta SSH");
   const [results, setResults] = useState<AiEvidence[]>([]);
   const [searched, setSearched] = useState(false);
+  const [memoryKind, setMemoryKind] = useState<MemoryKind>("event");
 
   const [pushOn, setPushOn] = useState(() => {
     try {
@@ -316,7 +429,7 @@ export function AiPage({ onOpenEvents }: { onOpenEvents: (query: string) => void
     }
   }
 
-  async function searchMemory() {
+  async function searchMemory(kind: MemoryKind = memoryKind) {
     if (!query.trim()) {
       notify("Escribe un término para buscar en la memoria", "error");
       return;
@@ -325,6 +438,7 @@ export function AiPage({ onOpenEvents }: { onOpenEvents: (query: string) => void
     try {
       const params = new URLSearchParams({ q: query.trim(), k: "8" });
       if (ipFilter.trim()) params.set("src_ip", ipFilter.trim());
+      if (kind !== "all") params.set("kinds", kind);
       const response = await apiGet<{ results: AiEvidence[]; mode: string; degraded: boolean }>(
         `/api/ai/rag/search?${params.toString()}`,
       );
@@ -335,6 +449,24 @@ export function AiPage({ onOpenEvents }: { onOpenEvents: (query: string) => void
     } finally {
       setBusy(null);
     }
+  }
+
+  function pickMemoryKind(kind: MemoryKind) {
+    setMemoryKind(kind);
+    if (searched) void searchMemory(kind);
+  }
+
+  function askAbout(item: AiEvidence) {
+    const title = item.heading || item.doc_key;
+    setQuestion(
+      item.kind === "event"
+        ? `Explícame en palabras sencillas qué pasó con ${item.src_ip || "esta actividad"} y qué debería revisar.`
+        : `Explícame en palabras sencillas qué dice "${title}" y por qué importa para entender un ataque.`,
+    );
+    setIpFilter(item.src_ip ?? "");
+    setMode("analysis");
+    setResult(null);
+    setTab("ask");
   }
 
   async function ack(finding: AiFinding) {
@@ -375,6 +507,7 @@ export function AiPage({ onOpenEvents }: { onOpenEvents: (query: string) => void
     setIpFilter(ip);
     setQuestion(`¿Qué hizo ${ip} contra los señuelos y qué evidencia lo respalda?`);
     setMode("triage");
+    setResult(null);
     setTab("ask");
   }
 
@@ -599,16 +732,8 @@ export function AiPage({ onOpenEvents }: { onOpenEvents: (query: string) => void
                 {result.structured && <StructuredResult structured={result.structured} />}
                 <p className="ai-hint">Respuesta de la IA. Compruébala con las fuentes antes de tomar una decisión.</p>
                 <div className={`ai-answer ${result.grounded ? "grounded" : "warning"}`}>
-                  {result.abstained
-                    ? result.answer.replace(/EVIDENCIA INSUFICIENTE:?\s*/i, "").trim()
-                      || "No hay datos suficientes para responder con seguridad. Prueba con otra pregunta, añade la IP o prepara más documentos en la memoria."
-                    : result.answer}
+                  <AnswerBody text={cleanAnswer(result)} />
                 </div>
-                {result.citations.length > 0 && (
-                  <div className="ai-citations">
-                    {result.citations.map((citation) => <span key={citation} className="ai-cite">[{citation}]</span>)}
-                  </div>
-                )}
                 <EvidenceList items={result.evidence} onOpenEvents={onOpenEvents} />
               </div>
             )}
@@ -646,6 +771,23 @@ export function AiPage({ onOpenEvents }: { onOpenEvents: (query: string) => void
         <div className="dashboard-grid">
           <Panel className="span-12" eyebrow="Buscador de la memoria" title="Busca en lo que la IA sabe" description="Encuentra eventos, notas y documentación por palabras o por significado. No hace falta escribir los términos exactos.">
             <p className="ai-hint">La búsqueda combina coincidencia de palabras con significado parecido. Cada resultado indica de dónde sale y qué tan parecido es a lo que buscas.</p>
+            <div className="ai-filter" role="group" aria-label="Filtrar la memoria por tipo">
+              {([
+                ["event", "Ataques"],
+                ["note", "Notas"],
+                ["knowledge", "Documentación"],
+                ["all", "Todo"],
+              ] as Array<[MemoryKind, string]>).map(([kind, label]) => (
+                <button
+                  key={kind}
+                  className={memoryKind === kind ? "active" : ""}
+                  aria-pressed={memoryKind === kind}
+                  onClick={() => pickMemoryKind(kind)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
             <div className="ai-searchbar">
               <Search size={16} />
               <input
@@ -666,25 +808,24 @@ export function AiPage({ onOpenEvents }: { onOpenEvents: (query: string) => void
                 <Search size={15} /> Buscar
               </button>
             </div>
-            {!searched && <div className="empty-state small"><Database size={20} /><strong>Busca en la memoria</strong><span>Prueba con una IP, un tipo de ataque o una pregunta corta. Los resultados muestran de dónde salen para que puedas verificarlos.</span></div>}
-            {searched && !results.length && <div className="empty-state small"><Search size={20} /><strong>Sin coincidencias</strong><span>Prueba con otras palabras o prepara más documentos en la memoria. La IA no inventa resultados que no existen.</span></div>}
+            {!searched && <div className="empty-state small"><Database size={20} /><strong>Busca en la memoria</strong><span>Por defecto buscamos en ataques reales. Cambia el filtro para consultar notas o documentación. Los resultados muestran de dónde salen para que puedas verificarlos.</span></div>}
+            {searched && !results.length && (
+              <div className="empty-state small">
+                <Search size={20} />
+                <strong>Sin coincidencias en {memoryKind === "all" ? "la memoria" : memoryKind === "event" ? "ataques" : memoryKind === "note" ? "notas" : "documentación"}</strong>
+                <span>Prueba con otras palabras o cambia el filtro. La IA no inventa resultados que no existen.</span>
+              </div>
+            )}
             {results.length > 0 && (
               <div className="ai-evidence">
-                {results.map((item) => (
-                  <div className="ai-evidence-item" key={`${item.chunk_id}-${item.n}`}>
-                    <div className="ai-evidence-head">
-                      <span className="ai-cite">[{item.n}]</span>
-                      <strong>{item.heading || item.doc_key}</strong>
-                      <span className="muted">{kindLabel(item.kind)} · fuente: {item.source}</span>
-                      {typeof item.similarity === "number" && (
-                        <span className="mono muted" title="1.00 = texto idéntico; 0.00 = nada que ver. No es una probabilidad de ataque.">
-                          parecido {Math.round(item.similarity * 100)}%
-                        </span>
-                      )}
-                      {item.src_ip && <button className="link-button mono" onClick={() => onOpenEvents(item.src_ip ?? "")}>{item.src_ip}</button>}
-                    </div>
-                    <p>{item.text}</p>
-                  </div>
+                {results.map((item, index) => (
+                  <MemoryResultCard
+                    key={`${item.chunk_id}-${index}`}
+                    item={item}
+                    index={index}
+                    onAsk={() => askAbout(item)}
+                    onOpenEvents={onOpenEvents}
+                  />
                 ))}
               </div>
             )}
@@ -807,9 +948,123 @@ function EvidenceList({ items, onOpenEvents }: { items: AiEvidence[]; onOpenEven
             )}
             {item.src_ip && <button className="link-button mono" onClick={() => onOpenEvents(item.src_ip ?? "")}>{item.src_ip}</button>}
           </div>
-          <p>{item.text}</p>
+          <EvidenceContent item={item} />
         </div>
       ))}
+    </div>
+  );
+}
+
+function EvidenceContent({ item }: { item: AiEvidence }) {
+  const facts = item.kind === "event" ? eventFacts(item.text) : null;
+  if (facts) {
+    return (
+      <>
+        <p className="ai-evidence-summary">{facts.summary}</p>
+        <div className="ai-memory-facts">
+          <span className="ai-pill neutral">{facts.count} evento(s)</span>
+          {facts.devices && <span className="ai-pill neutral">{facts.devices}</span>}
+          {facts.protocols.map((protocol) => <span key={protocol} className="ai-pill neutral">{protocolLabel(protocol)}</span>)}
+          <span className={`ai-pill ${facts.successes ? "warn" : "ok"}`}>
+            {facts.successes ? `${facts.successes} acceso(s) aceptado(s)` : "sin accesos aceptados"}
+          </span>
+          {facts.techniques.map((code) => (
+            <span key={code} className="ai-pill neutral" title="Técnica MITRE ATT&CK. Es una inferencia, no una confirmación.">
+              {code} · {TECHNIQUE_LABEL[code] ?? "técnica detectada"}
+            </span>
+          ))}
+        </div>
+        <details className="ai-memory-raw">
+          <summary>Ver detalle técnico</summary>
+          <pre>{item.text}</pre>
+        </details>
+      </>
+    );
+  }
+  return (
+    <>
+      <p className="ai-evidence-summary">{plainPreview(item.text)}</p>
+      <details className="ai-memory-raw">
+        <summary>Ver texto completo</summary>
+        <pre>{item.text}</pre>
+      </details>
+    </>
+  );
+}
+
+function MemoryResultCard({
+  item,
+  index,
+  onAsk,
+  onOpenEvents,
+}: {
+  item: AiEvidence;
+  index: number;
+  onAsk: () => void;
+  onOpenEvents: (query: string) => void;
+}) {
+  return (
+    <article className="ai-memory-card">
+      <div className="ai-memory-head">
+        <span className="ai-cite">[{index + 1}]</span>
+        <strong>{item.heading || item.doc_key}</strong>
+        <span className={`ai-kind kind-${item.kind}`}>{kindLabel(item.kind)}</span>
+        <span className="muted">fuente: {item.source}</span>
+        {typeof item.similarity === "number" && (
+          <span className="mono muted" title="1.00 = texto idéntico; 0.00 = nada que ver. No es una probabilidad de ataque.">
+            parecido {Math.round(item.similarity * 100)}%
+          </span>
+        )}
+      </div>
+      <EvidenceContent item={item} />
+      <div className="ai-memory-actions">
+        <button className="button small ghost" onClick={onAsk}><BrainCircuit size={14} /> Preguntar a la IA sobre esto</button>
+        {item.src_ip && (
+          <button className="link-button mono" onClick={() => onOpenEvents(item.src_ip ?? "")}>
+            Abrir eventos de {item.src_ip}
+          </button>
+        )}
+      </div>
+    </article>
+  );
+}
+
+function AnswerBody({ text }: { text: string }) {
+  const sections: Array<{ title: string | null; lines: string[] }> = [];
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line) continue;
+    const normalized = line.replace(/^[*#>\s]+/, "").replace(/[*\s]+$/, "");
+    const heading = /^(EN UNA FRASE|RESUMEN|QUÉ SE OBSERVÓ|QUÉ SE VIO|QUÉ SIGNIFICA|QUÉ PODRÍA SIGNIFICAR|QUÉ HACER|QUÉ CONVIENE REVISAR)\s*(?:[:–—-]\s*)?(.*)$/i.exec(normalized);
+    if (heading) {
+      sections.push({ title: heading[1].toUpperCase(), lines: heading[2] ? [heading[2].trim()] : [] });
+    } else if (sections.length) {
+      sections[sections.length - 1].lines.push(line);
+    } else {
+      sections.push({ title: null, lines: [line] });
+    }
+  }
+  if (!sections.length) return <p>Sin respuesta.</p>;
+  return (
+    <div className="ai-answer-body">
+      {sections.map((section, index) => {
+        const lead = !!section.title && /EN UNA FRASE|RESUMEN/.test(section.title);
+        return (
+          <section key={index} className={`ai-answer-section ${section.title ? "titled" : ""} ${lead ? "lead" : ""}`}>
+            {section.title && <span className="ai-answer-label">{section.title}</span>}
+            {section.lines.map((line, lineIndex) => {
+              const bullet = /^[-*•]\s+/.test(line);
+              const content = bullet ? line.replace(/^[-*•]\s+/, "") : line;
+              const nodes = content.split(/(\[\d{1,2}\])/g).map((part, partIndex) =>
+                /^\[\d{1,2}\]$/.test(part) ? <span key={partIndex} className="ai-cite">{part}</span> : part
+              );
+              return bullet
+                ? <p key={lineIndex} className="ai-answer-bullet">{nodes}</p>
+                : <p key={lineIndex}>{nodes}</p>;
+            })}
+          </section>
+        );
+      })}
     </div>
   );
 }
