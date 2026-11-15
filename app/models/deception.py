@@ -12,6 +12,8 @@ from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.services.fabric.models import FabricConfig, rebuild_topology_model
+
 
 class DeceptionRole(str, Enum):
     """Rol del dispositivo simulado."""
@@ -151,6 +153,11 @@ class DeceptionNetwork(BaseModel):
 
     segments: list[DeceptionSegment] = Field(default_factory=list)
     devices: list[DeceptionDevice] = Field(default_factory=list)
+    fabric: Optional[FabricConfig] = Field(
+        default=None,
+        description="Extensión de red virtual (Network Fabric). Ausente o "
+                    "deshabilitada preserva el comportamiento clásico.",
+    )
 
 
 # ── Contrato de telemetría (data plane → NetPulse) ───────────
@@ -215,3 +222,9 @@ class DeceptionStats(BaseModel):
     by_type: dict[str, int] = Field(default_factory=dict)
     top_devices: list[dict] = Field(default_factory=list)
     top_attackers: list[dict] = Field(default_factory=list)
+
+
+# Los modelos de fabric viven en otro módulo y referencian los de aquí
+# (``DeceptionSegment``/``DeceptionDevice``). Con los modelos núcleo ya
+# definidos se resuelven sus forward-refs (evita el import circular).
+rebuild_topology_model()
