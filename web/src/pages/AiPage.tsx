@@ -1018,7 +1018,7 @@ function MemoryResultCard({
       </div>
       <EvidenceContent item={item} />
       <div className="ai-memory-actions">
-        <button className="button small ghost" onClick={onAsk}><BrainCircuit size={14} /> Preguntar a la IA sobre esto</button>
+        <button className="button small ghost" onClick={onAsk}><BrainCircuit size={14} /> Explicar en simple</button>
         {item.src_ip && (
           <button className="link-button mono" onClick={() => onOpenEvents(item.src_ip ?? "")}>
             Abrir eventos de {item.src_ip}
