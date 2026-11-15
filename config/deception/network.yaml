@@ -153,3 +153,155 @@ devices:
       - { port: 161, proto: snmp, engine: native }
     tags: [router, network]
     description: "Router de núcleo (señuelo de red)"
+
+# ============================================================
+# NetPulse Fabric — red virtual (extensión opcional)
+# Sin deploy, la plataforma funciona igual que siempre.
+# ============================================================
+
+fabric:
+  enabled: true
+  name: "corporate-deception-net"
+
+  # ── Global defaults ─────────────────────────────────────────
+  defaults:
+    device_image: "dystopia/fabric-device:v1"
+    mem_limit: "128m"
+    cpus: 0.25
+
+  # ── Virtual Switches ────────────────────────────────────────
+  switches:
+    - id: sw-core
+      type: ovs                        # always OVS in MVP
+      stp: false                       # STP off by default for deception
+      vlans: [10, 20, 30, 40]          # VLANs this switch trunks
+      description: "Core aggregation switch"
+
+    - id: sw-oficina
+      type: ovs
+      vlans: [10]
+      uplink: sw-core                  # optional: auto-creates a trunk link
+
+    - id: sw-servidores
+      type: ovs
+      vlans: [20]
+      uplink: sw-core
+
+    - id: sw-camaras
+      type: ovs
+      vlans: [30]
+      uplink: sw-core
+
+  # ── Links (explicit, beyond uplink auto-links) ──────────────
+  links:
+    - from: sw-core
+      to: sw-oficina
+      trunk: true
+      bandwidth: null                  # reserved for Phase 2
+
+  # ── Device extensions (by device id) ─────────────────────────
+  # Adds fabric-specific properties to devices already declared
+  # in the top-level `devices:` list. A device not listed here
+  # gets default fabric treatment if its segment is fabric-enabled.
+  device_overrides:
+    - id: pc-recepcion-01
+      interfaces:
+        - name: eth0
+          segment: vlan-oficina
+          ip: 10.10.0.21/24
+          mac: "00:1c:42:10:10:21"
+          gateway: 10.10.0.1
+          vlan_tag: 10
+          switch: sw-oficina
+
+      credentials:
+        - username: admin
+          password: admin123
+          service: ssh
+          purpose: "Credencial señuelo para fuerza bruta"
+        - username: root
+          password: toor
+          service: ssh
+          purpose: "Credencial de alto valor"
+
+      neighbors:
+        - ip: 10.10.0.1
+          mac: "00:1c:42:10:10:01"
+          hostname: "gateway"
+        - ip: 10.10.0.22
+          mac: "00:1c:42:10:10:22"
+          hostname: "RRHH-PC"
+
+      routes:
+        - destination: 0.0.0.0/0
+          gateway: 10.10.0.1
+        - destination: 10.20.0.0/24
+          gateway: 10.10.0.1
+
+      admin_behavior:
+        management_protocol: ssh
+        management_port: 22
+        login_banner: "RECEPCION-PC login:"
+        motd: "Authorized users only. All activity is monitored."
+        shell_prompt: "C:\\Users\\admin>"
+        idle_timeout: 300
+
+      logging:
+        syslog_target: "10.20.0.10"
+        log_level: info
+        forward_to_dystopia: true
+
+      resources:
+        image: "dystopia/fabric-device:v1"
+        mem_limit: "128m"
+        cpus: 0.25
+
+    - id: srv-files-01
+      interfaces:
+        - name: eth0
+          segment: vlan-servidores
+          ip: 10.20.0.10/24
+          mac: "00:1c:42:20:10:10"
+          gateway: 10.20.0.1
+          vlan_tag: 20
+          switch: sw-servidores
+      credentials:
+        - username: admin
+          password: P@ssw0rd
+          service: ssh
+      neighbors:
+        - ip: 10.20.0.1
+          mac: "00:1c:42:20:00:01"
+          hostname: "gateway"
+      routes:
+        - destination: 0.0.0.0/0
+          gateway: 10.20.0.1
+      admin_behavior:
+        management_protocol: ssh
+        management_port: 22
+        login_banner: "Ubuntu 22.04.3 LTS"
+        shell_prompt: "admin@files01:~$"
+        idle_timeout: 600
+      logging:
+        forward_to_dystopia: true
+
+    - id: cam-entrada-01
+      interfaces:
+        - name: eth0
+          segment: vlan-camaras
+          ip: 10.30.0.11/24
+          mac: "00:12:5a:30:00:11"
+          gateway: 10.30.0.1
+          vlan_tag: 30
+          switch: sw-camaras
+      credentials:
+        - username: admin
+          password: "12345"
+          service: http
+          purpose: "Default camera credentials"
+      admin_behavior:
+        management_protocol: http
+        management_port: 80
+        login_banner: "Hikvision Digital Technology"
+      logging:
+        forward_to_dystopia: true
