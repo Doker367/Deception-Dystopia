@@ -1,16 +1,20 @@
 const TOKEN_KEY = "dystopia.access_token";
 export const UNAUTHORIZED_EVENT = "dystopia:unauthorized";
 
-function tokenExpiry(token: string): number | null {
+function tokenPayload(token: string): Record<string, unknown> | null {
   try {
     const payload = token.split(".")[1];
     if (!payload) return null;
     const padded = payload.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(payload.length / 4) * 4, "=");
-    const data = JSON.parse(atob(padded)) as { exp?: unknown };
-    return typeof data.exp === "number" ? data.exp : null;
+    return JSON.parse(atob(padded)) as Record<string, unknown>;
   } catch {
     return null;
   }
+}
+
+function tokenExpiry(token: string): number | null {
+  const data = tokenPayload(token);
+  return data && typeof data.exp === "number" ? data.exp : null;
 }
 
 function notifyUnauthorized() {
@@ -47,6 +51,18 @@ export function setToken(token: string) {
   window.localStorage.setItem(TOKEN_KEY, token);
 }
 
+export function getRole(): string | null {
+  let token: string | null = null;
+  try {
+    token = window.localStorage.getItem(TOKEN_KEY);
+  } catch {
+    return null;
+  }
+  if (!token) return null;
+  const payload = tokenPayload(token);
+  return payload && typeof payload.role === "string" ? payload.role : null;
+}
+
 export function clearToken() {
   window.localStorage.removeItem(TOKEN_KEY);
 }
@@ -67,12 +83,28 @@ export async function login(username: string, password: string): Promise<string>
 }
 
 export async function apiPut<T>(path: string, body: unknown): Promise<T> {
+  return apiSend<T>("PUT", path, body);
+}
+
+export async function apiPost<T>(path: string, body: unknown): Promise<T> {
+  return apiSend<T>("POST", path, body);
+}
+
+export async function apiDelete(path: string): Promise<void> {
+  await apiSend<void>("DELETE", path);
+}
+
+async function apiSend<T>(method: "PUT" | "POST" | "DELETE", path: string, body?: unknown): Promise<T> {
   const token = getToken();
   if (!token) throw new ApiError("Inicia sesión para guardar cambios", 401);
   const response = await fetch(path, {
-    method: "PUT",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", Accept: "application/json" },
-    body: JSON.stringify(body),
+    method,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/json",
+      ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+    },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
   if (response.status === 401) {
     notifyUnauthorized();
@@ -80,13 +112,15 @@ export async function apiPut<T>(path: string, body: unknown): Promise<T> {
   }
   if (!response.ok) {
     let detail = response.status === 409 ? "Cambios en conflicto: recarga la ficha antes de guardar" :
-      response.status === 403 ? "Tu rol no permite editar esta información" : "No se pudieron guardar los cambios";
+      response.status === 403 ? "Tu rol no permite ejecutar esta acción" :
+      response.status === 404 ? "El recurso ya no existe" : "No se pudo completar la acción";
     try {
       const payload = (await response.json()) as { detail?: string };
       if (typeof payload.detail === "string" && response.status !== 422) detail = payload.detail;
     } catch { /* Keep actionable message. */ }
     throw new ApiError(detail, response.status);
   }
+  if (response.status === 204) return undefined as T;
   return (await response.json()) as T;
 }
 

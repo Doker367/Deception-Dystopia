@@ -16,6 +16,12 @@ make analytics-health       # requiere `make token` antes
 
 Abre `http://127.0.0.1:8082/app` y entra con el usuario `lab`.
 
+En el servidor, si `.env` define `DYSTOPIA_TAILSCALE_IP`, `make up` aplica
+también `docker-compose.remote.yml` y el panel queda además en
+`http://<IP-Tailscale>:8082/app`. No lo levantes con `docker compose` usando
+solo `docker-compose.yml`: `control` se recrea sin ese binding y el panel deja
+de responder por Tailscale.
+
 ## Flujo de prueba
 
 ```bash

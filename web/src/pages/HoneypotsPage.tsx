@@ -15,6 +15,7 @@ import { PageHeader } from "../components/PageHeader";
 import { Panel } from "../components/Panel";
 import { Sparkline } from "../components/Sparkline";
 import { EChart } from "../components/EChart";
+import { AnimatedNumber } from "../components/AnimatedNumber";
 import { HoneypotConfigDrawer } from "../components/HoneypotConfigDrawer";
 import { useToast } from "../components/Toast";
 import { HONEYPOTS, HONEYPOT_CONFIGS, DEMO_EVENTS } from "../data/mock";
@@ -187,9 +188,9 @@ export function HoneypotsPage({ onRefresh, onOpenEvents, events, mode }: Honeypo
       />
 
       <div className="sensor-summary">
-        <div><span className="eyebrow">{demo ? "Eventos de demostración" : "Eventos visibles"}</span><strong>{formatNumber(demo ? DEMO_OVERVIEW.totalEvents : sourceEvents.length)}</strong><small>{mode === "live" ? "muestra de hasta 100 eventos · no total histórico" : demo ? "cifra ilustrativa del panel" : "sin datos"}</small></div>
-        <div><span className="eyebrow">{demo ? "Fuentes de demostración" : "Fuentes visibles"}</span><strong>{formatNumber(demo ? DEMO_OVERVIEW.uniqueSources : new Set(sourceEvents.map((event) => event.source)).size)}</strong><small>{demo ? "cifra ilustrativa del panel" : "en la muestra actual"}</small></div>
-        <div><span className="eyebrow">Sensores declarados</span><strong>{honeypots.length}</strong><small>inventario estático</small></div>
+        <div><span className="eyebrow">{demo ? "Eventos de demostración" : "Eventos visibles"}</span><strong><AnimatedNumber value={formatNumber(demo ? DEMO_OVERVIEW.totalEvents : sourceEvents.length)} /></strong><small>{mode === "live" ? "muestra de hasta 100 eventos · no total histórico" : demo ? "cifra ilustrativa del panel" : "sin datos"}</small></div>
+        <div><span className="eyebrow">{demo ? "Fuentes de demostración" : "Fuentes visibles"}</span><strong><AnimatedNumber value={formatNumber(demo ? DEMO_OVERVIEW.uniqueSources : new Set(sourceEvents.map((event) => event.source)).size)} /></strong><small>{demo ? "cifra ilustrativa del panel" : "en la muestra actual"}</small></div>
+        <div><span className="eyebrow">Sensores declarados</span><strong><AnimatedNumber value={honeypots.length} /></strong><small>inventario estático</small></div>
         <div><span className="eyebrow">Estado del runtime</span><strong>—</strong><small>no verificado por esta interfaz</small></div>
       </div>
 

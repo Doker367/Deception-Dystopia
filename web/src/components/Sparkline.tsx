@@ -1,4 +1,6 @@
 import { useId, useMemo } from "react";
+import { ACCENTS } from "../lib/palette";
+import { inkAccent } from "../lib/theme";
 
 interface SparklineProps {
   data: number[];
@@ -10,14 +12,15 @@ interface SparklineProps {
 
 export function Sparkline({
   data,
-  color = "#35e6c4",
+  color = ACCENTS.cyan,
   height = 40,
   width = 132,
   fill = true,
 }: SparklineProps) {
   const gradientId = useId();
+  const stroke = inkAccent(color);
   const series = data.length > 1 ? data : [0, 0];
-  const { line, area } = useMemo(() => {
+  const { line, area, end } = useMemo(() => {
     const max = Math.max(...series, 1);
     const min = Math.min(...series, 0);
     const span = Math.max(max - min, 1);
@@ -31,6 +34,7 @@ export function Sparkline({
     return {
       line: linePath,
       area: `${linePath} L${width},${height} L0,${height} Z`,
+      end: points[points.length - 1] ?? [width, height],
     };
   }, [series, height, width]);
 
@@ -45,17 +49,19 @@ export function Sparkline({
     >
       <defs>
         <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stopColor={color} stopOpacity="0.28" />
-          <stop offset="1" stopColor={color} stopOpacity="0" />
+          <stop offset="0" stopColor={stroke} stopOpacity="0.28" />
+          <stop offset="1" stopColor={stroke} stopOpacity="0" />
         </linearGradient>
       </defs>
       {fill && <path d={area} fill={`url(#${gradientId})`} />}
-      <path d={line} fill="none" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+      <path d={line} fill="none" stroke={stroke} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+      <circle className="sparkline-halo" cx={end[0]} cy={end[1]} r="4.2" fill="none" stroke={stroke} strokeWidth="1.2" />
       <circle
+        className="sparkline-dot"
         cx={width}
         cy={height - 4 - ((series[series.length - 1] - Math.min(...series, 0)) / Math.max(Math.max(...series, 1) - Math.min(...series, 0), 1)) * (height - 8)}
         r="2.4"
-        fill={color}
+        fill={stroke}
       />
     </svg>
   );

@@ -1,6 +1,7 @@
 import {
   Activity,
   Boxes,
+  BrainCircuit,
   ChevronRight,
   Database,
   Globe2,
@@ -26,6 +27,7 @@ const NAV: NavItem[] = [
   { id: "overview", label: "Resumen", hint: "Vista general", icon: LayoutDashboard, group: "monitor" },
   { id: "map", label: "Mapa global", hint: "Origen de ataques", icon: Globe2, group: "monitor" },
   { id: "events", label: "Eventos", hint: "Explorador", icon: ScrollText, group: "monitor" },
+  { id: "ai", label: "IA", hint: "Memoria y hallazgos", icon: BrainCircuit, group: "monitor" },
   { id: "honeypots", label: "Honeypots", hint: "Sensores activos", icon: Boxes, group: "operate" },
   { id: "devices", label: "Dispositivos", hint: "Topología", icon: Database, group: "operate" },
   { id: "ingest", label: "Ingesta", hint: "Pipeline", icon: Activity, group: "operate" },

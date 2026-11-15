@@ -128,6 +128,12 @@ def normalize(
         captured["message"] = raw["msg"]
     if raw.get("url"):
         captured["url"] = raw["url"]
+    # El parche de build de OpenCanary registra la huella del navegador en
+    # ``logdata.FINGERPRINT``; se conserva en el payload normalizado.
+    if logdata.get("FINGERPRINT"):
+        captured["fingerprint"] = logdata["FINGERPRINT"]
+    if logdata.get("PATH"):
+        captured["path"] = logdata["PATH"]
     return build_event(
         observer_name=OBSERVER,
         observer_product=PRODUCT,

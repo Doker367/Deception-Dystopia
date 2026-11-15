@@ -41,6 +41,7 @@ interface Campaign {
 interface MapPageProps {
   search: string;
   origins: AttackOrigin[];
+  unlocated?: number;
   mode: DataMode;
   onRefresh: () => void;
   onOpenEvents: (origin: AttackOrigin) => void;
@@ -58,7 +59,7 @@ function regionFor(code: string) {
   return REGION_BY_COUNTRY[code] ?? "OTROS";
 }
 
-export function MapPage({ search, origins, mode, onRefresh, onOpenEvents }: MapPageProps) {
+export function MapPage({ search, origins, unlocated = 0, mode, onRefresh, onOpenEvents }: MapPageProps) {
   const { notify } = useToast();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [country, setCountry] = useState("all");
@@ -138,6 +139,18 @@ export function MapPage({ search, origins, mode, onRefresh, onOpenEvents }: MapP
   const totalEvents = points.reduce((total, origin) => total + origin.events, 0);
   const maxEvents = Math.max(...points.map((origin) => origin.events), 1);
   const areaCount = new Set(points.map((origin) => origin.regionCode ? `${origin.countryCode}-${origin.regionCode}` : origin.countryCode)).size;
+  const countryTotals = useMemo(() => {
+    const totals = new Map<string, { country: string; events: number }>();
+    for (const origin of points) {
+      const item = totals.get(origin.countryCode) ?? { country: origin.country, events: 0 };
+      item.events += origin.events;
+      totals.set(origin.countryCode, item);
+    }
+    return Array.from(totals.values()).sort((a, b) => b.events - a.events);
+  }, [points]);
+  const topCountry = countryTotals[0];
+  const topCountryShare = totalEvents && topCountry ? Math.round((topCountry.events / totalEvents) * 100) : 0;
+  const topOrigin = points.reduce<AttackOrigin | null>((best, origin) => !best || origin.events > best.events ? origin : best, null);
 
   return (
     <div className="page page-map">
@@ -170,6 +183,7 @@ export function MapPage({ search, origins, mode, onRefresh, onOpenEvents }: MapP
           <>
             <span><i className={`status-dot ${mode === "live" ? "live" : ""}`} /> {mode === "live" ? "Telemetría en vivo" : mode === "error" ? "BFF sin conexión" : "Datos de demostración"}</span>
             <span>{points.length} orígenes activos</span>
+            {unlocated > 0 && <span title="IPs públicas que no están en la base GeoIP local">{formatNumber(unlocated)} sin geolocalizar</span>}
             <span className="mono">ventana 24 h</span>
           </>
         }
@@ -335,9 +349,9 @@ export function MapPage({ search, origins, mode, onRefresh, onOpenEvents }: MapP
 
           <Panel className="map-signal" eyebrow="Detección" title="Señales del mapa">
             <div className="map-signal-list">
-              <div><span className="insight-icon red"><ShieldAlert size={15} /></span><p><strong>Concentración inusual</strong><span>China + Rusia representan 32 % del volumen.</span></p></div>
-              <div><span className="insight-icon cyan"><Crosshair size={15} /></span><p><strong>Core observado</strong><span>{DATACENTER.city} recibe arcos de {points.length} regiones distintas.</span></p></div>
-              <div><span className="insight-icon amber"><Radio size={15} /></span><p><strong>Nuevo origen</strong><span>Fráncfort entró en la ventana hace 38 minutos.</span></p></div>
+              <div><span className="insight-icon red"><ShieldAlert size={15} /></span><p><strong>Mayor concentración</strong><span>{topCountry ? `${topCountry.country} acumula ${topCountryShare} % de los eventos geolocalizados.` : "Sin eventos geolocalizados en la ventana."}</span></p></div>
+              <div><span className="insight-icon cyan"><Crosshair size={15} /></span><p><strong>Core observado</strong><span>{DATACENTER.city} recibe arcos de {points.length} orígenes en {areaCount} países/estados.</span></p></div>
+              <div><span className="insight-icon amber"><Radio size={15} /></span><p><strong>Origen más activo</strong><span>{topOrigin ? `${topOrigin.ip} · ${[topOrigin.city, topOrigin.country].filter(Boolean).join(", ")} con ${formatNumber(topOrigin.events)} eventos.` : "Sin actividad en la ventana."}{unlocated > 0 ? ` ${formatNumber(unlocated)} IP(s) pública(s) sin ubicación en GeoIP.` : ""}</span></p></div>
             </div>
           </Panel>
         </div>

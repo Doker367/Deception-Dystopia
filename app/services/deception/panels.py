@@ -8,6 +8,17 @@ El objetivo es que, al navegar, el atacante vea un dispositivo creíble.
 
 from typing import Optional
 
+from app.services.deception.fingerprint_js import FINGERPRINT_JS
+
+
+def _beacon() -> str:
+    """Script de huella del navegador, servido desde el propio señuelo.
+
+    No se ejecuta JavaScript controlado por el atacante: el panel solo carga
+    este script same-origin y el listener valida el cuerpo de ``/__fp``.
+    """
+    return f'<script id="dystopia-fp">{FINGERPRINT_JS}</script>'
+
 # Cabecera Server por rol/vendor
 _SERVER_HEADER = {
     "camera": "webs",
@@ -69,7 +80,7 @@ def login_page(role: str, vendor: Optional[str] = None) -> str:
    <div class="warn">Unauthorized access prohibited</div>
  </form>
  <div class="foot">&copy; {name}. Firmware 1.0.0 &middot; <a href="/doc/index.html">Help</a></div>
-</div></body></html>"""
+</div>{_beacon()}</body></html>"""
 
 
 def dashboard_page(role: str, user: str = "admin", vendor: Optional[str] = None) -> str:
@@ -108,7 +119,7 @@ def dashboard_page(role: str, user: str = "admin", vendor: Optional[str] = None)
    <div class="tile"><div class="t">Users</div><div class="v">admin</div><div class="s">Last login 0 days ago</div></div>
    <div class="tile"><div class="t">Logs</div><div class="v">View</div><div class="s">System event log</div></div>
  </div>
-</body></html>"""
+{_beacon()}</body></html>"""
 
 
 def not_found_page() -> str:

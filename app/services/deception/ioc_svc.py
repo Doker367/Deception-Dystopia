@@ -11,7 +11,7 @@ import io
 import ipaddress
 from typing import Optional
 
-from app.services.deception import allowlist_svc, blocklist_svc, store_svc
+from app.services.deception import allowlist_svc, blocklist_svc, geoip_svc, store_svc
 
 _SENSITIVE = ("passwd", "shadow", "id_rsa", "wget", "curl", "chmod", "rm -rf", "nc ", "nc -")
 
@@ -78,9 +78,18 @@ def summarize(limit: int = 5000) -> list[dict]:
         suspicious = [c for c in commands if any(s in c.lower() for s in _SENSITIVE)]
         score = a["events"] + (5 if a["success"] else 0) + len(suspicious) * 10
         kind = _classify(ip)
+        geo_scope = geoip_svc.scope(ip)
+        geo = geoip_svc.lookup(ip) or {}
         result.append({
             "ip": ip,
             "kind": kind,                       # public | internal | lab
+            "scope": geo_scope,
+            "country": geo.get("country") or (geoip_svc.scope_label(geo_scope) if geo_scope != "public" else "Sin geolocalizar"),
+            "country_code": geo.get("country_code") or "",
+            "region": geo.get("subdivision") or "",
+            "city": geo.get("city") or "",
+            "lat": geo.get("lat"),
+            "lon": geo.get("lon"),
             "score": score,
             "events": a["events"],
             "devices": sorted(a["devices"]),
@@ -104,14 +113,18 @@ def to_csv(limit: int = 5000) -> str:
     """Exporta los IOCs a CSV."""
     rows = summarize(limit=limit)
     buffer = io.StringIO()
-    headers = ["ip", "kind", "threat", "score", "events", "blocked", "allowlisted",
+    headers = ["ip", "kind", "scope", "country", "country_code", "region", "city",
+               "threat", "score", "events", "blocked", "allowlisted",
                "success", "devices", "protos", "commands", "first_seen", "last_seen"]
     writer = csv.DictWriter(buffer, fieldnames=headers, lineterminator="\n")
     writer.writeheader()
     for r in rows:
         writer.writerow({
-            "ip": r["ip"], "kind": r["kind"], "threat": r["threat"], "score": r["score"],
-            "events": r["events"], "blocked": r["blocked"], "allowlisted": r["allowlisted"],
+            "ip": r["ip"], "kind": r["kind"], "scope": r["scope"],
+            "country": r["country"], "country_code": r["country_code"],
+            "region": r["region"], "city": r["city"],
+            "threat": r["threat"], "score": r["score"], "events": r["events"],
+            "blocked": r["blocked"], "allowlisted": r["allowlisted"],
             "success": r["success"], "devices": "|".join(r["devices"]),
             "protos": "|".join(r["protos"]), "commands": r["commands"],
             "first_seen": r["first_seen"], "last_seen": r["last_seen"],

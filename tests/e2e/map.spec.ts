@@ -48,7 +48,7 @@ const analytics: Record<string, unknown> = {
   "/api/analytics/timeline": { interval: "1h", buckets: [] },
   "/api/analytics/origins": origins,
   "/api/analytics/events": events,
-  "/api/analytics/campaigns": { campaigns: [], window_seconds: 300 },
+  "/api/analytics/campaigns": { campaigns: [] },
 };
 
 test.beforeEach(async ({ page }) => {

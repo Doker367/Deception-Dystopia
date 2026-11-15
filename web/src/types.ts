@@ -5,6 +5,7 @@ export type PageId =
   | "honeypots"
   | "devices"
   | "ingest"
+  | "ai"
   | "admin";
 
 export type Severity = "critical" | "high" | "medium" | "low" | "info";
@@ -37,6 +38,11 @@ export interface EventRow {
   source: string;
   country: string;
   countryCode: string;
+  region?: string;
+  regionCode?: string;
+  city?: string;
+  /** public | private | loopback | documentation | multicast | … */
+  scope?: string;
   kind: string;
   proto: string;
   port: number;

@@ -1,6 +1,8 @@
 import type { ReactNode } from "react";
 import { ArrowDownRight, ArrowUpRight } from "lucide-react";
 import { Sparkline } from "./Sparkline";
+import { AnimatedNumber } from "./AnimatedNumber";
+import { ACCENTS } from "../lib/palette";
 
 interface MetricCardProps {
   label: string;
@@ -12,6 +14,14 @@ interface MetricCardProps {
   tone?: "cyan" | "blue" | "amber" | "violet" | "red";
   spark?: number[];
 }
+
+const TONE_COLOR: Record<string, string> = {
+  cyan: ACCENTS.cyan,
+  blue: ACCENTS.blue,
+  amber: ACCENTS.amber,
+  violet: ACCENTS.violet,
+  red: ACCENTS.red,
+};
 
 export function MetricCard({
   label,
@@ -37,14 +47,14 @@ export function MetricCard({
       </div>
       <div className="metric-main">
         <div>
-          <strong className="metric-value">{value}</strong>
+          <strong className="metric-value"><AnimatedNumber value={value} /></strong>
           <p className="metric-detail">{detail}</p>
         </div>
         {spark && (
           <div className="metric-spark">
             <Sparkline
               data={spark}
-              color={tone === "red" ? "#ff6b7a" : tone === "amber" ? "#f5b75b" : tone === "blue" ? "#5aa9ff" : tone === "violet" ? "#b58cff" : "#35e6c4"}
+              color={TONE_COLOR[tone] ?? ACCENTS.cyan}
               width={108}
               height={38}
             />

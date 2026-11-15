@@ -5,6 +5,7 @@ que las interacciones del "atacante" queden registradas en el store.
 """
 
 import asyncio
+import json
 import sys
 from pathlib import Path
 
@@ -108,6 +109,49 @@ def test_http_panel_y_credenciales(db_path):
     logins = [e for e in events if e["type"] == "login_attempt"]
     assert logins and logins[0]["username"] == "admin"
     assert logins[0]["detail"].get("password") == "1234"
+
+
+def test_http_beacon_captures_browser_telemetry(db_path):
+    async def scenario():
+        listener = HttpListener("cam-01", "camera", "127.0.0.1", 0)
+        await listener.start()
+        try:
+            # La página servida incluye la baliza same-origin.
+            reader, writer = await asyncio.open_connection("127.0.0.1", listener.port)
+            writer.write(b"GET /admin HTTP/1.0\r\nHost: x\r\n\r\n")
+            await writer.drain()
+            page = await asyncio.wait_for(reader.read(65536), timeout=3)
+            assert b"dystopia-fp" in page and b"/__fp" in page
+            writer.close()
+
+            telemetry = {
+                "os": "Windows 11", "cores": 8, "memory": 8, "touch": 5,
+                "battery": {"level": 73, "charging": False},
+            }
+            payload = json.dumps(telemetry).encode()
+            reader, writer = await asyncio.open_connection("127.0.0.1", listener.port)
+            writer.write(
+                b"POST /__fp HTTP/1.0\r\nContent-Type: application/json\r\n"
+                b"User-Agent: telemetry-test\r\nContent-Length: " + str(len(payload)).encode()
+                + b"\r\n\r\n" + payload
+            )
+            await writer.drain()
+            response = await asyncio.wait_for(reader.read(1024), timeout=3)
+            assert b"204" in response
+            writer.close()
+        finally:
+            await listener.stop()
+
+    asyncio.run(scenario())
+
+    events = store_svc.get_events()
+    fingerprint_event = next(e for e in events if "fingerprint" in e["detail"])
+    captured = json.loads(fingerprint_event["detail"]["fingerprint"])
+    assert captured["headers"]["user-agent"] == "telemetry-test"
+    client = json.loads(captured["client"])
+    assert client["os"] == "Windows 11"
+    assert client["cores"] == 8
+    assert client["battery"]["level"] == 73
 
 
 def test_banner_rtsp_responde(db_path):

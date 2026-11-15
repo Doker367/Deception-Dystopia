@@ -190,6 +190,7 @@ class EventRecord:
     action: str
     severity: str
     message: str
+    scope: str = "public"
     detail: dict[str, Any] = field(default_factory=dict)
 
 
@@ -300,6 +301,15 @@ class AnalyticsService:
                 self._geo_cache[ip] = None
         return self._geo_cache[ip]
 
+    def _geo_meta(self, ip: str) -> tuple[str, dict, str]:
+        """Ámbito, GeoIP y etiqueta de país (nunca una celda vacía)."""
+        source_scope = geoip_svc.scope(ip)
+        geo = self._geo(ip) or {}
+        country = str(geo.get("country") or "")
+        if not country:
+            country = geoip_svc.scope_label(source_scope) if source_scope != "public" else "Sin geolocalizar"
+        return source_scope, geo, country
+
     def _connect(self) -> Optional[sqlite3.Connection]:
         path = self.config.resolved_db_path
         if not path.is_file():
@@ -363,14 +373,14 @@ class AnalyticsService:
         kind = str(payload.get("type") or row["kind"] or "other")
         detail = _json_object(payload.get("detail"))
         kind = _classify(kind, detail)
-        geo = self._geo(source) or {}
+        source_scope, geo, country = self._geo_meta(source)
         return EventRecord(
             id=str(payload.get("event_id") or row["event_id"] or ""),
             timestamp=str(row["observed_at"] or ""),
             sensor=str(row["sensor"] or ""),
             device=str(row["device"] or ""),
             source=source,
-            country=str(geo.get("country") or ""),
+            country=country,
             countryCode=str(geo.get("country_code") or ""),
             region=str(geo.get("subdivision") or ""),
             regionCode=str(geo.get("subdivision_code") or ""),
@@ -385,6 +395,7 @@ class AnalyticsService:
             action=_action(kind),
             severity=_severity(kind),
             message=str(detail.get("message") or detail.get("eventid") or _action(kind)),
+            scope=source_scope,
             detail=detail,
         )
 
@@ -397,7 +408,7 @@ class AnalyticsService:
         source = str(row["src_ip"] or "")
         kind = str(row["event_type"] or "other")
         kind = _classify(kind, detail)
-        geo = self._geo(source) or {}
+        source_scope, geo, country = self._geo_meta(source)
         sensor = str(detail.get("engine") or detail.get("sensor") or row["device_id"] or "")
         return EventRecord(
             id=f"evt_{row['id']}",
@@ -405,7 +416,7 @@ class AnalyticsService:
             sensor=sensor,
             device=str(row["device_id"] or ""),
             source=source,
-            country=str(geo.get("country") or ""),
+            country=country,
             countryCode=str(geo.get("country_code") or ""),
             region=str(geo.get("subdivision") or ""),
             regionCode=str(geo.get("subdivision_code") or ""),
@@ -420,6 +431,7 @@ class AnalyticsService:
             action=_action(kind),
             severity=_severity(kind),
             message=str(detail.get("message") or detail.get("command") or _action(kind)),
+            scope=source_scope,
             detail=detail,
         )
 
@@ -468,8 +480,16 @@ class AnalyticsService:
         groups: dict[str, dict[str, Any]] = defaultdict(
             lambda: {"events": 0, "sources": set(), "protocols": Counter(), "sensors": Counter(), "severity": "info", "last": ""}
         )
+        unlocated = 0
         for row in rows:
             if not row.countryCode or row.lat is None or row.lng is None:
+                # Las IPs privadas/loopback/documentación no son orígenes
+                # geolocalizables: se omiten sin contarlas como fallo de GeoIP.
+                if row.scope != "public":
+                    continue
+                # Un origen público sin coordenadas sí es un fallo de cobertura:
+                # se informa al operador en vez de desaparecer sin explicación.
+                unlocated += 1
                 continue
             # Un origen es país + subdivisión (estado/provincia) cuando GeoIP la
             # conoce. En EE. UU. esto permite pintar solo el estado afectado en
@@ -503,6 +523,7 @@ class AnalyticsService:
                 "ip": group.get("ip") or "",
                 "lat": group.get("lat"),
                 "lng": group.get("lng"),
+                "scope": "public",
                 "events": group["events"],
                 "uniqueSources": len(group["sources"]),
                 "severity": group["severity"],
@@ -510,8 +531,23 @@ class AnalyticsService:
                 "sensor": group["sensors"].most_common(1)[0][0] if group["sensors"] else "",
                 "lastEvent": group["last"] or None,
             })
-        result.sort(key=lambda item: item["events"], reverse=True)
-        return {"origins": result[: max(1, min(limit, 100))]}
+        # El corte por volumen solo desplaza a los orígenes de severidad alta:
+        # en ventanas largas los escaneos masivos (medium) superan el límite y
+        # los pocos que ejecutaron comandos (high/critical) quedan fuera, con lo
+        # que el globo se pinta entero de amarillo. Se reservan cupos para la
+        # severidad alta y se completa el resto por volumen, manteniendo el
+        # orden de la respuesta por eventos.
+        ordered = sorted(result, key=lambda item: item["events"], reverse=True)
+        ceiling = max(1, min(limit, 100))
+        high = [index for index, item in enumerate(ordered)
+                if SEVERITY_ORDER.get(item["severity"], 0) >= SEVERITY_ORDER["high"]]
+        selected = set(high[:ceiling])
+        for index in range(len(ordered)):
+            if len(selected) >= ceiling:
+                break
+            selected.add(index)
+        return {"origins": [item for index, item in enumerate(ordered) if index in selected],
+                "unlocated": unlocated}
 
     def events(
         self,
@@ -555,6 +591,8 @@ class AnalyticsService:
                     "countryCode": row.countryCode,
                     "region": row.region,
                     "regionCode": row.regionCode,
+                    "city": row.city,
+                    "scope": row.scope,
                     "kind": row.kind,
                     "proto": row.proto,
                     "port": row.port,
@@ -667,7 +705,11 @@ class AnalyticsService:
     @staticmethod
     def _evidence_item(row: EventRecord) -> dict[str, Any]:
         return {"id": row.id, "timestamp": row.timestamp, "sensor": row.sensor,
-                "device": row.device, "kind": row.kind, "action": row.action,
+                "device": row.device, "source": row.source,
+                "country": row.country, "countryCode": row.countryCode,
+                "region": row.region, "regionCode": row.regionCode,
+                "city": row.city, "scope": row.scope,
+                "kind": row.kind, "action": row.action,
                 "proto": row.proto, "port": row.port,
                 "dst_ip": row.dst_ip, "dst_port": row.dst_port,
                 "severity": row.severity, "message": row.message, "detail": row.detail}
@@ -801,10 +843,27 @@ class AnalyticsService:
             "SELECT ts FROM deception_events WHERE src_ip=? AND ts>=? AND ts<=? "
             "ORDER BY ts DESC, id DESC LIMIT 1", window,
         ).fetchone()
-        geo = self._geo(source) or {}
+        source_scope, geo, country = self._geo_meta(source)
+        fingerprint = None
+        try:
+            fp_row = conn.execute(
+                "SELECT detail FROM deception_events "
+                "WHERE src_ip=? AND ts>=? AND ts<=? "
+                "AND json_extract(CASE WHEN json_valid(detail) THEN detail ELSE '{}' END, '$.fingerprint') IS NOT NULL "
+                "ORDER BY length(json_extract(CASE WHEN json_valid(detail) THEN detail ELSE '{}' END, '$.fingerprint')) DESC, "
+                "ts DESC, id DESC LIMIT 1",
+                window,
+            ).fetchone()
+            if fp_row is not None:
+                fingerprint = _json_object(fp_row[0]).get("fingerprint")
+        except sqlite3.Error:
+            fingerprint = None
         return {**result, "first_seen": str(last[0] or ""), "last_seen": str(first[0] or ""),
-                "country": str(geo.get("country") or ""), "countryCode": str(geo.get("country_code") or ""),
+                "country": country, "countryCode": str(geo.get("country_code") or ""),
+                "region": str(geo.get("subdivision") or ""),
+                "regionCode": str(geo.get("subdivision_code") or ""),
                 "city": str(geo.get("city") or ""), "lat": _lat(geo.get("lat")), "lng": _lon(geo.get("lon")),
+                "scope": source_scope, "fingerprint": fingerprint,
                 **counts, "items": [self._evidence_item(row) for row in page]}
 
     def attacker(self, source: str, offset: int = 0, limit: int = 50,
@@ -830,10 +889,13 @@ class AnalyticsService:
         kinds = Counter(row.kind for row in rows if row.kind)
         devices = Counter(row.device for row in rows if row.device)
         geo = next((row for row in rows if row.country or row.city), rows[0])
+        fingerprint = next((row.detail.get("fingerprint") for row in rows if row.detail.get("fingerprint")), None)
         return {
             "source": source, "total": len(rows), "first_seen": rows[-1].timestamp,
             "last_seen": rows[0].timestamp, "country": geo.country, "countryCode": geo.countryCode,
-            "city": geo.city, "lat": geo.lat, "lng": geo.lng,
+            "region": geo.region, "regionCode": geo.regionCode,
+            "city": geo.city, "lat": geo.lat, "lng": geo.lng, "scope": geo.scope,
+            "fingerprint": fingerprint,
             "protocols": dict(protocols), "sensors": dict(sensors), "kinds": dict(kinds),
             "devices": dict(devices), "window": {"from": _iso(start), "to": _iso(end)},
             "scanned_limit": self.config.max_rows,

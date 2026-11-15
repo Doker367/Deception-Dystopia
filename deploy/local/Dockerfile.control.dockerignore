@@ -6,7 +6,9 @@ node_modules
 **/__pycache__
 **/*.pyc
 tests
-docs
+docs/images
+docs/*.docx
+docs/*.pdf
 deploy/elastic
 web/src
 web/node_modules

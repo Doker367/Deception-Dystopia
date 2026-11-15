@@ -76,7 +76,23 @@ def test_paneles_por_vendor():
     cam = panels.login_page("camera", "Hikvision-Webs")
     assert "Hikvision" in cam and "Device Management" in cam
     assert panels.server_header("firewall") == "FortiGate"
-    assert "Fortinet" in panels.dashboard_page("firewall", "admin")
+    dashboard = panels.dashboard_page("firewall", "admin")
+    assert "Fortinet" in dashboard
+    # La baliza de telemetría va en ambas páginas y captura hardware/navegador.
+    for page in (cam, dashboard):
+        assert 'id="dystopia-fp"' in page and "/__fp" in page
+        assert "hardwareConcurrency" in page
+        assert "deviceMemory" in page
+        assert "getBattery" in page
+        assert "maxTouchPoints" in page
+
+
+def test_fingerprint_js_nativo_y_opencanary_en_sync():
+    """La copia nativa y la que compila OpenCanary deben ser idénticas."""
+    from app.services.deception.fingerprint_js import FINGERPRINT_JS
+
+    canonical = Path(__file__).resolve().parent.parent / "docker/deception/opencanary/fingerprint.js"
+    assert FINGERPRINT_JS == canonical.read_text(encoding="utf-8")
 
 
 # ── FTP / MySQL ──────────────────────────────────────────────

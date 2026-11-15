@@ -19,60 +19,77 @@ import { Panel } from "../components/Panel";
 import { EChart } from "../components/EChart";
 import { INGEST_SERIES, HONEYPOTS } from "../data/mock";
 import { formatNumber } from "../lib/format";
+import { chartAxis, chartGrid, chartLabelInk, chartTooltip, ambientPulse } from "../lib/charts";
+import { inkAccent, useTheme } from "../lib/theme";
 import { ActionDialog } from "../components/ActionDialog";
 import { useToast } from "../components/Toast";
 import { apiGet, getToken } from "../lib/api";
 
-const AXIS_LABEL = { color: "#71849b", fontSize: 10, fontFamily: "JetBrains Mono, monospace" };
-
 function ingestOption(): EChartsOption {
+  const tip = chartTooltip();
+  const lastIndex = INGEST_SERIES.length - 1;
+  const lastValue = INGEST_SERIES[lastIndex] ?? 0;
+  const lastLabel = `${lastIndex * 5}m`;
   return {
     backgroundColor: "transparent",
-    animationDuration: 800,
+    animation: true,
+    animationDuration: 1200,
+    animationDurationUpdate: 700,
+    animationEasing: "cubicOut",
+    animationEasingUpdate: "cubicOut",
     grid: { top: 18, right: 16, bottom: 28, left: 42 },
     tooltip: {
       trigger: "axis",
-      backgroundColor: "#0b1520",
-      borderColor: "rgba(93, 170, 196, 0.3)",
-      textStyle: { color: "#dbe7f3", fontSize: 12 },
+      ...tip,
+      textStyle: { ...tip.textStyle, fontSize: 13 },
     },
-    legend: { right: 0, top: 0, textStyle: { color: "#8c9fb3", fontSize: 11 }, icon: "roundRect", itemWidth: 8, itemHeight: 8 },
+    legend: { right: 0, top: 0, textStyle: { color: chartLabelInk(), fontSize: 12 }, icon: "roundRect", itemWidth: 8, itemHeight: 8 },
     xAxis: {
       type: "category",
       data: Array.from({ length: INGEST_SERIES.length }, (_, index) => `${index * 5}m`),
       axisTick: { show: false },
-      axisLine: { lineStyle: { color: "rgba(108, 150, 177, 0.16)" } },
-      axisLabel: AXIS_LABEL,
+      axisLine: { lineStyle: { color: chartGrid().color } },
+      axisLabel: chartAxis(),
     },
     yAxis: {
       type: "value",
-      splitLine: { lineStyle: { color: "rgba(108, 150, 177, 0.12)", type: "dashed" } },
-      axisLabel: AXIS_LABEL,
+      splitLine: { lineStyle: chartGrid() },
+      axisLabel: chartAxis(),
     },
     series: [
       {
         name: "Documentos / min",
+        id: "documents",
         type: "line",
         smooth: 0.35,
         symbol: "none",
+        animationDuration: 1500,
+        animationEasing: "quarticOut",
+        emphasis: { focus: "series" },
         data: INGEST_SERIES,
-        lineStyle: { color: "#35e6c4", width: 2 },
-        areaStyle: { color: "rgba(53, 230, 196, 0.13)" },
+        lineStyle: { color: inkAccent("#e2601f"), width: 2 },
+        areaStyle: { color: `${inkAccent("#e2601f")}21` },
       },
       {
         name: "Descartes",
+        id: "discards",
         type: "line",
         smooth: true,
         symbol: "none",
+        animationDuration: 1500,
+        animationEasing: "quarticOut",
+        emphasis: { focus: "series" },
         data: INGEST_SERIES.map((value) => Math.max(0, Math.round(value * 0.012))),
-        lineStyle: { color: "#ff7a9e", width: 1.4, type: "dashed" },
+        lineStyle: { color: inkAccent("#e982a8"), width: 1.4, type: "dashed" },
       },
+      ...(lastValue > 0 ? [ambientPulse(lastLabel, lastValue, inkAccent("#e2601f"))] : []),
     ],
   };
 }
 
 export function IngestPage() {
-  const option = useMemo(() => ingestOption(), []);
+  const [theme] = useTheme();
+  const option = useMemo(() => ingestOption(), [theme]);
   const { notify } = useToast();
   const [metricsOpen, setMetricsOpen] = useState(false);
   const [testing, setTesting] = useState(false);

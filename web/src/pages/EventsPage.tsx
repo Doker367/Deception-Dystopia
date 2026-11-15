@@ -1,23 +1,23 @@
 import { useMemo, useState } from "react";
 import {
+  Bookmark,
   ChevronLeft,
   ChevronRight,
   Columns3,
-  Copy,
   Download,
   Filter,
   Search,
   SlidersHorizontal,
-  X,
 } from "lucide-react";
 import { PageHeader } from "../components/PageHeader";
 import { EventTable, type EventColumn } from "../components/EventTable";
 import { ActionDialog } from "../components/ActionDialog";
+import { EventDetailDrawer } from "../components/EventDetailDrawer";
 import { SeverityBadge } from "../components/SeverityBadge";
 import { HONEYPOTS } from "../data/mock";
 import type { EventRow, Severity } from "../types";
 import type { DataMode } from "../data/useAnalytics";
-import { formatDateTime, formatNumber } from "../lib/format";
+import { formatNumber } from "../lib/format";
 
 const PAGE_SIZE = 12;
 
@@ -36,9 +36,10 @@ interface EventsPageProps {
   events: EventRow[];
   total: number;
   mode: DataMode;
+  onOpenAttacker: (source: string) => void;
 }
 
-export function EventsPage({ search, range, events, total, mode }: EventsPageProps) {
+export function EventsPage({ search, range, events, total, mode, onOpenAttacker }: EventsPageProps) {
   const [localQuery, setLocalQuery] = useState("");
   const [severity, setSeverity] = useState<"all" | Severity>("all");
   const [sensor, setSensor] = useState("all");
@@ -156,11 +157,14 @@ export function EventsPage({ search, range, events, total, mode }: EventsPagePro
         <section className="panel discover-panel">
           <div className="discover-toolbar">
             <div className="save-search">
-              <span className="eyebrow">Vista guardada</span>
-              <strong>Security events · all honeypots</strong>
+              <span className="save-search-icon"><Bookmark size={15} /></span>
+              <div>
+                <span className="eyebrow">Vista guardada</span>
+                <strong>Security events · all honeypots</strong>
+              </div>
             </div>
             <div className="discover-toolbar-right">
-              <span className="mono">1–{Math.min((safePage + 1) * PAGE_SIZE, filtered.length)} de {formatNumber(filtered.length)}</span>
+              <span className="mono range-pill">1–{Math.min((safePage + 1) * PAGE_SIZE, filtered.length)} de {formatNumber(filtered.length)}</span>
               <button className="icon-button small" onClick={() => setPage(Math.max(0, safePage - 1))} disabled={safePage === 0} aria-label="Página anterior"><ChevronLeft size={15} /></button>
               <button className="icon-button small" onClick={() => setPage(Math.min(pageCount - 1, safePage + 1))} disabled={safePage >= pageCount - 1} aria-label="Página siguiente"><ChevronRight size={15} /></button>
             </div>
@@ -211,7 +215,7 @@ export function EventsPage({ search, range, events, total, mode }: EventsPagePro
                 ["event.kind", "keyword"],
                 ["network.protocol", "keyword"],
               ].map(([field, type]) => (
-                <div key={field}><span className="mono">{field}</span><small>{type}</small></div>
+                <div key={field}><span className="mono">{field}</span><small className={`field-type t-${type}`}>{type}</small></div>
               ))}
             </div>
           </div>
@@ -253,41 +257,7 @@ export function EventsPage({ search, range, events, total, mode }: EventsPagePro
         </div>
       </ActionDialog>
 
-      {selected && (
-        <div className="drawer-backdrop" onClick={() => setSelected(null)}>
-          <aside className="event-drawer" onClick={(event) => event.stopPropagation()}>
-            <div className="drawer-head">
-              <div>
-                <span className="eyebrow">Event detail</span>
-                <h2>{selected.action}</h2>
-                <span className="mono muted">{selected.id}</span>
-              </div>
-              <button className="icon-button" onClick={() => setSelected(null)} aria-label="Cerrar detalle"><X size={18} /></button>
-            </div>
-            <div className="drawer-badges">
-              <SeverityBadge severity={selected.severity} />
-              <span className="sensor-chip">{selected.sensor}</span>
-              <span className="proto-chip">{selected.proto}</span>
-            </div>
-            <div className="drawer-summary">
-              <div><span>Origen</span><strong className="mono">{selected.source}</strong></div>
-              <div><span>País</span><strong>{selected.country}</strong></div>
-              <div><span>Dispositivo</span><strong className="mono">{selected.device}</strong></div>
-              <div><span>Destino</span><strong className="mono">{selected.dst_ip || "—"}:{selected.dst_port ?? "—"}</strong></div>
-              <div><span>MITRE</span><strong className="mono">{String(selected.detail?.mitre ?? "—")}</strong></div>
-              <div><span>Timestamp</span><strong>{formatDateTime(selected.timestamp)}</strong></div>
-            </div>
-            <div className="drawer-message">
-              <span className="eyebrow">Mensaje normalizado</span>
-              <p>{selected.message}</p>
-            </div>
-            <div className="drawer-json">
-              <div className="drawer-json-head"><span className="eyebrow">Documento</span><button className="link-button" onClick={() => navigator.clipboard?.writeText(JSON.stringify(selected, null, 2))}><Copy size={13} /> Copiar</button></div>
-              <pre>{JSON.stringify(selected, null, 2)}</pre>
-            </div>
-          </aside>
-        </div>
-      )}
+      {selected && <EventDetailDrawer event={selected} onClose={() => setSelected(null)} onOpenAttacker={onOpenAttacker} />}
     </div>
   );
 }

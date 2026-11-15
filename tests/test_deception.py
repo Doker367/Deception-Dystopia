@@ -20,8 +20,7 @@ from fastapi.testclient import TestClient
 from app.core.security import create_access_token
 from app.main import app
 from app.models.deception import DeceptionEventIn, DeceptionEventType
-from app.services.deception import store_svc, topology_svc
-
+from app.services.deception import blocklist_svc, store_svc, topology_svc
 # Usuarios sintéticos: reflejan el contrato de /api/auth/login, donde el JWT
 # incluye `ver` = sha256(password_hash) para invalidar tokens tras un cambio
 # de contraseña. El middleware rechaza cualquier token sin ese claim.
@@ -250,3 +249,21 @@ def test_api_simulate_ejecucion_heredada_deshabilitada(network_file, db_path, au
     assert r.status_code == 409, r.text
     assert "Legacy execution disabled" in r.json()["detail"]
     assert store_svc.get_events() == []
+
+
+def test_api_blocklist_registra_respuesta_sin_firewall(tmp_path, monkeypatch, auth, client):
+    """La blocklist sí es una acción de respuesta; el firewall sigue deshabilitado."""
+    from app.services import audit_svc
+    monkeypatch.setattr(blocklist_svc, "BLOCKLIST_FILE", tmp_path / "blocklist.json")
+    monkeypatch.setattr(audit_svc, "AUDIT_DIR", tmp_path)
+    monkeypatch.setattr(audit_svc, "AUDIT_DB", tmp_path / "audit.db")
+    created = client.post("/api/deception/blocklist", headers=auth["admin"],
+                          json={"ip": "203.0.113.9", "reason": "prueba de respuesta"})
+    assert created.status_code == 201, created.text
+    assert created.json()["ip"] == "203.0.113.9"
+    assert client.get("/api/deception/blocklist", headers=auth["viewer"]).json()[0]["ip"] == "203.0.113.9"
+    assert client.delete("/api/deception/blocklist/203.0.113.9", headers=auth["admin"]).status_code == 204
+    assert client.get("/api/deception/blocklist", headers=auth["viewer"]).json() == []
+    actions = [event["action"] for event in audit_svc.get_events(limit=10)]
+    assert "deception_blocklist_add" in actions
+    assert "deception_blocklist_remove" in actions

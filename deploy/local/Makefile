@@ -1,6 +1,11 @@
 SHELL := /usr/bin/env bash
 
-COMPOSE := docker compose --env-file .env -f docker-compose.yml
+# En el servidor .env define DYSTOPIA_TAILSCALE_IP; sin el override remoto
+# `make up` recrea control solo en 127.0.0.1 y el panel deja de verse por
+# Tailscale. En macOS (sin esa variable) se usa únicamente el compose base.
+REMOTE := $(shell grep -q '^DYSTOPIA_TAILSCALE_IP=..*' .env 2>/dev/null && echo '-f docker-compose.remote.yml')
+
+COMPOSE := docker compose --env-file .env -f docker-compose.yml $(REMOTE)
 
 .PHONY: env check-docker build up down logs ps bootstrap-user attack health analytics-health token reset-ledger
 

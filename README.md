@@ -18,7 +18,8 @@ y la analítica local.
 ## Estado
 
 - Dystopia Web operativa con resumen, globo 3D, explorador de eventos,
-  honeypots, dispositivos, ingesta y administración.
+  honeypots, dispositivos, ingesta, administración e **IA** (memoria RAG,
+  hallazgos y notificaciones asesoras).
 - Analítica local sobre SQLite (`deception_events` o `events`); sin
   Elasticsearch ni Kibana.
 - Honeypots del MVP: Cowrie, OpenCanary, Dionaea, Heralding, RedisHoneyPot y
@@ -63,7 +64,7 @@ propio almacén local y su propia interfaz.
 | Suricata, Fatt, P0f | No incluido |
 | Autoheal | No incluido |
 | EWSposter | No incluido |
-| Ollama / ChatGPT / honeypots LLM | Fuera de alcance |
+| Ollama / ChatGPT / honeypots LLM | Fuera de alcance como servicio externo; el RAG local es opcional ([IA y RAG](docs/AI-RAG.md)) |
 
 La tabla completa de honeypots y herramientas está en
 [`docs/TPOT-COMPATIBILITY.md`](docs/TPOT-COMPATIBILITY.md).
@@ -96,17 +97,6 @@ T1059, T1105, T1046, T1190).
 OpenCanary registra las peticiones HTTP arbitrarias (incluidos 404) en el log
 de Twisted; un shim las replica como JSONL en `opencanary.log` para que el
 colector guarde `path`, `method` y `useragent` como `http_request` (T1190).
-
-La ficha permite marcar el **resguardo** de una IP: sin acción, monitorear,
-bloqueo registrado o redirección a otra trampa (con sensor destino validado).
-El estado queda auditado; la aplicación real de bloqueo/redirección sigue
-requiriendo el gate de red autorizado.
-
-El panel HTTP falso incluye un beacon de navegador (`/__fp`) que, solo si el
-atacante ejecuta JavaScript, registra plataforma, pantalla, CPU/RAM estimadas,
-puntos táctiles, batería, WebGL, zona horaria y client hints. SSH/Telnet no
-pueden aportar esos datos de dispositivo. El fingerprint se muestra en la
-ficha; si no hay telemetría se indica que el cliente fue de terminal o no-JS.
 
 `GET /api/analytics/campaigns` correlaciona una misma IP que toca varios
 señuelos o puertos en una ventana de cinco minutos. Devuelve una campaña
@@ -214,18 +204,6 @@ campo, un `plan_sha256` determinista y los motivos de bloqueo. El plan es
 descriptivo: **no autoriza ni ejecuta nada**. `POST .../apply` sigue respondiendo
 `409` e incluye el prefijo del hash del plan para que el operador sepa qué
 borrador intentó aplicarse.
-
-## Despliegue en centro de datos
-
-Documentación de handoff para el CPD:
-
-- [Matriz de red y flujos](docs/NETWORK-MATRIX.md)
-- [Inventario de celdas y servicios](docs/CELL-INVENTORY.md)
-- [Runbook de cutover y rollback](docs/RUNBOOK-DC-CUTOVER.md)
-- [CSV para el ingeniero de redes](deploy/dc/README.md)
-
-El servidor de laboratorio no demuestra contención: la segmentación, el
-verificador Linux y el gate se validan en el CPD.
 
 ## Requisitos
 
@@ -351,6 +329,7 @@ No se comparten contraseñas, API keys ni secretos entre entornos.
 - [Consola operativa](docs/CONSOLE-OPERATIONS.md)
 - [Integración operativa offline](docs/OPS-INTEGRATION.md)
 - [Puente de consulta Unix](docs/QUERY-BRIDGE.md)
+- [IA local y RAG de ataques](docs/AI-RAG.md)
 - [Migración](MIGRATION.md)
 - [Procedencia de dependencias](docs/DEPENDENCY-PROVENANCE.md)
 - [Licencia](LICENSE)

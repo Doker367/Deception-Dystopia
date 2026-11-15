@@ -163,6 +163,68 @@ DECEPTION_AI_FP_MIN_CONFIDENCE = float(
     os.getenv("NETPULSE_DECEPTION_AI_FP_MIN_CONFIDENCE", str(AI_CONFIDENCE_FLOOR))
 )
 
+# ── RAG — memoria de ataques (IA local, sin servicios externos) ──
+# Índice híbrido (FTS5 + vectores) sobre eventos, notas de analista y
+# documentación. Deshabilitado por defecto: sin la capa activa, las rutas
+# responden 503 y no se crea ninguna base.
+RAG_ENABLED = os.getenv("NETPULSE_RAG_ENABLED", "false").lower() == "true"
+RAG_DB = Path(os.getenv("NETPULSE_RAG_DB", str(DECEPTION_DATA_DIR / "rag.db")))
+# Embeddings multilingües servidos por llama.cpp (API OpenAI-compatible).
+RAG_EMBED_URL = os.getenv(
+    "NETPULSE_RAG_EMBED_URL", "http://127.0.0.1:8081/v1/embeddings"
+)
+RAG_EMBED_MODEL = os.getenv("NETPULSE_RAG_EMBED_MODEL", "qwen3-embedding-0.6b")
+RAG_EMBED_DIM = int(os.getenv("NETPULSE_RAG_EMBED_DIM", "1024"))
+RAG_EMBED_TIMEOUT = float(os.getenv("NETPULSE_RAG_EMBED_TIMEOUT", "30"))
+RAG_EMBED_BATCH = int(os.getenv("NETPULSE_RAG_EMBED_BATCH", "16"))
+# Modelo generativo local para responder sobre la evidencia recuperada.
+RAG_LLM_URL = os.getenv(
+    "NETPULSE_RAG_LLM_URL", "http://127.0.0.1:8091/v1/chat/completions"
+)
+RAG_LLM_MODEL = os.getenv("NETPULSE_RAG_LLM_MODEL", "qwen3-14b")
+RAG_LLM_API_KEY = os.getenv("NETPULSE_RAG_LLM_API_KEY", "")
+RAG_LLM_TIMEOUT = float(os.getenv("NETPULSE_RAG_LLM_TIMEOUT", "120"))
+RAG_LLM_MAX_TOKENS = int(os.getenv("NETPULSE_RAG_LLM_MAX_TOKENS", "900"))
+# Desactiva la cadena de pensamiento en plantillas Qwen (enable_thinking=false).
+RAG_LLM_DISABLE_THINKING = os.getenv(
+    "NETPULSE_RAG_LLM_DISABLE_THINKING", "true"
+).lower() == "true"
+# Búsqueda: candidatos por vía, resultados finales y umbral de abstención.
+RAG_TOP_K = int(os.getenv("NETPULSE_RAG_TOP_K", "8"))
+RAG_CANDIDATES = int(os.getenv("NETPULSE_RAG_CANDIDATES", "40"))
+RAG_MIN_SCORE = float(os.getenv("NETPULSE_RAG_MIN_SCORE", "0.20"))
+# Presupuesto de evidencia enviada al modelo (caracteres, ~4 por token).
+RAG_CONTEXT_CHARS = int(os.getenv("NETPULSE_RAG_CONTEXT_CHARS", "12000"))
+RAG_MAX_PER_DOC = int(os.getenv("NETPULSE_RAG_MAX_PER_DOC", "2"))
+RAG_MAX_VECTORS = int(os.getenv("NETPULSE_RAG_MAX_VECTORS", "100000"))
+# Privacidad: por defecto NO se indexan comandos, URLs ni usuarios capturados.
+# Activarlo solo en un laboratorio autorizado; los secretos se redactan igual.
+RAG_INCLUDE_PAYLOAD = os.getenv("NETPULSE_RAG_INCLUDE_PAYLOAD", "false").lower() == "true"
+# Directorios extra de conocimiento (separados por os.pathsep).
+RAG_KNOWLEDGE_DIRS = [
+    item for item in os.getenv("NETPULSE_RAG_KNOWLEDGE_DIRS", "").split(os.pathsep) if item
+]
+RAG_EVENT_DAYS = int(os.getenv("NETPULSE_RAG_EVENT_DAYS", "90"))
+RAG_EVENT_LIMIT = int(os.getenv("NETPULSE_RAG_EVENT_LIMIT", "20000"))
+# Monitor proactivo: evalúa eventos nuevos y notifica hallazgos.
+RAG_MONITOR_ENABLED = os.getenv(
+    "NETPULSE_AI_MONITOR_ENABLED", "false"
+).lower() == "true"
+RAG_MONITOR_WINDOW_MIN = int(os.getenv("NETPULSE_AI_MONITOR_WINDOW_MIN", "15"))
+RAG_MONITOR_MIN_EVENTS = int(os.getenv("NETPULSE_AI_MONITOR_MIN_EVENTS", "8"))
+RAG_MONITOR_MIN_SCORE = int(os.getenv("NETPULSE_AI_MONITOR_MIN_SCORE", "3"))
+RAG_MONITOR_MIN_CONFIDENCE = float(os.getenv("NETPULSE_AI_MONITOR_MIN_CONFIDENCE", "0.55"))
+RAG_MONITOR_COOLDOWN_MIN = int(os.getenv("NETPULSE_AI_MONITOR_COOLDOWN_MIN", "180"))
+RAG_MONITOR_MAX_CANDIDATES = int(os.getenv("NETPULSE_AI_MONITOR_MAX_CANDIDATES", "5"))
+RAG_MONITOR_BATCH = int(os.getenv("NETPULSE_AI_MONITOR_BATCH", "5000"))
+RAG_MONITOR_NOTIFY_MIN_SEVERITY = os.getenv(
+    "NETPULSE_AI_MONITOR_NOTIFY_MIN_SEVERITY", "medium"
+).lower()
+# Notificaciones push autoalojadas (ntfy). Opcional.
+NTFY_URL = os.getenv("NETPULSE_NTFY_URL", "").rstrip("/")
+NTFY_TOPIC = os.getenv("NETPULSE_NTFY_TOPIC", "")
+NTFY_TOKEN = os.getenv("NETPULSE_NTFY_TOKEN", "")
+
 # ── Alertmanager webhook (auth de servicio) ──────────────────
 # Token compartido para que Alertmanager (que no envía JWT) autentique
 # POST /api/alerts/webhook. Vacío = exigir JWT admin (comportamiento previo).

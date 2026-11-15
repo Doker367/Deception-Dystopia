@@ -1,4 +1,5 @@
 import type { AttackOrigin, EventRow, Honeypot, TimeRangeOption } from "../types";
+import { ACCENTS, PROTOCOLS as PROTOCOL_COLORS, SENSORS, SEVERITY as SEVERITY_COLORS } from "../lib/palette";
 
 export const DATACENTER = {
   name: "UNACH · FCFM",
@@ -294,7 +295,7 @@ export const HONEYPOTS: Honeypot[] = [
     lastSeen: "hace 18 s",
     uptime: "99.98 %",
     trend: [18, 24, 21, 34, 39, 32, 46, 41, 55, 49, 62, 58],
-    color: "#35e6c4",
+    color: SENSORS.cowrie,
   },
   {
     id: "opencanary",
@@ -307,7 +308,7 @@ export const HONEYPOTS: Honeypot[] = [
     lastSeen: "hace 42 s",
     uptime: "99.95 %",
     trend: [12, 18, 16, 21, 18, 28, 25, 31, 29, 38, 35, 42],
-    color: "#5aa9ff",
+    color: SENSORS.opencanary,
   },
   {
     id: "dionaea",
@@ -320,7 +321,7 @@ export const HONEYPOTS: Honeypot[] = [
     lastSeen: "hace 1 min",
     uptime: "99.92 %",
     trend: [8, 12, 14, 13, 19, 17, 22, 26, 24, 29, 31, 35],
-    color: "#f5b75b",
+    color: SENSORS.dionaea,
   },
   {
     id: "heralding",
@@ -333,7 +334,7 @@ export const HONEYPOTS: Honeypot[] = [
     lastSeen: "hace 2 min",
     uptime: "99.89 %",
     trend: [10, 9, 14, 16, 15, 21, 18, 24, 22, 27, 25, 30],
-    color: "#b58cff",
+    color: SENSORS.heralding,
   },
   {
     id: "redishoneypot",
@@ -346,7 +347,7 @@ export const HONEYPOTS: Honeypot[] = [
     lastSeen: "hace 8 min",
     uptime: "99.84 %",
     trend: [4, 6, 5, 9, 8, 11, 10, 14, 13, 17, 15, 19],
-    color: "#ff7a9e",
+    color: SENSORS.redishoneypot,
   },
   {
     id: "endlessh",
@@ -359,24 +360,24 @@ export const HONEYPOTS: Honeypot[] = [
     lastSeen: "hace 17 min",
     uptime: "99.97 %",
     trend: [5, 7, 6, 8, 8, 10, 9, 12, 11, 13, 12, 15],
-    color: "#7be07b",
+    color: SENSORS.endlessh,
   },
 ];
 
 export const PROTOCOLS = [
-  { name: "SSH", value: 38, color: "#35e6c4" },
-  { name: "HTTP", value: 24, color: "#5aa9ff" },
-  { name: "SMB", value: 14, color: "#f5b75b" },
-  { name: "RDP", value: 10, color: "#b58cff" },
-  { name: "Redis", value: 8, color: "#ff7a9e" },
-  { name: "Otros", value: 6, color: "#58718f" },
+  { name: "SSH", value: 38, color: PROTOCOL_COLORS.SSH },
+  { name: "HTTP", value: 24, color: SENSORS.opencanary },
+  { name: "SMB", value: 14, color: SENSORS.dionaea },
+  { name: "RDP", value: 10, color: SENSORS.heralding },
+  { name: "Redis", value: 8, color: SENSORS.redishoneypot },
+  { name: "Otros", value: 6, color: PROTOCOL_COLORS.Otros },
 ];
 
 export const SEVERITIES = [
-  { name: "Crítico", value: 7, color: "#ff5f7a" },
-  { name: "Alto", value: 18, color: "#ff9f5b" },
-  { name: "Medio", value: 31, color: "#f5d06b" },
-  { name: "Bajo", value: 44, color: "#35e6c4" },
+  { name: "Crítico", value: 7, color: SEVERITY_COLORS.critical },
+  { name: "Alto", value: 18, color: SEVERITY_COLORS.high },
+  { name: "Medio", value: 31, color: SEVERITY_COLORS.medium },
+  { name: "Bajo", value: 44, color: SEVERITY_COLORS.low },
 ];
 
 export const VOLUME_SERIES = {
@@ -411,9 +412,9 @@ export const DEVICES = [
 ];
 
 export const SEGMENTS = [
-  { name: "c1-core", cidr: "10.20.1.0/24", devices: 2, exposure: "interna", color: "#35e6c4" },
-  { name: "c1-access", cidr: "10.20.2.0/24", devices: 2, exposure: "interna", color: "#5aa9ff" },
-  { name: "c1-edge", cidr: "10.20.3.0/24", devices: 2, exposure: "perimetral", color: "#f5b75b" },
+  { name: "c1-core", cidr: "10.20.1.0/24", devices: 2, exposure: "interna", color: ACCENTS.cyan },
+  { name: "c1-access", cidr: "10.20.2.0/24", devices: 2, exposure: "interna", color: SENSORS.opencanary },
+  { name: "c1-edge", cidr: "10.20.3.0/24", devices: 2, exposure: "perimetral", color: SENSORS.dionaea },
 ];
 
 export const HONEYPOT_CONFIGS: Record<string, import("../types").HoneypotConfig> = {

@@ -1,0 +1,89 @@
+# Integración de la IA local con el laboratorio Docker.
+#
+# Uso (desde deploy/local):
+#   sudo docker compose --env-file .env \
+#     -f docker-compose.yml -f docker-compose.remote.yml -f docker-compose.ai.yml \
+#     up -d --build --wait control ai-monitor
+#
+# Los modelos corren en el host, escuchando en 172.25.0.1 (docker0). El control
+# los alcanza por esa IP y el monitor comparte el volumen deception_db para
+# escribir hallazgos y memoria en la misma SQLite que lee la interfaz.
+
+services:
+  control:
+    environment:
+      NETPULSE_RAG_ENABLED: "true"
+      NETPULSE_RAG_DB: /srv/deception/rag.db
+      NETPULSE_RAG_EMBED_URL: http://172.25.0.1:8081/v1/embeddings
+      NETPULSE_RAG_EMBED_MODEL: qwen3-embedding-0.6b
+      NETPULSE_RAG_EMBED_DIM: "1024"
+      NETPULSE_RAG_LLM_URL: http://172.25.0.1:8091/v1/chat/completions
+      NETPULSE_RAG_LLM_MODEL: her-9b
+      NETPULSE_RAG_LLM_DISABLE_THINKING: "true"
+      NETPULSE_RAG_INCLUDE_PAYLOAD: "true"
+      NETPULSE_AI_MONITOR_ENABLED: "true"
+      NETPULSE_AI_MONITOR_WINDOW_MIN: "15"
+      NETPULSE_AI_MONITOR_MIN_EVENTS: "8"
+      NETPULSE_AI_MONITOR_MIN_SCORE: "3"
+      NETPULSE_AI_MONITOR_MIN_CONFIDENCE: "0.55"
+      NETPULSE_AI_MONITOR_COOLDOWN_MIN: "180"
+      NETPULSE_AI_MONITOR_NOTIFY_MIN_SEVERITY: "medium"
+    extra_hosts:
+      - "host.docker.internal:172.25.0.1"
+
+  ai-monitor:
+    image: dystopia/local-control:lab
+    user: "2000:2000"
+    network_mode: host
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      HOME: /tmp
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONUNBUFFERED: "1"
+      DYSTOPIA_CONTROL_CONFIG: /srv/local-config
+      DYSTOPIA_CONTROL_STATE: /srv/state
+      NETPULSE_DECEPTION_DATA_DIR: /srv/deception
+      NETPULSE_RAG_ENABLED: "true"
+      NETPULSE_RAG_DB: /srv/deception/rag.db
+      NETPULSE_RAG_EMBED_URL: http://172.25.0.1:8081/v1/embeddings
+      NETPULSE_RAG_EMBED_MODEL: qwen3-embedding-0.6b
+      NETPULSE_RAG_EMBED_DIM: "1024"
+      NETPULSE_RAG_LLM_URL: http://172.25.0.1:8091/v1/chat/completions
+      NETPULSE_RAG_LLM_MODEL: her-9b
+      NETPULSE_RAG_LLM_DISABLE_THINKING: "true"
+      NETPULSE_RAG_INCLUDE_PAYLOAD: "true"
+      NETPULSE_AI_MONITOR_ENABLED: "true"
+      NETPULSE_AI_MONITOR_WINDOW_MIN: "15"
+      NETPULSE_AI_MONITOR_MIN_EVENTS: "8"
+      NETPULSE_AI_MONITOR_MIN_SCORE: "3"
+      NETPULSE_AI_MONITOR_MIN_CONFIDENCE: "0.55"
+      NETPULSE_AI_MONITOR_COOLDOWN_MIN: "180"
+      NETPULSE_AI_MONITOR_MAX_CANDIDATES: "5"
+      NETPULSE_AI_MONITOR_NOTIFY_MIN_SEVERITY: "medium"
+      # Push opcional: exporta estas variables en deploy/local/.env.
+      NETPULSE_NTFY_URL: ${NETPULSE_NTFY_URL:-}
+      NETPULSE_NTFY_TOPIC: ${NETPULSE_NTFY_TOPIC:-}
+      NETPULSE_NTFY_TOKEN: ${NETPULSE_NTFY_TOKEN:-}
+      NETPULSE_TELEGRAM_TOKEN: ${NETPULSE_TELEGRAM_TOKEN:-}
+      NETPULSE_TELEGRAM_CHAT_ID: ${NETPULSE_TELEGRAM_CHAT_ID:-}
+      NETPULSE_SLACK_WEBHOOK_URL: ${NETPULSE_SLACK_WEBHOOK_URL:-}
+    volumes:
+      - deception_db:/srv/deception
+      - control_state:/srv/state:ro
+      - control_config:/srv/local-config
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=32m,uid=2000,gid=2000"]
+    command: ["python", "scripts/ai_monitor.py", "--loop", "--interval", "300"]
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+    depends_on:
+      permissions-init: {condition: service_completed_successfully}
+      control: {condition: service_started}
+
+volumes:
+  deception_db: {}
+  control_state: {}
+  control_config: {}

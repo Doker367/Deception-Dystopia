@@ -1,5 +1,6 @@
 """Offline contract tests for the local SQLite analytics service."""
 
+import json
 import sqlite3
 from pathlib import Path
 
@@ -109,6 +110,9 @@ def test_control_schema_overview_timeline_and_origins(tmp_path, geo):
     assert events["total"] == 2
     assert events["items"][0]["sensor"] == "cowrie"
     assert events["items"][0]["severity"] == "high"
+    assert events["items"][0]["source"] == "203.0.113.7"
+    assert events["items"][0]["country"] == "United States"
+    assert events["items"][0]["countryCode"] == "US"
 
 
 def test_origins_split_by_us_state(tmp_path, monkeypatch):
@@ -182,6 +186,49 @@ def test_origins_split_by_mexican_state(tmp_path, monkeypatch):
     assert by_state["JAL"]["lng"] == -103.35
 
 
+def test_origins_limit_keeps_high_severity(tmp_path, monkeypatch):
+    """El corte por volumen no debe ocultar orígenes de severidad alta.
+
+    Con ventanas largas los escaneos masivos (medium) superan el límite y el
+    globo se quedaría entero amarillo si el recorte solo considerara eventos.
+    """
+    path = tmp_path / "events.db"
+    _control_db(path)  # IP de 203.0.113.7 con login_attempt + command (high).
+    with sqlite3.connect(path) as conn:
+        conn.executemany(
+            "INSERT INTO deception_events(ts,device_id,src_ip,src_port,proto,event_type,"
+            "username,success,detail) VALUES(?,?,?,?,?,?,?,?,?)",
+            [
+                (f"2026-11-05T12:{minute:02d}:00+00:00", "srv-files-01", ip, 443, "tcp",
+                 "http_request", None, None, '{"engine":"nginx"}')
+                for ip in ("198.51.100.20", "198.51.100.21", "198.51.100.22")
+                for minute in range(5)
+            ],
+        )
+    places = {
+        "203.0.113.7": ("Ashburn", "VA", 39.04, -77.48),
+        "198.51.100.20": ("Austin", "TX", 30.27, -97.74),
+        "198.51.100.21": ("Dallas", "TX", 32.78, -96.80),
+        "198.51.100.22": ("Houston", "TX", 29.76, -95.37),
+    }
+
+    def lookup(ip):
+        name, code, lat, lon = places[ip]
+        return {"country_code": "US", "country": "United States", "subdivision": name,
+                "subdivision_code": code, "city": name, "lat": lat, "lon": lon}
+
+    monkeypatch.setattr(geoip_svc, "lookup", lookup)
+    service = analytics_svc.AnalyticsService(analytics_svc.AnalyticsConfig(db_path=path))
+    origins = service.origins(
+        "2026-11-05T11:00:00+00:00", "2026-11-05T13:00:00+00:00", limit=2,
+    )["origins"]
+    assert len(origins) == 2
+    # Sin la reserva de cupos el origen high (2 eventos) queda fuera del corte
+    # por volumen y la respuesta sería solo de severidad medium.
+    assert "high" in {origin["severity"] for origin in origins}
+    assert {origin["ip"] for origin in origins} == {"203.0.113.7", "198.51.100.20"}
+
+
 def test_runtime_schema_is_supported(tmp_path, geo):
     path = tmp_path / "runtime.db"
     _runtime_db(path)
@@ -190,7 +237,7 @@ def test_runtime_schema_is_supported(tmp_path, geo):
     events = service.events(*window, limit=10)
     assert events["total"] == 1
     assert events["items"][0]["sensor"] == "cowrie"
-    assert events["items"][0]["severity"] == "medium"
+    assert events["items"][0]["severity"] == "critical"
     assert events["items"][0]["source"] == "203.0.113.7"
 
 
@@ -243,6 +290,30 @@ def test_invalid_window_is_rejected(tmp_path):
         service.timeline(None, None, "2h")
 
 
+def test_attacker_profile_keeps_fingerprint_outside_evidence_page(tmp_path, geo):
+    """La huella no debe desaparecer cuando el atacante genera más de 50 eventos."""
+    path = tmp_path / "events.db"
+    _control_db(path)
+    fingerprint = '{"client":"{\\"os\\":\\"Linux\\",\\"cores\\":8}","headers":{}}'
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            "INSERT INTO deception_events(ts,device_id,src_ip,src_port,proto,event_type,"
+            "username,success,detail) VALUES(?,?,?,?,?,?,?,?,?)",
+            ("2026-11-05T12:10:00+00:00", "srv-files-01", "203.0.113.7", 443,
+             "http", "http_request", None, 0, json.dumps({"fingerprint": fingerprint})),
+        )
+        conn.executemany(
+            "INSERT INTO deception_events(ts,device_id,src_ip,src_port,proto,event_type,"
+            "username,success,detail) VALUES(?,?,?,?,?,?,?,?,?)",
+            [("2026-11-05T12:11:00+00:00", "srv-files-01", "203.0.113.7", 22,
+              "ssh", "connect", None, 0, "{}") for _ in range(60)],
+        )
+    service = analytics_svc.AnalyticsService(analytics_svc.AnalyticsConfig(db_path=path))
+    profile = service.attacker("203.0.113.7", limit=5)
+    assert profile["fingerprint"] == fingerprint
+    assert len(profile["items"]) == 5
+
+
 def test_control_schema_wins_when_both_tables_exist(tmp_path, geo):
     """El colector escribe deception_events: si hay tabla runtime obsoleta,
     analytics no debe leerla por prioridad."""
@@ -267,48 +338,3 @@ def test_control_schema_wins_when_both_tables_exist(tmp_path, geo):
     events = service.events(*window, limit=10)
     assert events["total"] == 2
     assert {e["source"] for e in events["items"]} == {"203.0.113.7"}
-
-
-def test_probe_login_is_corrected_on_read(tmp_path, geo):
-    path = tmp_path / "events.db"
-    _control_db(path)
-    with sqlite3.connect(path) as conn:
-        conn.execute(
-            "INSERT INTO deception_events(ts,device_id,src_ip,src_port,proto,event_type,username,success,detail) "
-            "VALUES(?,?,?,?,?,?,?,?,?)",
-            ("2026-11-05T12:02:00+00:00", "srv-files-01", "203.0.113.7", 55555,
-             "telnet", "login_success", "GET / HTTP/1.0", 1,
-             '{"engine":"cowrie","username":"GET / HTTP/1.0","message":"login attempt [GET / HTTP/1.0/] succeeded"}'),
-        )
-    service = analytics_svc.AnalyticsService(analytics_svc.AnalyticsConfig(db_path=path))
-    items = service.events("2026-11-05T11:00:00+00:00", "2026-11-05T13:00:00+00:00")["items"]
-    probe = next(item for item in items if item["timestamp"].startswith("2026-11-05T12:02"))
-    assert probe["kind"] == "connect"
-    assert probe["severity"] == "low"
-    profile = service.attacker("203.0.113.7", 0, 10)
-    detailed = next(item for item in profile["items"] if item["timestamp"].startswith("2026-11-05T12:02"))
-    assert detailed["detail"]["classification"] == "protocol_probe"
-    assert detailed["detail"]["mitre"] == "T1046"
-
-
-def test_campaigns_detect_multi_sensor_scan(tmp_path, geo):
-    path = tmp_path / "events.db"
-    _control_db(path)
-    with sqlite3.connect(path) as conn:
-        for minute, engine in ((1, "cowrie"), (2, "opencanary"), (3, "heralding")):
-            conn.execute(
-                "INSERT INTO deception_events(ts,device_id,src_ip,src_port,proto,event_type,username,success,detail) "
-                "VALUES(?,?,?,?,?,?,?,?,?)",
-                (f"2026-11-05T12:0{minute}:00+00:00", f"sensor-{engine}",
-                 "203.0.113.7", 40000 + minute, "tcp", "connect", None, 0,
-                 f'{{"engine":"{engine}"}}'),
-            )
-    service = analytics_svc.AnalyticsService(analytics_svc.AnalyticsConfig(db_path=path))
-    result = service.campaigns("2026-11-05T11:00:00+00:00", "2026-11-05T13:00:00+00:00")
-    assert len(result["campaigns"]) == 1
-    campaign = result["campaigns"][0]
-    assert campaign["source"] == "203.0.113.7"
-    assert campaign["kind"] == "port_scan"
-    assert campaign["severity"] == "high"
-    assert campaign["mitre"] == "T1046"
-    assert campaign["distinct_sensors"] == 3

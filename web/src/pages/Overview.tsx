@@ -14,70 +14,70 @@ import { PageHeader } from "../components/PageHeader";
 import { MetricCard } from "../components/MetricCard";
 import { Panel } from "../components/Panel";
 import { EChart } from "../components/EChart";
+import { AnimatedNumber } from "../components/AnimatedNumber";
 import { AttackGlobe } from "../components/AttackGlobe";
 import { EventTable } from "../components/EventTable";
 import { DATACENTER, HONEYPOTS } from "../data/mock";
 import type { AnalyticsSnapshot, TimelinePoint } from "../data/useAnalytics";
 import type { PageId } from "../types";
 import { formatNumber } from "../lib/format";
-import { horizontalBarOption } from "../lib/charts";
+import { ambientPulse, chartAxis, chartGrid, chartTooltip, horizontalBarOption } from "../lib/charts";
+import { inkAccent, panelBg, useTheme } from "../lib/theme";
+import { PROTOCOLS as PALETTE_PROTOCOLS, SERIES } from "../lib/palette";
 import { useToast } from "../components/Toast";
 import { downloadJson } from "../lib/download";
 
-const AXIS_LABEL = { color: "#71849b", fontSize: 10, fontFamily: "JetBrains Mono, monospace" };
-const GRID_LINE = { color: "rgba(108, 150, 177, 0.12)", type: "dashed" as const };
-const PROTOCOL_COLORS: Record<string, string> = {
-  SSH: "#35e6c4",
-  HTTP: "#5aa9ff",
-  SMB: "#f5b75b",
-  RDP: "#b58cff",
-  Redis: "#ff7a9e",
-  Otros: "#58718f",
-  telnet: "#f5b75b",
-  http: "#5aa9ff",
-  ssh: "#35e6c4",
-  redis: "#ff7a9e",
-};
+const PROTOCOL_COLORS: Record<string, string> = PALETTE_PROTOCOLS;
 
 function volumeOption(points: TimelinePoint[]): EChartsOption {
   const data = points.length ? points : Array.from({ length: 24 }, (_, index) => ({ label: `${String(index).padStart(2, "0")}:00`, count: 0 }));
+  const accent = inkAccent("#e2601f");
+  const tip = chartTooltip();
+  const lastPoint = data[data.length - 1];
   return {
     backgroundColor: "transparent",
-    animationDuration: 900,
+    animation: true,
+    animationDuration: 1400,
+    animationDurationUpdate: 700,
+    animationEasing: "quarticOut",
+    animationEasingUpdate: "cubicOut",
     grid: { top: 18, right: 12, bottom: 26, left: 38 },
     tooltip: {
       trigger: "axis",
-      backgroundColor: "#0b1520",
-      borderColor: "rgba(93, 170, 196, 0.3)",
-      textStyle: { color: "#dbe7f3", fontSize: 12 },
-      axisPointer: { lineStyle: { color: "rgba(53, 230, 196, 0.35)" } },
+      ...tip,
+      textStyle: { ...tip.textStyle, fontSize: 13.5 },
+      axisPointer: { lineStyle: { color: `${accent}59` } },
       formatter: (params: unknown) => {
         const items = params as Array<{ axisValue: string; value: number }>;
         const item = items[0];
-        return item ? `<b>${item.axisValue}</b><br/><span style="color:#35e6c4">●</span> ${formatNumber(item.value)} eventos` : "";
+        return item ? `<b>${item.axisValue}</b><br/><span style="color:${accent}">●</span> ${formatNumber(item.value)} eventos` : "";
       },
     },
     xAxis: {
       type: "category",
       boundaryGap: false,
       data: data.map((point) => point.label),
-      axisLine: { lineStyle: { color: "rgba(108, 150, 177, 0.16)" } },
+      axisLine: { lineStyle: { color: chartGrid().color } },
       axisTick: { show: false },
-      axisLabel: { ...AXIS_LABEL, interval: data.length > 20 ? 3 : 1 },
+      axisLabel: { ...chartAxis(), interval: data.length > 20 ? 3 : 1 },
     },
     yAxis: {
       type: "value",
-      splitLine: { lineStyle: GRID_LINE },
-      axisLabel: { ...AXIS_LABEL, formatter: (value: number) => (value >= 1000 ? `${(value / 1000).toFixed(1)}k` : `${value}`) },
+      splitLine: { lineStyle: chartGrid() },
+      axisLabel: { ...chartAxis(), formatter: (value: number) => (value >= 1000 ? `${(value / 1000).toFixed(1)}k` : `${value}`) },
     },
     series: [
       {
         type: "line",
+        id: "volume",
         data: data.map((point) => point.count),
         smooth: 0.34,
         symbol: "none",
-        lineStyle: { color: "#35e6c4", width: 2 },
-        itemStyle: { color: "#35e6c4" },
+        animationDuration: 1400,
+        animationEasing: "quarticOut",
+        emphasis: { focus: "series" },
+        lineStyle: { color: accent, width: 2, shadowBlur: 10, shadowColor: `${accent}40` },
+        itemStyle: { color: accent },
         areaStyle: {
           color: {
             type: "linear",
@@ -86,8 +86,8 @@ function volumeOption(points: TimelinePoint[]): EChartsOption {
             x2: 0,
             y2: 1,
             colorStops: [
-              { offset: 0, color: "rgba(53, 230, 196, 0.28)" },
-              { offset: 1, color: "rgba(53, 230, 196, 0.01)" },
+              { offset: 0, color: `${accent}47` },
+              { offset: 1, color: `${accent}03` },
             ],
           },
         },
@@ -95,38 +95,51 @@ function volumeOption(points: TimelinePoint[]): EChartsOption {
           silent: true,
           symbol: "none",
           label: { show: false },
-          lineStyle: { color: "rgba(255, 159, 91, 0.35)", type: "dashed" },
+          lineStyle: { color: "rgba(240, 173, 78, 0.35)", type: "dashed" },
           data: [{ yAxis: data[Math.floor(data.length * 0.7)]?.count ?? 0 }],
         },
       },
+      ...(lastPoint && lastPoint.count > 0 ? [ambientPulse(lastPoint.label, lastPoint.count, accent)] : []),
     ],
   };
 }
 
 function protocolOption(protocols: Array<{ name: string; value: number }>): EChartsOption {
   const total = protocols.reduce((sum, item) => sum + item.value, 0) || 1;
+  const tip = chartTooltip();
   return {
     backgroundColor: "transparent",
+    animation: true,
+    animationDuration: 900,
+    animationDurationUpdate: 550,
+    animationEasing: "cubicOut",
+    animationEasingUpdate: "cubicOut",
     tooltip: {
       trigger: "item",
-      backgroundColor: "#0b1520",
-      borderColor: "rgba(93, 170, 196, 0.3)",
-      textStyle: { color: "#dbe7f3", fontSize: 12 },
+      ...tip,
+      textStyle: { ...tip.textStyle, fontSize: 13.5 },
       formatter: "{b}: {c} ({d}%)",
     },
     series: [
       {
         type: "pie",
+        id: "protocols",
         radius: ["62%", "82%"],
         center: ["50%", "50%"],
         avoidLabelOverlap: true,
-        itemStyle: { borderColor: "#0a111b", borderWidth: 3, borderRadius: 4 },
+        universalTransition: true,
+        animationType: "scale",
+        animationDuration: 900,
+        animationEasing: "cubicOut",
+        animationDelay: (index: number) => index * 45,
+        itemStyle: { borderColor: panelBg(), borderWidth: 3, borderRadius: 3 },
         label: { show: false },
-        emphasis: { scale: true, scaleSize: 4 },
+        emphasis: { focus: "self", scale: true, scaleSize: 6 },
+        blur: { itemStyle: { opacity: 0.35 } },
         data: protocols.map((item, index) => ({
           value: item.value,
           name: item.name,
-          itemStyle: { color: PROTOCOL_COLORS[item.name] ?? ["#35e6c4", "#5aa9ff", "#f5b75b", "#b58cff", "#ff7a9e", "#58718f"][index % 6] },
+          itemStyle: { color: inkAccent(PROTOCOL_COLORS[item.name] ?? SERIES[index % SERIES.length]) },
         })).map((item) => ({ ...item, value: Math.round((item.value / total) * 100) })),
       },
     ],
@@ -154,8 +167,9 @@ export function OverviewPage({ search, range, data, onNavigate }: OverviewPagePr
     ).slice(0, 7);
   }, [events, search]);
 
-  const volume = useMemo(() => volumeOption(timeline), [timeline]);
-  const protocols = useMemo(() => protocolOption(overview.protocols), [overview.protocols]);
+  const [theme] = useTheme();
+  const volume = useMemo(() => volumeOption(timeline), [timeline, theme]);
+  const protocols = useMemo(() => protocolOption(overview.protocols), [overview.protocols, theme]);
   const maxOriginEvents = Math.max(...origins.map((origin) => origin.events), 1);
   const total = overview.totalEvents;
   const live = mode === "live";
@@ -256,9 +270,9 @@ export function OverviewPage({ search, range, data, onNavigate }: OverviewPagePr
           }
         >
           <div className="chart-summary">
-            <div><strong>{formatNumber(total)}</strong><span>eventos en ventana</span></div>
+            <div><strong><AnimatedNumber value={formatNumber(total)} /></strong><span>eventos en ventana</span></div>
             <div><strong className="up">{live ? "live" : "+18.4 %"}</strong><span>{live ? "BFF conectado" : "vs. ayer"}</span></div>
-            <div><strong>{origins.length}</strong><span>países activos</span></div>
+            <div><strong><AnimatedNumber value={origins.length} /></strong><span>países activos</span></div>
           </div>
           <EChart option={volume} height={252} />
         </Panel>
@@ -297,7 +311,7 @@ export function OverviewPage({ search, range, data, onNavigate }: OverviewPagePr
             <div className="legend-list">
               {overview.protocols.map((item, index) => (
                 <div className="legend-row" key={item.name}>
-                  <span><i style={{ background: PROTOCOL_COLORS[item.name] ?? ["#35e6c4", "#5aa9ff", "#f5b75b", "#b58cff", "#ff7a9e", "#58718f"][index % 6] }} />{item.name}</span>
+                  <span><i style={{ background: inkAccent(PROTOCOL_COLORS[item.name] ?? SERIES[index % SERIES.length]) }} />{item.name}</span>
                   <strong>{Math.round((item.value / Math.max(overview.protocols.reduce((sum, protocol) => sum + protocol.value, 0), 1)) * 100)}%</strong>
                 </div>
               ))}

@@ -21,10 +21,10 @@ ATTACK_SOURCES: dict[str, list[str]] = {
     "FR": ["89.92.0.1", "212.27.48.10"],
     "JP": ["202.32.0.1"],
     "BR": ["200.147.0.1", "201.7.184.1"],
-    "IN": ["202.56.0.1", "49.44.0.1"],
+    "IN": ["49.44.0.1", "103.21.58.1"],
     "CN": ["114.114.114.114", "223.5.5.5"],
     "RU": ["77.88.8.8", "5.255.255.5"],
-    "AU": ["1.1.1.1"],
+    "AU": ["1.128.0.1", "1.144.0.1"],
     "CA": ["24.48.0.1", "99.224.0.1"],
     "MX": ["201.148.0.1", "189.203.0.1"],
     "NL": ["83.82.0.1", "145.100.0.1"],
@@ -67,9 +67,13 @@ def attack_map(limit: int = 3000) -> dict:
             a["last"] = ts
 
     points = []
+    unlocated = 0
     for ip, a in aggr.items():
+        if geoip_svc.scope(ip) != "public":
+            continue
         geo = geoip_svc.lookup(ip)
-        if not geo or geo.get("lat") is None:
+        if not geo or geo.get("lat") is None or geo.get("lon") is None:
+            unlocated += 1
             continue
         points.append({
             "ip": ip,
@@ -79,9 +83,13 @@ def attack_map(limit: int = 3000) -> dict:
             "country_code": geo.get("country_code"),
             "country": geo.get("country"),
             "subdivision": geo.get("subdivision"),
+            "subdivision_code": geo.get("subdivision_code"),
             "city": geo.get("city"),
             "lat": geo["lat"],
             "lon": geo["lon"],
+            "accuracy_radius": geo.get("accuracy_radius"),
+            "time_zone": geo.get("time_zone"),
+            "location_source": geo.get("location_source"),
         })
 
     points.sort(key=lambda p: p["count"], reverse=True)
@@ -93,5 +101,6 @@ def attack_map(limit: int = 3000) -> dict:
             "name": DECEPTION_DATACENTER_NAME,
         },
         "points": points,
+        "unlocated": unlocated,
         "total": sum(p["count"] for p in points),
     }

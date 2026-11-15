@@ -38,6 +38,7 @@ interface ApiOrigin {
   ip: string;
   lat: number | null;
   lng: number | null;
+  scope?: string;
   events: number;
   uniqueSources: number;
   severity: Severity;
@@ -48,6 +49,8 @@ interface ApiOrigin {
 
 interface ApiOrigins {
   origins: ApiOrigin[];
+  /** Orígenes públicos que GeoIP no pudo ubicar en la base local. */
+  unlocated?: number;
 }
 
 interface ApiEvents {
@@ -60,6 +63,10 @@ interface ApiEvents {
     source: string;
     country: string;
     countryCode: string;
+    region?: string;
+    regionCode?: string;
+    city?: string;
+    scope?: string;
     kind: string;
     proto: string;
     port: number | null;
@@ -97,6 +104,8 @@ export interface AnalyticsSnapshot {
   origins: AttackOrigin[];
   events: EventRow[];
   totalEvents: number;
+  /** Orígenes públicos sin coordenadas en la base GeoIP local. */
+  unlocated: number;
   collectorHealth: CollectorHealth | null;
   refresh: () => void;
 }
@@ -171,27 +180,39 @@ function demoTimeline(range: string): TimelinePoint[] {
   }));
 }
 
+function scopeLabel(scope?: string): string {
+  switch (scope) {
+    case "private": return "Red privada";
+    case "loopback": return "Loopback local";
+    case "link_local": return "Enlace local";
+    case "documentation": return "Reservada · documentación";
+    case "multicast": return "Multicast";
+    case "unspecified": return "No especificada";
+    default: return "Sin dato";
+  }
+}
+
 function normalizeOrigins(payload: ApiOrigins): AttackOrigin[] {
   return payload.origins.flatMap((origin, index) => {
-    const fallback = ATTACK_ORIGINS.find((item) => item.countryCode === origin.countryCode);
-    const lat = typeof origin.lat === "number" ? origin.lat : fallback?.lat;
-    const lng = typeof origin.lng === "number" ? origin.lng : fallback?.lng;
-    if (typeof lat !== "number" || typeof lng !== "number") return [];
+    // Sin coordenadas reales no se inventa una ubicación con datos de demo:
+    // el backend informa ese origen como "no ubicado" y se muestra aparte.
+    if (typeof origin.lat !== "number" || typeof origin.lng !== "number") return [];
+    const code = origin.countryCode || "??";
     return [{
-      id: `${origin.countryCode}-${origin.regionCode || index}`,
-      country: origin.country || fallback?.country || origin.countryCode,
-      countryCode: origin.countryCode || fallback?.countryCode || "??",
+      id: `${code}-${origin.regionCode || index}`,
+      country: origin.country || code,
+      countryCode: code,
       region: origin.region || "",
       regionCode: origin.regionCode || "",
-      city: origin.city || fallback?.city || "",
-      ip: origin.ip || fallback?.ip || "—",
-      lat,
-      lng,
+      city: origin.city || "",
+      ip: origin.ip || "—",
+      lat: origin.lat,
+      lng: origin.lng,
       events: origin.events,
       uniqueSources: origin.uniqueSources,
       severity: origin.severity,
-      protocol: origin.protocol || fallback?.protocol || "—",
-      sensor: origin.sensor || fallback?.sensor || "—",
+      protocol: origin.protocol || "—",
+      sensor: origin.sensor || "—",
       lastSeen: origin.lastEvent ? relativeTime(origin.lastEvent) : "sin dato",
     }];
   });
@@ -200,6 +221,9 @@ function normalizeOrigins(payload: ApiOrigins): AttackOrigin[] {
 function normalizeEvents(payload: ApiEvents): EventRow[] {
   return payload.items.map((event) => ({
     ...event,
+    source: event.source || "Sin dato",
+    country: event.country || scopeLabel(event.scope),
+    countryCode: event.countryCode || "",
     port: event.port ?? 0,
     message: event.message || "Evento normalizado del almacén local",
   }));
@@ -217,6 +241,7 @@ export function useAnalytics(range: string): AnalyticsSnapshot {
   const [origins, setOrigins] = useState<AttackOrigin[]>([]);
   const [events, setEvents] = useState<EventRow[]>([]);
   const [totalEvents, setTotalEvents] = useState(0);
+  const [unlocated, setUnlocated] = useState(0);
   const [collectorHealth, setCollectorHealth] = useState<CollectorHealth | null>(null);
 
   const refresh = useCallback(() => setNonce((value) => value + 1), []);
@@ -273,6 +298,7 @@ export function useAnalytics(range: string): AnalyticsSnapshot {
       setOrigins(demoOrigins());
       setEvents(demoEvents());
       setTotalEvents(DEMO_OVERVIEW.totalEvents);
+      setUnlocated(0);
       setTimeline(demoTimeline(range));
       return;
     }
@@ -286,7 +312,7 @@ export function useAnalytics(range: string): AnalyticsSnapshot {
     Promise.all([
       apiGet<ApiOverview>(`/api/analytics/overview?${query}`, controller.signal),
       apiGet<ApiTimeline>(`/api/analytics/timeline?${query}&interval=${interval}`, controller.signal),
-      apiGet<ApiOrigins>(`/api/analytics/origins?${query}&limit=50`, controller.signal),
+      apiGet<ApiOrigins>(`/api/analytics/origins?${query}&limit=100`, controller.signal),
       apiGet<ApiEvents>(`/api/analytics/events?${query}&limit=100`, controller.signal),
     ])
       .then(([overviewPayload, timelinePayload, originsPayload, eventsPayload]) => {
@@ -306,6 +332,7 @@ export function useAnalytics(range: string): AnalyticsSnapshot {
         setOrigins(normalizeOrigins(originsPayload));
         setEvents(normalizeEvents(eventsPayload));
         setTotalEvents(eventsPayload.total || overviewPayload.total_events);
+        setUnlocated(originsPayload.unlocated ?? 0);
       })
       .catch((cause: unknown) => {
         if (controller.signal.aborted) return;
@@ -315,6 +342,7 @@ export function useAnalytics(range: string): AnalyticsSnapshot {
         setOrigins(demoOrigins());
         setEvents(demoEvents());
         setTotalEvents(DEMO_OVERVIEW.totalEvents);
+        setUnlocated(0);
         setTimeline(demoTimeline(range));
       })
       .finally(() => {
@@ -325,8 +353,8 @@ export function useAnalytics(range: string): AnalyticsSnapshot {
   }, [nonce, range]);
 
   return useMemo(
-    () => ({ mode, loading, error, overview, timeline, origins, events, totalEvents, collectorHealth, refresh }),
-    [mode, loading, error, overview, timeline, origins, events, totalEvents, collectorHealth, refresh],
+    () => ({ mode, loading, error, overview, timeline, origins, events, totalEvents, unlocated, collectorHealth, refresh }),
+    [mode, loading, error, overview, timeline, origins, events, totalEvents, unlocated, collectorHealth, refresh],
   );
 }
 

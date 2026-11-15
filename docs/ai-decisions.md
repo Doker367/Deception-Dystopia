@@ -122,3 +122,13 @@ recomienda, en una fase posterior, **reajustar temperaturas** por tipo y
 número de opciones con datos etiquetados reales (`laya-evals` /
 `fit_abstention_thresholds`). Como límites del modelo: `choice` con <20
 opciones y `score` con posible sesgo de posición en multilingüe.
+
+## Memoria y explicación (RAG)
+
+System One clasifica en un *forward pass* y **no recuerda** casos anteriores
+ni genera explicaciones. Para examinar ataques con memoria y evidencia
+citable está el RAG local: ver [IA local y RAG de ataques](AI-RAG.md).
+
+Son capas independientes: el RAG nunca suprime alertas y Laya nunca escribe
+en el índice. Si el RAG está apagado, la clasificación por reglas y Laya
+siguen funcionando igual.

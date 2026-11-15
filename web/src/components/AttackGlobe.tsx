@@ -5,6 +5,7 @@ import { MeshPhongMaterial } from "three";
 import { Crosshair, Maximize2, Minus, Plus, RotateCcw } from "lucide-react";
 import { ATTACK_ORIGINS, DATACENTER } from "../data/mock";
 import type { AttackOrigin, Severity } from "../types";
+import { ACCENTS, SEVERITY as SEVERITY_COLORS } from "../lib/palette";
 
 interface CountryFeature {
   type: "Feature";
@@ -25,6 +26,44 @@ interface AreaTotals {
 // Shared promises cache in-flight requests, successful GeoJSONs and missing files.
 const regionCache = new Map<string, Promise<CountryFeature[]>>();
 
+// A zero-area ring breaks three-globe's triangulation: the generated buffer
+// comes out corrupted and a single feature can cover the whole globe with its
+// cap color (a country-sized overlay painted over everything). Degenerate
+// rings are dropped before handing data to the globe.
+function ringArea(ring: number[][]): number {
+  if (ring.length < 4) return 0;
+  let area = 0;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    area += ring[j][0] * ring[i][1] - ring[i][0] * ring[j][1];
+  }
+  return Math.abs(area / 2);
+}
+
+function sanitizeGeometry(geometry: unknown): unknown {
+  if (!geometry || typeof geometry !== "object") return null;
+  const geo = geometry as { type?: string; coordinates?: unknown };
+  if (geo.type === "Polygon") {
+    const rings = geo.coordinates as number[][][];
+    if (!Array.isArray(rings) || !Array.isArray(rings[0]) || ringArea(rings[0]) < 1e-9) return null;
+    const holes = rings.slice(1).filter((ring) => Array.isArray(ring) && ringArea(ring) >= 1e-9);
+    return { ...geo, coordinates: [rings[0], ...holes] };
+  }
+  if (geo.type === "MultiPolygon") {
+    const polygons = geo.coordinates as number[][][][];
+    if (!Array.isArray(polygons)) return null;
+    const kept = polygons.filter((poly) =>
+      Array.isArray(poly) && Array.isArray(poly[0]) && ringArea(poly[0]) >= 1e-9);
+    if (!kept.length) return null;
+    return { ...geo, coordinates: kept };
+  }
+  return geometry;
+}
+
+function sanitizeFeature(feature: CountryFeature): CountryFeature | null {
+  const geometry = sanitizeGeometry(feature.geometry);
+  return geometry ? { ...feature, geometry } : null;
+}
+
 function loadRegions(countryCode: string): Promise<CountryFeature[]> {
   const cached = regionCache.get(countryCode);
   if (cached) return cached;
@@ -42,7 +81,9 @@ function loadRegions(countryCode: string): Promise<CountryFeature[]> {
       return features.map((feature) => ({
         ...feature,
         properties: { ...feature.properties, __layer: "region", __country: countryCode },
-      }));
+      }))
+        .map(sanitizeFeature)
+        .filter((feature): feature is CountryFeature => feature !== null);
     })
     .catch(() => {
       // A transient network error can be retried when the origins change.
@@ -80,11 +121,11 @@ interface GlobeArc {
 }
 
 const SEVERITY_COLOR: Record<Severity, string> = {
-  critical: "#ff5f7a",
-  high: "#ff9f5b",
-  medium: "#f5d06b",
-  low: "#35e6c4",
-  info: "#5aa9ff",
+  critical: SEVERITY_COLORS.critical,
+  high: SEVERITY_COLORS.high,
+  medium: SEVERITY_COLORS.medium,
+  low: SEVERITY_COLORS.low,
+  info: SEVERITY_COLORS.info,
 };
 
 const SEVERITY_LABEL: Record<Severity, string> = {
@@ -173,7 +214,12 @@ export function AttackGlobe({
         return response.json();
       })
       .then((world) => {
-        if (!cancelled) setCountries(Array.isArray(world?.features) ? world.features as CountryFeature[] : []);
+        if (!cancelled) {
+          const features = Array.isArray(world?.features) ? world.features as CountryFeature[] : [];
+          setCountries(features
+            .map(sanitizeFeature)
+            .filter((feature): feature is CountryFeature => feature !== null));
+        }
       })
       .catch(() => { /* Points and any available regional polygons still render. */ });
     return () => { cancelled = true; };
@@ -311,7 +357,7 @@ export function AttackGlobe({
         lat: DATACENTER.lat,
         lng: DATACENTER.lng,
         kind: "core",
-        color: "#35e6c4",
+        color: ACCENTS.cyan,
         altitude: 0.02,
         radius: 0.42,
       },
@@ -357,14 +403,16 @@ export function AttackGlobe({
     globe.pointOfView({ lat: pov.lat, lng: pov.lng, altitude }, 300);
   }
 
+  // Globo neutro cálido: el naranja OPNsense queda solo en la atmósfera, los
+  // anillos y los arcos para que la actividad destaque.
   const globeMaterial = useMemo(
     () =>
       new MeshPhongMaterial({
-        color: "#07121c",
-        emissive: "#010509",
-        emissiveIntensity: 0.8,
+        color: "#171412",
+        emissive: "#0b0806",
+        emissiveIntensity: 0.6,
         shininess: 12,
-        specular: "#0d2f3d",
+        specular: "#4a3220",
       }),
     [],
   );
@@ -379,23 +427,23 @@ export function AttackGlobe({
           ref={globeRef}
           width={size.width}
           height={size.height}
-          backgroundColor="rgba(0,0,0,0)"
+          backgroundColor="#000000"
           globeMaterial={globeMaterial}
           showAtmosphere
-          atmosphereColor="#35e6c4"
+          atmosphereColor={ACCENTS.cyan}
           atmosphereAltitude={0.16}
           showGraticules
           polygonsData={polygons}
           polygonAltitude={(feature: object) => totalForPolygon(feature as CountryFeature, areaTotals) ? 0.012 : 0.004}
           polygonCapColor={(feature: object) => {
             const total = totalForPolygon(feature as CountryFeature, areaTotals);
-            if (!total) return "rgba(17, 34, 46, 0.82)";
+            if (!total) return "rgba(74, 69, 63, 0.96)";
             return withAlpha(SEVERITY_COLOR[total.severity], 0.34 + (total.events / maxEvents) * 0.42);
           }}
           polygonSideColor={() => "rgba(0, 0, 0, 0)"}
           polygonStrokeColor={(feature: object) => String((feature as CountryFeature).properties?.__layer ?? "") === "region"
-            ? "rgba(120, 220, 225, 0.42)"
-            : "rgba(110, 200, 210, 0.24)"}
+            ? "rgba(255, 255, 255, 0.22)"
+            : "rgba(255, 255, 255, 0.12)"}
           polygonLabel={(feature: object) => {
             const properties = (feature as CountryFeature).properties ?? {};
             const total = totalForPolygon(feature as CountryFeature, areaTotals);
@@ -413,7 +461,7 @@ export function AttackGlobe({
           pointLabel={(point: object) => {
             const item = point as GlobePoint;
             return item.kind === "core"
-              ? `<div class="globe-tooltip"><div class="globe-tooltip-head"><span class="globe-tooltip-dot" style="background:#35e6c4"></span><strong>${DATACENTER.name}</strong><span class="globe-tooltip-badge core">Core</span></div><div class="globe-tooltip-row"><span>Ubicación</span><b>${DATACENTER.city}, ${DATACENTER.country}</b></div><div class="globe-tooltip-foot"><span>Rol</span><b>Red señuelo</b></div></div>`
+              ? `<div class="globe-tooltip"><div class="globe-tooltip-head"><span class="globe-tooltip-dot" style="background:${ACCENTS.cyan}"></span><strong>${DATACENTER.name}</strong><span class="globe-tooltip-badge core">Core</span></div><div class="globe-tooltip-row"><span>Ubicación</span><b>${DATACENTER.city}, ${DATACENTER.country}</b></div><div class="globe-tooltip-foot"><span>Rol</span><b>Red señuelo</b></div></div>`
               : tooltipFor(item.origin as AttackOrigin);
           }}
           onPointClick={(point: object) => {
@@ -438,12 +486,12 @@ export function AttackGlobe({
           labelLng="lng"
           labelText="text"
           labelSize={0.42}
-          labelColor={() => "#e6f4f6"}
+          labelColor={() => "#e9e5df"}
           labelAltitude={0.02}
           labelIncludeDot={false}
           labelResolution={2}
           ringsData={[{ lat: DATACENTER.lat, lng: DATACENTER.lng }]}
-          ringColor={() => "rgba(53, 230, 196, 0.32)"}
+          ringColor={() => "rgba(226, 96, 31, 0.38)"}
           ringMaxRadius={4.2}
           ringPropagationSpeed={1.4}
           ringRepeatPeriod={1800}
@@ -523,10 +571,10 @@ export function AttackGlobe({
           </div>
 
           <div className="globe-legend">
-            <span><i style={{ background: "#ff5f7a" }} /> Crítico</span>
-            <span><i style={{ background: "#ff9f5b" }} /> Alto</span>
-            <span><i style={{ background: "#f5d06b" }} /> Medio</span>
-            <span><i style={{ background: "#35e6c4" }} /> Bajo / core</span>
+            <span><i style={{ background: SEVERITY_COLORS.critical }} /> Crítico</span>
+            <span><i style={{ background: SEVERITY_COLORS.high }} /> Alto</span>
+            <span><i style={{ background: SEVERITY_COLORS.medium }} /> Medio</span>
+            <span><i style={{ background: SEVERITY_COLORS.low }} /> Bajo / core</span>
           </div>
         </>
       )}

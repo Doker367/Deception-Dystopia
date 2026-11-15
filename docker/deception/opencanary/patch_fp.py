@@ -21,12 +21,15 @@ BRANCH = '''    def render_POST(self, request):
                 headers = {}
                 for name, values in request.requestHeaders.getAllRawHeaders():
                     key = name.decode("utf-8", "replace").lower()
-                    if key in {"user-agent", "accept-language", "sec-ch-ua",
-                               "sec-ch-ua-mobile", "sec-ch-ua-platform",
+                    if key in {"user-agent", "accept-language", "accept",
+                               "sec-ch-ua", "sec-ch-ua-arch", "sec-ch-ua-bitness",
+                               "sec-ch-ua-mobile", "sec-ch-ua-model",
+                               "sec-ch-ua-platform", "sec-ch-ua-platform-version",
+                               "sec-ch-ua-full-version",
                                "device-memory", "downlink", "ect", "rtt", "save-data"}:
                         headers[key] = values[0].decode("utf-8", "replace")[:512]
                 payload = {"client": raw.decode("utf-8", "replace"), "headers": headers}
-                self.factory.log({"FINGERPRINT": json.dumps(payload, ensure_ascii=False)[:2000],
+                self.factory.log({"FINGERPRINT": json.dumps(payload, ensure_ascii=False)[:12000],
                                   "PATH": "/__fp", "METHOD": "POST"},
                                  transport=request.transport, logtype=3000)
             except Exception:

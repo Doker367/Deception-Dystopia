@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import {
   ArrowRight,
   Boxes,
@@ -21,6 +21,7 @@ import { useToast } from "../components/Toast";
 import { DEVICES, SEGMENTS } from "../data/mock";
 import { horizontalBarOption } from "../lib/charts";
 import { downloadJson } from "../lib/download";
+import { profileColor } from "../lib/profiles";
 
 const PROFILE_ICON = {
   server: Server,
@@ -42,11 +43,26 @@ const PROFILE_LABEL: Record<string, string> = {
   pc: "Estación",
 };
 
+/** Curvas que conectan el núcleo con cada columna de segmento. */
+interface LinkPath {
+  key: string;
+  color: string;
+  dimmed: boolean;
+  path: string;
+  coreDot: { x: number; y: number };
+  segmentDot: { x: number; y: number };
+}
+
 export function DevicesPage() {
   const { notify } = useToast();
   const [selected, setSelected] = useState("all");
   const [deviceName, setDeviceName] = useState<string | null>(null);
   const [editOpen, setEditOpen] = useState(false);
+  const canvasRef = useRef<HTMLDivElement | null>(null);
+  const coreRef = useRef<HTMLDivElement | null>(null);
+  const segmentRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const [links, setLinks] = useState<LinkPath[]>([]);
+
   const devices = useMemo(() => (selected === "all" ? DEVICES : DEVICES.filter((device) => device.segment === selected)), [selected]);
   const selectedDevice = DEVICES.find((device) => device.name === deviceName) ?? null;
   const topologyYaml = [
@@ -56,6 +72,59 @@ export function DevicesPage() {
     "devices:",
     ...DEVICES.map((device) => `  - id: ${device.name}\n    segment: ${device.segment}\n    address: ${device.ip}\n    profile: ${device.profile}`),
   ].join("\n");
+
+  const measureLinks = useCallback(() => {
+    const canvas = canvasRef.current;
+    const core = coreRef.current;
+    if (!canvas || !core) return;
+    // En móvil el núcleo se apila sobre los segmentos: no hay líneas.
+    if (window.matchMedia("(max-width: 900px)").matches) {
+      setLinks([]);
+      return;
+    }
+    const canvasBox = canvas.getBoundingClientRect();
+    const coreBox = core.getBoundingClientRect();
+    const origin = {
+      x: coreBox.right - canvasBox.left - 6,
+      y: coreBox.top - canvasBox.top + coreBox.height / 2,
+    };
+    const next: LinkPath[] = [];
+    for (const segment of SEGMENTS) {
+      const node = segmentRefs.current.get(segment.name);
+      if (!node) continue;
+      const box = node.getBoundingClientRect();
+      const target = {
+        x: box.left - canvasBox.left - 4,
+        y: box.top - canvasBox.top + box.height / 2,
+      };
+      const bend = (target.x - origin.x) / 2;
+      next.push({
+        key: segment.name,
+        color: segment.color,
+        dimmed: selected !== "all" && selected !== segment.name,
+        path: `M ${origin.x} ${origin.y} C ${origin.x + bend} ${origin.y}, ${target.x - bend} ${target.y}, ${target.x} ${target.y}`,
+        coreDot: origin,
+        segmentDot: target,
+      });
+    }
+    setLinks(next);
+  }, [selected]);
+
+  useLayoutEffect(() => {
+    measureLinks();
+  }, [measureLinks]);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => measureLinks());
+    observer.observe(canvas);
+    window.addEventListener("resize", measureLinks);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", measureLinks);
+    };
+  }, [measureLinks]);
 
   return (
     <div className="page">
@@ -74,8 +143,8 @@ export function DevicesPage() {
         }
         meta={
           <>
-            <span><i className="status-dot live" /> 6 dispositivos</span>
-            <span>3 segmentos</span>
+            <span><i className="status-dot live" /> {DEVICES.length} dispositivos</span>
+            <span>{SEGMENTS.length} segmentos</span>
             <span className="mono">config/deception/network.yaml</span>
           </>
         }
@@ -97,11 +166,21 @@ export function DevicesPage() {
           }
           flush
         >
-          <div className="topology-canvas">
+          <div className="topology-canvas" ref={canvasRef}>
+            <svg className={`topology-links ${links.length ? "" : "hidden"}`} aria-hidden="true">
+              {links.map((link) => (
+                <g key={link.key} className={link.dimmed ? "dimmed" : ""}>
+                  <path className="topology-link-base" d={link.path} style={{ stroke: link.color }} />
+                  <path className="topology-link-flow" d={link.path} style={{ stroke: link.color }} />
+                  <circle className="topology-link-dot" cx={link.segmentDot.x} cy={link.segmentDot.y} r={2.4} style={{ fill: link.color }} />
+                </g>
+              ))}
+            </svg>
             <div className="topology-core">
               <span className="core-orbit" />
               <span className="core-orbit orbit-two" />
-              <div className="core-node">
+              <div className="core-node" ref={coreRef}>
+                <span className="core-hex" aria-hidden="true" />
                 <Shield size={21} />
                 <strong>Dystopia Core</strong>
                 <span className="mono">c1</span>
@@ -109,20 +188,38 @@ export function DevicesPage() {
             </div>
             <div className="topology-segments">
               {SEGMENTS.map((segment) => (
-                <div className={`segment-column ${selected !== "all" && selected !== segment.name ? "dimmed" : ""}`} key={segment.name}>
+                <div
+                  className={`segment-column ${selected !== "all" && selected !== segment.name ? "dimmed" : ""}`}
+                  key={segment.name}
+                  style={{ "--segment": segment.color, "--segment-soft": `${segment.color}24` } as CSSProperties}
+                  ref={(node) => { if (node) segmentRefs.current.set(segment.name, node); }}
+                >
                   <div className="segment-head">
                     <span className="segment-dot" style={{ background: segment.color }} />
                     <div><strong>{segment.name}</strong><span className="mono">{segment.cidr}</span></div>
-                    <span className="segment-count">{segment.devices}</span>
+                    <span className="exposure-chip" data-exposure={segment.exposure}>{segment.exposure}</span>
+                    <span className="segment-count" style={{ color: segment.color, background: `${segment.color}1c` }}>{segment.devices}</span>
                   </div>
                   <div className="segment-devices">
                     {DEVICES.filter((device) => device.segment === segment.name).map((device) => {
                       const Icon = PROFILE_ICON[device.profile as keyof typeof PROFILE_ICON] ?? Boxes;
+                      const color = profileColor(device.profile);
                       return (
-                        <button type="button" className={`device-node ${deviceName === device.name ? "selected" : ""}`} key={device.name} onClick={() => setDeviceName(device.name)}>
-                          <span className="device-icon"><Icon size={16} /></span>
-                          <div><strong>{device.name}</strong><span className="mono">{device.ip}</span></div>
-                          <span className={`device-status ${device.status}`} />
+                        <button
+                          type="button"
+                          className={`device-node ${deviceName === device.name ? "selected" : ""}`}
+                          key={device.name}
+                          onClick={() => setDeviceName(device.name)}
+                        >
+                          <span className="device-icon" style={{ color, background: `${color}14` }}><Icon size={16} /></span>
+                          <div>
+                            <strong>{device.name}</strong>
+                            <span className="mono">{device.ip}</span>
+                          </div>
+                          <div className="device-node-side">
+                            <span className="device-svc mono">{device.services} svc</span>
+                            <span className={`device-status ${device.status}`} />
+                          </div>
                         </button>
                       );
                     })}
@@ -139,7 +236,7 @@ export function DevicesPage() {
               <button key={segment.name} className={selected === segment.name ? "active" : ""} onClick={() => setSelected(segment.name)}>
                 <span className="segment-dot" style={{ background: segment.color }} />
                 <span><strong>{segment.name}</strong><small className="mono">{segment.cidr}</small></span>
-                <span className="segment-meta"><b>{segment.devices}</b><small>{segment.exposure}</small></span>
+                <span className="segment-meta"><b>{segment.devices}</b><small data-exposure={segment.exposure}>{segment.exposure}</small></span>
                 <ArrowRight size={14} />
               </button>
             ))}
@@ -159,13 +256,14 @@ export function DevicesPage() {
               <tbody>
                 {devices.map((device) => {
                   const Icon = PROFILE_ICON[device.profile as keyof typeof PROFILE_ICON] ?? Boxes;
+                  const color = profileColor(device.profile);
                   return (
                     <tr key={device.name} onClick={() => setDeviceName(device.name)} className="clickable-row">
-                      <td><span className="device-name"><Icon size={14} />{device.name}</span></td>
-                      <td>{PROFILE_LABEL[device.profile] ?? device.profile}</td>
+                      <td><span className="device-name"><Icon size={14} style={{ color }} />{device.name}</span></td>
+                      <td><span className="profile-chip" style={{ color, borderColor: `${color}33`, background: `${color}12` }}><Icon size={10} />{PROFILE_LABEL[device.profile] ?? device.profile}</span></td>
                       <td><span className="sensor-chip">{device.segment}</span></td>
                       <td className="mono">{device.ip}</td>
-                      <td>{device.services}</td>
+                      <td><span className="svc-count mono">{device.services}</span></td>
                       <td><span className={`health-pill ${device.status === "online" ? "healthy" : "degraded"}`}><i />{device.status}</span></td>
                     </tr>
                   );

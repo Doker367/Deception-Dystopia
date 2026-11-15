@@ -371,6 +371,8 @@ bloquea antes de leer el cuerpo (ver 6.6).
 | GET | `/api/deception/events.csv` | viewer | Export CSV |
 | GET | `/api/deception/stats` | viewer | Estadísticas |
 | GET | `/api/deception/blocklist` | viewer | IPs bloqueadas |
+| POST | `/api/deception/blocklist` | admin | Registrar IP en la blocklist |
+| DELETE | `/api/deception/blocklist/{ip}` | admin | Retirar IP de la blocklist |
 | GET | `/api/deception/iocs` | viewer | IOCs |
 | GET | `/api/deception/iocs.csv` | viewer | Export de IOCs |
 | GET | `/api/deception/allowlist` | viewer | Legacy, no aplicada |
@@ -390,8 +392,6 @@ Rutas presentes en el router pero **bloqueadas**:
 | POST | `/api/deception/engine/stop` | `409` — ejecución heredada deshabilitada |
 | POST | `/api/deception/integrations/start` | `409` — ejecución heredada deshabilitada |
 | POST | `/api/deception/integrations/stop` | `409` — ejecución heredada deshabilitada |
-| POST | `/api/deception/blocklist` | `409` — ejecución heredada deshabilitada |
-| DELETE | `/api/deception/blocklist/{ip}` | `409` — ejecución heredada deshabilitada |
 | POST | `/api/deception/sync-netbox` | `409` — ejecución heredada deshabilitada |
 | POST | `/api/deception/allowlist` | `409` — ejecución heredada deshabilitada |
 | DELETE | `/api/deception/allowlist/{cidr}` | `409` — ejecución heredada deshabilitada |
@@ -443,10 +443,12 @@ nunca un cero falso ni fallback a SQLite desde el control.
 expuesta y no deben documentarse como endpoints disponibles.
 
 La frontera `control_boundary` se evalúa antes que el cuerpo de la petición:
-solo `GET/HEAD/OPTIONS` y las rutas de configuración
-`/api/deception/devices*` y `/api/deception/segments*` pueden mutar. Por eso
-`simulate`, `engine/*`, `integrations/*`, `blocklist`, `allowlist`, `firewall/*`
-y `sync-netbox` responden `409` aunque su dependencia declare rol `admin`.
+solo `GET/HEAD/OPTIONS` y las rutas de configuración/respuesta
+`/api/deception/devices*`, `/api/deception/segments*` y
+`/api/deception/blocklist*` pueden mutar. Por eso `simulate`, `engine/*`,
+`integrations/*`, `allowlist`, `firewall/*` y `sync-netbox` responden `409`
+aunque su dependencia declare rol `admin`. La blocklist es un registro de
+respuesta: no aplica firewall ni aislamiento.
 
 ---
 

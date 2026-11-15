@@ -138,3 +138,12 @@ secrets/
 config/metrics_history.json
 
 # Variantes experimentales de dashboards no certificadas
+
+# Backup local del build raíz (no versionar)
+web/.dist-root-backup-*/
+
+# Herramientas locales de OpenCode
+.opencode/
+
+# Credenciales iniciales del laboratorio (nunca commitear)
+deploy/local/.admin-password

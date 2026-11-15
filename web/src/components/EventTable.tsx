@@ -1,6 +1,8 @@
 import { CornerDownRight, ExternalLink } from "lucide-react";
 import type { EventRow } from "../types";
 import { countryFlag, formatDateTime, formatTime } from "../lib/format";
+import { withAlpha, SENSORS, PROTOCOLS } from "../lib/palette";
+import { inkAccent } from "../lib/theme";
 import { SeverityBadge } from "./SeverityBadge";
 
 export type EventColumn = "time" | "severity" | "event" | "source" | "sensor" | "device" | "proto";
@@ -44,7 +46,12 @@ export function EventTable({ events, compact = false, onOpen, visibleColumns = A
         </thead>
         <tbody>
           {events.map((event) => (
-            <tr key={event.id} onClick={() => onOpen?.(event)} className={onOpen ? "clickable" : ""}>
+            <tr
+              key={event.id}
+              data-severity={event.severity}
+              onClick={() => onOpen?.(event)}
+              className={onOpen ? "clickable" : ""}
+            >
               {visible.has("time") && <td className="col-time">
                 <span className="mono">{formatTime(event.timestamp)}</span>
                 <small>{formatDateTime(event.timestamp)}</small>
@@ -65,9 +72,9 @@ export function EventTable({ events, compact = false, onOpen, visibleColumns = A
                   </div>
                 </div>
               </td>}
-              {visible.has("sensor") && <td><span className="sensor-chip">{event.sensor}</span></td>}
+              {visible.has("sensor") && <td><span className="sensor-chip" style={{ color: inkAccent(SENSORS[event.sensor as keyof typeof SENSORS] ?? "#9dc7ff"), borderColor: withAlpha(SENSORS[event.sensor as keyof typeof SENSORS] ?? "#9dc7ff", 0.28), background: withAlpha(SENSORS[event.sensor as keyof typeof SENSORS] ?? "#9dc7ff", 0.08) }}>{event.sensor}</span></td>}
               {visible.has("device") && <td><span className="mono muted">{event.device}</span></td>}
-              {visible.has("proto") && <td className="col-proto"><span className="proto-chip">{event.proto}</span></td>}
+              {visible.has("proto") && <td className="col-proto"><span className="proto-chip" style={{ color: PROTOCOLS[event.proto] ? inkAccent(PROTOCOLS[event.proto]) : undefined, borderColor: PROTOCOLS[event.proto] ? withAlpha(PROTOCOLS[event.proto], 0.3) : undefined, background: PROTOCOLS[event.proto] ? withAlpha(PROTOCOLS[event.proto], 0.07) : undefined }}>{event.proto}</span></td>}
               <td className="col-action">
                 {onOpen && <button className="row-open" aria-label={`Abrir ${event.id}`}><ExternalLink size={14} /></button>}
               </td>

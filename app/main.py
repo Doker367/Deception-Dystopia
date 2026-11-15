@@ -14,7 +14,9 @@ from app.core.limiter import limiter
 from app.core.settings import API_TITLE, API_VERSION
 from app.middleware.audit import AuditMiddleware
 from app.middleware.security import SecurityHeadersMiddleware
-from app.routers import auth, admin_users, deception, vms, console, analytics, investigations
+from app.routers import (
+    auth, admin_users, deception, vms, console, analytics, investigations, ai_rag,
+)
 
 
 @asynccontextmanager
@@ -41,6 +43,7 @@ app.include_router(vms.router)
 app.include_router(console.router)
 app.include_router(analytics.router)
 app.include_router(investigations.router)
+app.include_router(ai_rag.router)
 
 
 @app.get("/api/health")

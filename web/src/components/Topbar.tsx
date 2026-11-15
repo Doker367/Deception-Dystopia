@@ -7,9 +7,11 @@ import {
   Database,
   HelpCircle,
   Menu,
+  Moon,
   RefreshCw,
   Search,
   ShieldCheck,
+  Sun,
   UserRound,
   Wifi,
   WifiOff,
@@ -17,12 +19,14 @@ import {
 import { TIME_RANGES } from "../data/mock";
 import type { PageId } from "../types";
 import type { DataMode } from "../data/useAnalytics";
+import type { Theme } from "../lib/theme";
 import { useToast } from "./Toast";
 
 const PAGE_LABEL: Record<PageId, { section: string; title: string }> = {
   overview: { section: "Monitorización", title: "Resumen" },
   map: { section: "Monitorización", title: "Mapa global" },
   events: { section: "Monitorización", title: "Eventos" },
+  ai: { section: "Monitorización", title: "IA de análisis" },
   honeypots: { section: "Operación", title: "Honeypots" },
   devices: { section: "Operación", title: "Dispositivos" },
   ingest: { section: "Operación", title: "Ingesta" },
@@ -42,6 +46,8 @@ interface TopbarProps {
   onSearchChange: (value: string) => void;
   onRefresh: () => void;
   refreshing: boolean;
+  theme: Theme;
+  onToggleTheme: () => void;
   onOpenMobile: () => void;
 }
 
@@ -58,6 +64,8 @@ export function Topbar({
   onSearchChange,
   onRefresh,
   refreshing,
+  theme,
+  onToggleTheme,
   onOpenMobile,
 }: TopbarProps) {
   const [rangeOpen, setRangeOpen] = useState(false);
@@ -156,6 +164,16 @@ export function Topbar({
             </div>
           )}
         </div>
+
+        <button
+          className="icon-button"
+          onClick={onToggleTheme}
+          aria-label={theme === "dark" ? "Cambiar a tema claro" : "Cambiar a tema oscuro"}
+          aria-pressed={theme === "light"}
+          title={theme === "dark" ? "Tema claro (blanco sólido)" : "Tema oscuro"}
+        >
+          {theme === "dark" ? <Sun size={17} /> : <Moon size={17} />}
+        </button>
 
         <button className={`icon-button ${refreshing ? "spinning" : ""}`} onClick={onRefresh} aria-label="Actualizar datos" title="Actualizar">
           <RefreshCw size={17} />

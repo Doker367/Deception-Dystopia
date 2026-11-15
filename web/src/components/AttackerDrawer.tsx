@@ -1,9 +1,11 @@
-import { useEffect, useState } from "react";
-import { X } from "lucide-react";
-import { apiGet, apiPut, getToken } from "../lib/api";
+import { useEffect, useMemo, useState } from "react";
+import { Ban, Check, Copy, Radio, RefreshCw, ShieldAlert, Terminal, X } from "lucide-react";
+import { apiDelete, apiGet, apiPost, apiPut, getToken } from "../lib/api";
 import { HONEYPOTS } from "../data/mock";
 import { EChart } from "./EChart";
 import { attackerTimelineOption } from "../lib/charts";
+import { bestFingerprint, formatBattery, formatStorage } from "../lib/fingerprint";
+import { scopeLabel } from "../lib/format";
 import type { EventRow } from "../types";
 import type { DataMode } from "../data/useAnalytics";
 
@@ -40,7 +42,13 @@ interface Profile {
   first_seen?: string;
   last_seen?: string;
   country?: string;
+  countryCode?: string;
+  region?: string;
+  regionCode?: string;
   city?: string;
+  scope?: string;
+  /** Última huella de navegador encontrada fuera de la página de evidencia. */
+  fingerprint?: string | null;
   protocols?: Record<string, number>;
   sensors?: Record<string, number>;
   kinds?: Record<string, number>;
@@ -58,24 +66,12 @@ interface SourceTimeline {
 }
 interface AuditChange { field: string; from: unknown; to: unknown }
 interface AuditEntry { id: number; at: string; actor: string; revision: number; changes: AuditChange[] }
+interface BlockEntry { ip: string; reason?: string; hits?: number; blocked_at?: string; last_blocked?: string }
 const EMPTY: Annotation = { revision: 0, alias: "", classification: "unclassified", handling: "none", handling_target: "", tags: [], notes: "" };
 const HANDLING_LABEL: Record<Annotation["handling"], string> = {
   none: "Sin acción", monitor: "En vigilancia", lock: "Bloqueo registrado", redirect: "Redirigir a otra trampa",
 };
 const HANDLING_ORDER = ["useragent", "path", "method", "username", "session", "command"] as const;
-interface BrowserFingerprint { client: Record<string, unknown>; headers: Record<string, string>; }
-function parseFingerprint(items: Evidence[]): BrowserFingerprint | null {
-  for (const item of items) {
-    const raw = item.detail?.fingerprint;
-    if (typeof raw !== "string") continue;
-    try {
-      const parsed = JSON.parse(raw) as { client?: string; headers?: Record<string, string> };
-      const client = typeof parsed.client === "string" ? JSON.parse(parsed.client) : {};
-      return { client: client as Record<string, unknown>, headers: parsed.headers ?? {} };
-    } catch { /* try the next evidence item */ }
-  }
-  return null;
-}
 
 function summarize(items: Evidence[]) {
   const counters = new Map<string, Map<string, number>>();
@@ -104,6 +100,12 @@ const CLASSIFICATIONS = [
   ["benign", "Benigno"], ["other", "Otro"],
 ];
 const formatTime = (value?: string) => value ? new Date(value).toLocaleString("es-MX") : "Sin dato";
+function locationLabel(profile: Profile | null): string {
+  if (!profile) return "Sin dato";
+  if (profile.scope && profile.scope !== "public") return scopeLabel(profile.scope);
+  const place = [profile.city, profile.region, profile.country].filter(Boolean).join(", ");
+  return place || "Sin dato";
+}
 
 export function AttackerDrawer({ source, mode, sample, onClose }: {
   source: string | null; mode: DataMode; sample: EventRow[]; onClose: () => void;
@@ -118,9 +120,33 @@ export function AttackerDrawer({ source, mode, sample, onClose }: {
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [canEdit, setCanEdit] = useState(false);
+  const [canAdmin, setCanAdmin] = useState(false);
   const [history, setHistory] = useState<AuditEntry[]>([]);
   const [timeline, setTimeline] = useState<SourceTimeline | null>(null);
   const [timelineError, setTimelineError] = useState("");
+  const [blockEntry, setBlockEntry] = useState<BlockEntry | null>(null);
+  const [blockReason, setBlockReason] = useState("manual desde ficha de atacante");
+  const [blocking, setBlocking] = useState(false);
+  const [copiedCommand, setCopiedCommand] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
+  const [following, setFollowing] = useState(false);
+
+  const firewall = useMemo(() => {
+    if (!source) return { nft: "", iptables: "" };
+    const ipv6 = source.includes(":");
+    const family = ipv6 ? "ip6" : "ip";
+    const binary = ipv6 ? "ip6tables" : "iptables";
+    return {
+      nft: [
+        `nft add rule inet filter input ${family} saddr ${source} counter drop`,
+        `nft add rule inet filter input ${family} daddr ${source} counter drop`,
+      ].join("\n"),
+      iptables: [
+        `${binary} -I INPUT -s ${source} -j DROP`,
+        `${binary} -I OUTPUT -d ${source} -j DROP`,
+      ].join("\n"),
+    };
+  }, [source]);
 
   async function loadHistory() {
     if (!source || mode === "demo" || !getToken()) return;
@@ -130,23 +156,54 @@ export function AttackerDrawer({ source, mode, sample, onClose }: {
     } catch { /* El historial no bloquea la ficha. */ }
   }
 
-  useEffect(() => { void loadHistory(); }, [source, mode]);
+  useEffect(() => { void loadHistory(); }, [source, mode, reloadKey]);
 
   useEffect(() => {
-    if (!source || mode === "demo" || !getToken()) return;
+    if (!source || mode === "demo" || !getToken()) {
+      setCanEdit(false);
+      setCanAdmin(false);
+      return;
+    }
     const controller = new AbortController();
     apiGet<{ role: string }>("/api/console/capabilities", controller.signal)
-      .then((data) => { if (!controller.signal.aborted) setCanEdit(["admin", "operator"].includes(data.role)); })
-      .catch(() => { if (!controller.signal.aborted) setCanEdit(false); });
+      .then((data) => {
+        if (controller.signal.aborted) return;
+        setCanEdit(["admin", "operator"].includes(data.role));
+        setCanAdmin(data.role === "admin");
+      })
+      .catch(() => { if (!controller.signal.aborted) { setCanEdit(false); setCanAdmin(false); } });
     return () => controller.abort();
   }, [source, mode]);
+
+  useEffect(() => {
+    setBlockEntry(null);
+    if (!source || mode === "demo" || !getToken()) return;
+    const controller = new AbortController();
+    apiGet<BlockEntry[]>("/api/deception/blocklist", controller.signal)
+      .then((entries) => {
+        if (!controller.signal.aborted) setBlockEntry(entries.find((entry) => entry.ip === source) ?? null);
+      })
+      .catch(() => { if (!controller.signal.aborted) setBlockEntry(null); });
+    return () => controller.abort();
+  }, [source, mode, reloadKey]);
+
+  useEffect(() => {
+    setMessage("");
+    setError("");
+    setFollowing(false);
+  }, [source, mode]);
+
+  useEffect(() => {
+    if (!following || !source) return;
+    const timer = window.setInterval(() => setReloadKey((value) => value + 1), 30_000);
+    return () => window.clearInterval(timer);
+  }, [following, source]);
 
   useEffect(() => {
     if (!source || mode === "demo" || !getToken()) return;
     const controller = new AbortController();
     setLoading(true);
     setError("");
-    setMessage("");
     setProfile(null);
     apiGet<Profile>(`/api/investigations/attackers/${encodeURIComponent(source)}?offset=0&limit=50`, controller.signal)
       .then((data) => {
@@ -159,7 +216,7 @@ export function AttackerDrawer({ source, mode, sample, onClose }: {
       .catch((cause: unknown) => { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : "No se pudo cargar la ficha"); })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
-  }, [source, mode]);
+  }, [source, mode, reloadKey]);
 
   useEffect(() => {
     setTimeline(null);
@@ -170,7 +227,16 @@ export function AttackerDrawer({ source, mode, sample, onClose }: {
       .then((data) => { if (!controller.signal.aborted) setTimeline(data); })
       .catch(() => { if (!controller.signal.aborted) setTimelineError("No se pudo cargar la línea de tiempo."); });
     return () => controller.abort();
-  }, [source, mode]);
+  }, [source, mode, reloadKey]);
+
+  useEffect(() => {
+    if (!source) return;
+    const onKey = (keyboardEvent: KeyboardEvent) => {
+      if (keyboardEvent.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [source, onClose]);
 
   if (!source) return null;
   const demo = mode === "demo" || !getToken();
@@ -178,7 +244,7 @@ export function AttackerDrawer({ source, mode, sample, onClose }: {
     ...item, detail: {}, port: item.port,
   }));
   const evidence = demo ? demoEvents : profile?.items ?? [];
-  const fingerprint = demo ? null : parseFingerprint(evidence);
+  const fingerprint = demo ? null : bestFingerprint(evidence, profile?.fingerprint);
   const demoFirst = demoEvents.length ? demoEvents.map((item) => item.timestamp).sort()[0] : undefined;
   const demoLast = demoEvents.length ? demoEvents.map((item) => item.timestamp).sort().at(-1) : undefined;
   const demoCountry = demoEvents[0]?.country;
@@ -214,6 +280,51 @@ export function AttackerDrawer({ source, mode, sample, onClose }: {
       setError(cause instanceof Error ? cause.message : "No se pudo guardar");
     } finally { setSaving(false); }
   }
+
+  async function blockSource() {
+    if (!source) return;
+    setBlocking(true);
+    setError("");
+    setMessage("");
+    try {
+      const entry = await apiPost<BlockEntry>("/api/deception/blocklist", {
+        ip: source,
+        reason: blockReason.trim() || "manual desde ficha de atacante",
+      });
+      setBlockEntry(entry);
+      setMessage("IP registrada en la blocklist. El control no modifica el firewall: aplica la regla en el perímetro autorizado.");
+      setReloadKey((value) => value + 1);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "No se pudo registrar en la blocklist");
+    } finally {
+      setBlocking(false);
+    }
+  }
+
+  async function unblockSource() {
+    if (!source) return;
+    setBlocking(true);
+    setError("");
+    setMessage("");
+    try {
+      await apiDelete(`/api/deception/blocklist/${encodeURIComponent(source)}`);
+      setBlockEntry(null);
+      setMessage("IP retirada de la blocklist. Revisa también la regla del firewall perimetral.");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "No se pudo retirar de la blocklist");
+    } finally {
+      setBlocking(false);
+    }
+  }
+
+  async function copyCommand(key: string, value: string) {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopiedCommand(key);
+      window.setTimeout(() => setCopiedCommand(null), 1600);
+    } catch { /* clipboard may be blocked; the command remains visible */ }
+  }
+
 
   async function downloadEvidence(format: "csv" | "json") {
     if (!source) return;
@@ -274,7 +385,7 @@ export function AttackerDrawer({ source, mode, sample, onClose }: {
             <div><span>Eventos en la consulta</span><strong>{demo ? demoEvents.length : profile?.total}</strong></div>
             <div><span>Primera actividad</span><strong>{formatTime(demo ? demoFirst : profile?.first_seen)}</strong></div>
             <div><span>Última actividad</span><strong>{formatTime(demo ? demoLast : profile?.last_seen)}</strong></div>
-            <div><span>Geolocalización aproximada</span><strong>{demo ? demoCountry : profile?.city || profile?.country || "Sin dato"}</strong></div>
+            <div><span>Geolocalización aproximada</span><strong>{demo ? (demoCountry || "Sin dato") : locationLabel(profile)}</strong></div>
           </div>
           {!demo && draft.handling !== "none" && <p className="investigation-notice">Resguardo: {HANDLING_LABEL[draft.handling]}{draft.handling === "redirect" && draft.handling_target ? ` → ${draft.handling_target}` : ""}</p>}
           {!demo && <p className="muted investigation-scope">Consulta de los últimos 90 días, limitada a {profile?.scanned_limit?.toLocaleString("es-MX")} eventos recientes del almacén. El total mostrado no es histórico exhaustivo.</p>}
@@ -301,22 +412,103 @@ export function AttackerDrawer({ source, mode, sample, onClose }: {
             ))}
           </section>}
           {!demo && <section className="investigation-section"><h3>Dispositivo / navegador</h3>
-            <p className="muted">Solo aparece si el atacante ejecutó JavaScript en el panel falso. SSH/Telnet no exponen batería, RAM ni pantalla.</p>
-            {fingerprint ? <div className="investigation-facts">
-              <div><span>User-Agent</span><strong>{String(fingerprint.client.ua ?? "—")}</strong></div>
-              <div><span>Plataforma</span><strong>{String(fingerprint.headers["sec-ch-ua-platform"] ?? fingerprint.client.platform ?? "—")}</strong></div>
-              <div><span>Pantalla</span><strong>{String(fingerprint.client.screen ?? "—")}</strong></div>
-              <div><span>Viewport</span><strong>{String(fingerprint.client.viewport ?? "—")} · DPR {String(fingerprint.client.dpr ?? "—")}</strong></div>
-              <div><span>CPU / RAM</span><strong>{String(fingerprint.client.cores ?? "—")} hilos · {String(fingerprint.client.memory ?? "—")} GB</strong></div>
-              <div><span>Táctil</span><strong>{String(fingerprint.client.touch ?? "—")} puntos simultáneos</strong></div>
-              <div><span>Batería</span><strong>{fingerprint.client.battery ? `${String((fingerprint.client.battery as { level?: number }).level ?? "—")}% · ${(fingerprint.client.battery as { charging?: boolean }).charging ? "cargando" : "descargando"}` : "No disponible"}</strong></div>
-              <div><span>GPU / WebGL</span><strong>{String(fingerprint.client.webgl || "—")}</strong></div>
-              <div><span>Zona / idioma</span><strong>{String(fingerprint.client.tz ?? "—")} · {String(fingerprint.client.lang ?? "—")}</strong></div>
-              <div><span>Automatización</span><strong>webdriver: {String(fingerprint.client.webdriver ?? "—")}</strong></div>
-              <div><span>Client hints</span><strong>{String(fingerprint.headers["sec-ch-ua"] ?? "—")} · móvil {String(fingerprint.headers["sec-ch-ua-mobile"] ?? "—")}</strong></div>
-              <div><span>Conexión</span><strong>{fingerprint.client.connection ? `${String((fingerprint.client.connection as { type?: string }).type ?? "—")}${(fingerprint.client.connection as { down?: number }).down ? ` · ${(fingerprint.client.connection as { down?: number }).down} Mbps` : ""}${(fingerprint.client.connection as { rtt?: number }).rtt ? ` · ${(fingerprint.client.connection as { rtt?: number }).rtt} ms` : ""}` : "—"}</strong></div>
-            </div> : <p className="muted">Sin telemetría de navegador: el cliente no ejecutó JS o es una herramienta de terminal/automatizada.</p>}
+            <p className="muted">Huella del navegador que abrió el panel falso: sistema operativo, CPU, RAM, táctil, batería, GPU y pantalla. SSH/Telnet no pueden exponer estos datos; solo se obtienen si el atacante ejecutó JavaScript en un señuelo HTTP.</p>
+            {fingerprint ? <>
+              <div className="investigation-facts">
+                <div><span>Sistema operativo</span><strong>{String(fingerprint.client.os || fingerprint.client.platform || "—")}{fingerprint.client.osVersion ? ` · ${String(fingerprint.client.osVersion)}` : ""}</strong></div>
+                <div><span>Arquitectura</span><strong>{[fingerprint.client.arch, fingerprint.client.bitness ? `${String(fingerprint.client.bitness)} bits` : ""].filter(Boolean).join(" · ") || "—"}</strong></div>
+                <div><span>Modelo / móvil</span><strong>{String(fingerprint.client.model || "—")} · {fingerprint.client.mobile ? "móvil" : "escritorio"}</strong></div>
+                <div><span>CPU</span><strong>{fingerprint.client.cores != null ? `${String(fingerprint.client.cores)} hilos` : "—"}</strong></div>
+                <div><span>RAM</span><strong>{fingerprint.client.ram_gb != null || fingerprint.client.memory != null ? `${String(fingerprint.client.ram_gb ?? fingerprint.client.memory)} GB (estimada)` : "—"}</strong></div>
+                <div><span>Táctil</span><strong>{fingerprint.client.touchscreen ? `Sí · ${String(fingerprint.client.touch ?? 0)} puntos simultáneos` : "No"}</strong></div>
+                <div><span>Batería</span><strong>{formatBattery(fingerprint.client.battery)}</strong></div>
+                <div><span>Pantalla</span><strong>{String(fingerprint.client.screen ?? "—")} · viewport {String(fingerprint.client.viewport ?? "—")} · DPR {String(fingerprint.client.dpr ?? "—")}</strong></div>
+                <div><span>GPU / WebGL</span><strong>{[fingerprint.client.gpuVendor, fingerprint.client.webgl].filter(Boolean).join(" · ") || "—"}</strong></div>
+                <div><span>Almacenamiento</span><strong>{formatStorage(fingerprint.client.storage)}</strong></div>
+                <div><span>Zona / idioma</span><strong>{String(fingerprint.client.tz ?? "—")} · {String(fingerprint.client.languages || fingerprint.client.lang || "—")}</strong></div>
+                <div><span>Automatización</span><strong>webdriver: {String(fingerprint.client.webdriver ?? "—")} · cookies: {String(fingerprint.client.cookie ?? "—")}</strong></div>
+                <div><span>Client hints</span><strong>{String(fingerprint.headers["sec-ch-ua"] ?? fingerprint.client.brands ?? "—")} · móvil {String(fingerprint.headers["sec-ch-ua-mobile"] ?? fingerprint.client.mobile ?? "—")}</strong></div>
+                <div><span>Conexión</span><strong>{fingerprint.client.connection ? `${String((fingerprint.client.connection as { type?: string }).type ?? "—")}${(fingerprint.client.connection as { down?: number }).down ? ` · ${(fingerprint.client.connection as { down?: number }).down} Mbps` : ""}${(fingerprint.client.connection as { rtt?: number }).rtt ? ` · ${(fingerprint.client.connection as { rtt?: number }).rtt} ms` : ""}` : "—"}</strong></div>
+                <div><span>User-Agent</span><strong>{String(fingerprint.client.ua ?? "—")}</strong></div>
+              </div>
+              <details className="investigation-event">
+                <summary><strong>Huella completa</strong><span className="mono">JSON capturado</span></summary>
+                <div className="investigation-event-body"><pre>{JSON.stringify(fingerprint.client, null, 2)}</pre></div>
+              </details>
+            </> : <p className="muted">Sin telemetría de navegador: el cliente no ejecutó JavaScript, lo bloqueó o es una herramienta de terminal/automatizada. Las conexiones SSH, Telnet, FTP o Redis no exponen batería, RAM ni núcleos.</p>}
           </section>}
+          <section className="investigation-section">
+            <h3>Respuesta al atacante</h3>
+            <p className="muted">El control plane registra y documenta la respuesta, pero no ejecuta firewall ni aísla la máquina del atacante. La contención real se aplica en el perímetro o en el helper de aislamiento autorizado.</p>
+            <div className="response-grid">
+              <div className="response-card">
+                <div className="response-head">
+                  <span className="eyebrow">Blocklist</span>
+                  <span className={`response-state ${blockEntry ? "on" : ""}`}>{blockEntry ? "Registrada" : "No registrada"}</span>
+                </div>
+                {blockEntry ? <>
+                  <strong>{blockEntry.reason || "Sin motivo"}</strong>
+                  <span className="muted">{blockEntry.hits ?? 1} registro(s) · {formatTime(blockEntry.last_blocked || blockEntry.blocked_at)}</span>
+                  <button className="button ghost" onClick={() => void unblockSource()} disabled={!canAdmin || blocking}>
+                    {blocking ? "Procesando…" : "Quitar de blocklist"}
+                  </button>
+                  {!canAdmin && <span className="muted">Requiere rol admin.</span>}
+                </> : <>
+                  <label className="response-field">Motivo
+                    <input value={blockReason} maxLength={120} disabled={!canAdmin || blocking}
+                      onChange={(event) => setBlockReason(event.target.value)} />
+                  </label>
+                  <button className="button primary" onClick={() => void blockSource()} disabled={!canAdmin || blocking}>
+                    {blocking ? "Registrando…" : <><Ban size={14} /> Añadir a blocklist</>}
+                  </button>
+                  {!canAdmin && <span className="muted">Requiere rol admin para modificar la blocklist.</span>}
+                </>}
+              </div>
+              <div className="response-card">
+                <div className="response-head">
+                  <span className="eyebrow"><Terminal size={12} /> Firewall perimetral</span>
+                  <span className="response-state">Dry-run</span>
+                </div>
+                <p className="muted">Copia la regla al firewall autorizado. El control no la ejecuta.</p>
+                <div className="response-command">
+                  <div>
+                    <span className="mono">nftables</span>
+                    <button className="link-button" onClick={() => void copyCommand("nft", firewall.nft)}>
+                      {copiedCommand === "nft" ? <Check size={12} /> : <Copy size={12} />}
+                      {copiedCommand === "nft" ? "Copiado" : "Copiar"}
+                    </button>
+                  </div>
+                  <pre>{firewall.nft}</pre>
+                </div>
+                <details className="response-details">
+                  <summary>Ver regla iptables / ip6tables</summary>
+                  <div className="response-command">
+                    <div>
+                      <span className="mono">iptables</span>
+                      <button className="link-button" onClick={() => void copyCommand("iptables", firewall.iptables)}>
+                        {copiedCommand === "iptables" ? <Check size={12} /> : <Copy size={12} />}
+                        {copiedCommand === "iptables" ? "Copiado" : "Copiar"}
+                      </button>
+                    </div>
+                    <pre>{firewall.iptables}</pre>
+                  </div>
+                </details>
+              </div>
+            </div>
+            <div className="response-note">
+              <strong><ShieldAlert size={14} /> Cuarentena y observación</strong>
+              <p>No puedes aislar la máquina del atacante desde el señuelo. Puedes contener su tráfico en el perímetro, redirigirlo a otra trampa y conservar/exportar la evidencia. Si quieres seguir viendo qué hace, no lo bloquees todavía: el bloqueo corta la colección desde esa IP.</p>
+              <div className="response-actions">
+                <button className="button ghost" onClick={() => setReloadKey((value) => value + 1)}>
+                  <RefreshCw size={14} /> Actualizar ficha y evidencia
+                </button>
+                <button className={`button ${following ? "primary" : "ghost"}`} onClick={() => setFollowing((value) => !value)}>
+                  <Radio size={14} /> {following ? "Seguimiento activo · 30 s" : "Seguir actividad"}
+                </button>
+              </div>
+              {following && <p className="muted">El seguimiento recarga la primera página de evidencia y la línea de tiempo cada 30 segundos.</p>}
+            </div>
+          </section>
           <section className="investigation-section"><h3>Análisis del operador</h3>
             <p className="muted">Solo se editan las anotaciones; la evidencia capturada permanece intacta.</p>
             <div className="investigation-form">

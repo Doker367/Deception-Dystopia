@@ -36,6 +36,17 @@ def test_geoip_privadas_none():
     assert geoip_svc.lookup("no-es-ip") is None
 
 
+def test_geoip_scope_etiquetas():
+    assert geoip_svc.scope("8.8.8.8") == "public"
+    assert geoip_svc.scope("10.0.0.5") == "private"
+    assert geoip_svc.scope("127.0.0.1") == "loopback"
+    assert geoip_svc.scope("203.0.113.9") == "documentation"
+    assert geoip_svc.scope("224.0.0.1") == "multicast"
+    assert geoip_svc.scope("no-es-ip") == "invalid"
+    assert geoip_svc.scope_label("private") == "Red privada"
+    assert geoip_svc.describe("203.0.113.9")["scope_label"] == "Reservada · documentación"
+
+
 @pytest.mark.skipif(not geoip_svc.available(), reason="sin base GeoIP")
 def test_geoip_publica():
     geo = geoip_svc.lookup("8.8.8.8")

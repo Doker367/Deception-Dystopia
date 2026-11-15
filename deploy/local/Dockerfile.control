@@ -21,7 +21,10 @@ RUN pip install --no-cache-dir --no-compile -r /srv/app/requirements.txt
 
 COPY app/ /srv/app/app/
 COPY runtime/ /srv/app/runtime/
+COPY scripts/ /srv/app/scripts/
 COPY config/ /srv/app/config/
+COPY docs/ /srv/app/docs/
+COPY README.md SECURITY.md DEPLOYMENT.md ROLLBACK.md /srv/app/
 COPY web/dist/ /srv/app/web/dist/
 COPY deploy/honeypots/inventory.yaml /srv/app/deploy/honeypots/inventory.yaml
 COPY deploy/honeypots/fixtures/ /srv/app/deploy/honeypots/fixtures/

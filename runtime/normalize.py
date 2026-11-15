@@ -427,12 +427,12 @@ def _detail(raw: dict, engine: str, etype: str) -> dict:
     # OpenCanary keeps the useful HTTP/credential fields inside ``logdata``.
     logdata = raw.get("logdata")
     if isinstance(logdata, dict):
-        for key, target in (("path", "path"), ("PATH", "path"),
+        for key, target in (("FINGERPRINT", "fingerprint"),
+                            ("path", "path"), ("PATH", "path"),
                             ("useragent", "useragent"), ("USERAGENT", "useragent"),
                             ("method", "method"), ("METHOD", "method"),
                             ("host", "host"), ("HOSTNAME", "host"),
-                            ("USERNAME", "username"), ("SESSION", "session"),
-                            ("FINGERPRINT", "fingerprint")):
+                            ("USERNAME", "username"), ("SESSION", "session")):
             value = logdata.get(key)
             if value not in (None, "") and target not in detail:
                 detail[target] = str(value)
@@ -440,7 +440,10 @@ def _detail(raw: dict, engine: str, etype: str) -> dict:
     for key, value in detail.items():
         if value is None:
             continue
-        text = str(value)[:2048]
+        # La huella del navegador es un JSON autocontenido y más grande que
+        # el resto de campos; truncarlo produce un JSON inválido en la ficha.
+        limit = 12000 if key == "fingerprint" else 2048
+        text = str(value)[:limit]
         if text:
             bounded[key] = text
         if len(bounded) >= 16:

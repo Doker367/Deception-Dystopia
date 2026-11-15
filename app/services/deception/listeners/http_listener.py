@@ -6,6 +6,7 @@ Para HTTPS el motor lo trataría con TLS; en esta fase se atiende HTTP
 plano (el TLS se añadirá en la fase de hardening).
 """
 
+import json
 import urllib.parse
 from typing import Optional
 
@@ -13,6 +14,14 @@ from app.services.deception import panels
 from app.services.deception.listeners.base import BaseListener
 
 MAX_HEADERS = 50
+MAX_FINGERPRINT = 12000
+_FP_HEADERS = {
+    "user-agent", "accept", "accept-language", "sec-ch-ua",
+    "sec-ch-ua-arch", "sec-ch-ua-bitness", "sec-ch-ua-mobile",
+    "sec-ch-ua-model", "sec-ch-ua-platform", "sec-ch-ua-platform-version",
+    "sec-ch-ua-full-version", "device-memory", "downlink", "ect",
+    "rtt", "save-data", "referer",
+}
 
 
 class HttpListener(BaseListener):
@@ -29,8 +38,17 @@ class HttpListener(BaseListener):
 
         headers = await self._read_headers(reader)
         body = await self._read_body(reader, headers)
+        clean_path = path.split("?", 1)[0]
 
-        if path.split("?", 1)[0] == "/favicon.ico":
+        # Baliza de huella del navegador. Solo se acepta POST y el cuerpo se
+        # guarda como JSON acotado; nunca se refleja en la respuesta.
+        if clean_path == "/__fp":
+            if method.upper() == "POST":
+                await self._record_fingerprint(src_ip, src_port, headers, body)
+            await self._respond(writer, 204, "")
+            return
+
+        if clean_path == "/favicon.ico":
             await self._respond(writer, 404, "")
             return
 
@@ -50,10 +68,29 @@ class HttpListener(BaseListener):
             )
             # Devuelve el panel como si hubiese autenticado (decepción).
             await self._respond(writer, 200, panels.dashboard_page(self.role, username or "admin", self.banner))
-        elif path.split("?", 1)[0] in ("/", "/login", "/admin", "/index.html", "/cgi-bin/luci"):
+        elif clean_path in ("/", "/login", "/admin", "/index.html", "/cgi-bin/luci"):
             await self._respond(writer, 200, panels.login_page(self.role, self.banner))
         else:
             await self._respond(writer, 404, panels.not_found_page())
+
+    async def _record_fingerprint(self, src_ip: str, src_port: int,
+                                  headers: dict, body: Optional[str]) -> None:
+        """Persiste la huella del navegador con el mismo formato que OpenCanary."""
+        client: object
+        try:
+            parsed = json.loads(body or "{}")
+            client = parsed if isinstance(parsed, dict) else {"raw": parsed}
+        except (TypeError, ValueError):
+            client = {"raw": (body or "")[:4096]}
+        captured = {key: value for key, value in headers.items() if key in _FP_HEADERS}
+        fingerprint = json.dumps(
+            {"client": json.dumps(client, ensure_ascii=False), "headers": captured},
+            ensure_ascii=False,
+        )[:MAX_FINGERPRINT]
+        await self.emit(
+            src_ip, "http_request", src_port=src_port,
+            detail={"method": "POST", "path": "/__fp", "fingerprint": fingerprint},
+        )
 
     async def _read_headers(self, reader) -> dict:
         headers: dict[str, str] = {}
@@ -79,9 +116,9 @@ class HttpListener(BaseListener):
         return raw.decode("utf-8", errors="replace")
 
     async def _respond(self, writer, status: int, body: str) -> None:
-        reasons = {200: "OK", 302: "Found", 404: "Not Found", 401: "Unauthorized"}
+        reasons = {200: "OK", 204: "No Content", 302: "Found", 404: "Not Found", 401: "Unauthorized"}
         reason = reasons.get(status, "OK")
-        payload = body.encode("utf-8")
+        payload = b"" if status == 204 else body.encode("utf-8")
         head = (
             f"HTTP/1.1 {status} {reason}\r\n"
             f"Server: {panels.server_header(self.role)}\r\n"

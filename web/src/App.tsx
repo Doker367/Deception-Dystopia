@@ -7,13 +7,16 @@ import { EventsPage } from "./pages/EventsPage";
 import { HoneypotsPage } from "./pages/HoneypotsPage";
 import { DevicesPage } from "./pages/DevicesPage";
 import { IngestPage } from "./pages/IngestPage";
+import { AiPage } from "./pages/AiPage";
 import { AdminPage } from "./pages/AdminPage";
+import { AttackerDrawer } from "./components/AttackerDrawer";
 import { useAnalytics } from "./data/useAnalytics";
 import { LoginDialog } from "./components/LoginDialog";
 import { UNAUTHORIZED_EVENT, clearToken, getToken } from "./lib/api";
+import { useTheme } from "./lib/theme";
 import type { PageId } from "./types";
 
-const PAGES: PageId[] = ["overview", "map", "events", "honeypots", "devices", "ingest", "admin"];
+const PAGES: PageId[] = ["overview", "map", "events", "honeypots", "devices", "ingest", "ai", "admin"];
 
 function pageFromHash(): PageId {
   const hash = window.location.hash.replace("#", "") as PageId;
@@ -27,7 +30,9 @@ export function App() {
   const [refreshing, setRefreshing] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [loginOpen, setLoginOpen] = useState(false);
+  const [attackerIp, setAttackerIp] = useState<string | null>(null);
   const [sessionActive, setSessionActive] = useState(() => Boolean(getToken()));
+  const [theme, toggleTheme] = useTheme();
   const analytics = useAnalytics(range);
 
   useEffect(() => {
@@ -44,6 +49,7 @@ export function App() {
     const onUnauthorized = () => {
       setSessionActive(false);
       setLoginOpen(false);
+      setAttackerIp(null);
     };
     const onStorage = (event: StorageEvent) => {
       if (event.key === "dystopia.access_token") setSessionActive(Boolean(getToken()));
@@ -57,6 +63,7 @@ export function App() {
   }, []);
 
   function navigate(next: PageId) {
+    setAttackerIp(null);
     if (next === page) {
       window.scrollTo({ top: 0, behavior: "smooth" });
       return;
@@ -107,6 +114,7 @@ export function App() {
           onLogout={() => {
             clearToken();
             setSessionActive(false);
+            setAttackerIp(null);
             analytics.refresh();
           }}
           onRangeChange={setRange}
@@ -114,15 +122,18 @@ export function App() {
           onSearchChange={setSearch}
           onRefresh={refresh}
           refreshing={refreshing}
+          theme={theme}
+          onToggleTheme={toggleTheme}
           onOpenMobile={() => setMobileOpen(true)}
         />
         <main className="main">
           {page === "overview" && <OverviewPage search={search} range={range} data={analytics} onNavigate={navigate} />}
-          {page === "map" && <MapPage search={search} origins={analytics.origins} mode={analytics.mode} onRefresh={analytics.refresh} onOpenEvents={(origin) => openEventsFor(origin.ip)} />}
-          {page === "events" && <EventsPage search={search} range={range} events={analytics.events} total={analytics.totalEvents} mode={analytics.mode} />}
+          {page === "map" && <MapPage search={search} origins={analytics.origins} unlocated={analytics.unlocated} mode={analytics.mode} onRefresh={analytics.refresh} onOpenEvents={(origin) => openEventsFor(origin.ip)} />}
+          {page === "events" && <EventsPage search={search} range={range} events={analytics.events} total={analytics.totalEvents} mode={analytics.mode} onOpenAttacker={setAttackerIp} />}
           {page === "honeypots" && <HoneypotsPage onRefresh={analytics.refresh} onOpenEvents={openEventsFor} events={analytics.events} mode={analytics.mode} />}
           {page === "devices" && <DevicesPage />}
           {page === "ingest" && <IngestPage />}
+          {page === "ai" && <AiPage onOpenEvents={openEventsFor} />}
           {page === "admin" && <AdminPage />}
         </main>
       </div>
@@ -135,6 +146,7 @@ export function App() {
           analytics.refresh();
         }}
       />
+      <AttackerDrawer source={attackerIp} mode={analytics.mode} sample={analytics.events} onClose={() => setAttackerIp(null)} />
     </div>
   );
 }

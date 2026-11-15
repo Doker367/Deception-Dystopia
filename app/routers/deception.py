@@ -32,7 +32,10 @@ async def control_boundary(request: Request):
     if path.rstrip("/") == "/api/deception/ingest":
         raise HTTPException(410, "Use the separate TLS ingest service /v1/events")
     if request.method not in {"GET", "HEAD", "OPTIONS"}:
-        config_routes = ("/api/deception/devices", "/api/deception/segments")
+        # La blocklist es un registro de respuesta (no ejecuta firewall ni
+        # aislamiento); el resto de mutaciones heredadas sigue bloqueado.
+        config_routes = ("/api/deception/devices", "/api/deception/segments",
+                         "/api/deception/blocklist")
         if not any(path == p or path.startswith(p + "/") for p in config_routes):
             raise HTTPException(409, "Legacy execution disabled; isolated service migration required")
 
@@ -343,21 +346,39 @@ def list_blocklist():
 
 
 @router.post("/blocklist", status_code=201, dependencies=ADMIN)
-def block_ip(payload: dict):
-    """Bloquea una IP atacante."""
+def block_ip(payload: dict, request: Request):
+    """Registra una IP atacante en la blocklist (no aplica firewall)."""
+    from app.services import audit_svc
     from app.services.deception import blocklist_svc
+    from app.middleware.rbac import get_current_user
     ip = (payload or {}).get("ip", "").strip()
     if not ip:
         raise HTTPException(422, "Se requiere 'ip'")
-    return blocklist_svc.add(ip, reason=(payload or {}).get("reason", "manual"))
+    reason = (payload or {}).get("reason", "manual")
+    entry = blocklist_svc.add(ip, reason=reason)
+    user = get_current_user(request)
+    audit_svc.log_event(
+        action="deception_blocklist_add", username=str(user.get("sub", "unknown")),
+        ip_address=ip, details=f"motivo={reason}", path=request.url.path,
+        method=request.method, response_status=201,
+    )
+    return entry
 
 
 @router.delete("/blocklist/{ip}", status_code=204, dependencies=ADMIN)
-def unblock_ip(ip: str):
-    """Quita una IP de la blocklist."""
+def unblock_ip(ip: str, request: Request):
+    """Quita una IP de la blocklist (no revierte reglas de firewall externas)."""
+    from app.services import audit_svc
     from app.services.deception import blocklist_svc
+    from app.middleware.rbac import get_current_user
     if not blocklist_svc.remove(ip):
         raise HTTPException(404, "IP no encontrada en la blocklist")
+    user = get_current_user(request)
+    audit_svc.log_event(
+        action="deception_blocklist_remove", username=str(user.get("sub", "unknown")),
+        ip_address=ip, path=request.url.path, method=request.method,
+        response_status=204,
+    )
 
 
 @router.get("/iocs", dependencies=AUTH)

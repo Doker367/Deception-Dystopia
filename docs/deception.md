@@ -94,7 +94,13 @@ Tipos de evento: `connect`, `login_attempt`, `login_success`, `command`,
 - **telnet** — banner + login + shell falsa que registra cada comando.
 - **http/https** — panel de administración por **fabricante** (Hikvision,
   Cisco, FortiGate, MikroTik, IIS/Apache) con login y dashboard falsos;
-  captura credenciales POST y cabecera `Server` realista.
+  captura credenciales POST y cabecera `Server` realista. Ambos paneles
+  incluyen una baliza same-origin (`POST /__fp`) que registra la huella del
+  navegador cuando el atacante ejecuta JavaScript: SO/versión, arquitectura,
+  modelo, núcleos, RAM estimada, táctil, batería, pantalla, GPU/WebGL,
+  almacenamiento, zona horaria, idioma, client hints y señales de
+  automatización (`webdriver`). SSH/Telnet/FTP/Redis no pueden exponer
+  hardware ni batería; esa limitación se muestra explícitamente en la ficha.
 - **ssh** (paramiko) — acepta cualquier contraseña y captura comandos.
 - **ftp** — banner, login `USER`/`PASS` y comandos básicos.
 - **mysql** — handshake v10 falso, captura usuario y responde `OK`.
@@ -242,8 +248,14 @@ Herramientas complementarias para producción (integración futura):
 ## GeoIP, mapa global y firewall (Fase G/H)
 
 - **GeoIP offline** (`geoip_svc.py`): país/ciudad/coordenadas con una base
-  MaxMind local. Por defecto usa la incluida en `maxminddb-geolite2`
-  (sin servicios externos); se puede apuntar otra con `NETPULSE_GEOIP_DB`.
+  MaxMind local. Autodetecta `NETPULSE_GEOIP_DB`, `NETPULSE_GEOIP_DIR`,
+  `config/geoip/`, `deploy/local/geoip/` y la base incluida en
+  `maxminddb-geolite2` (sin servicios externos). Las IPs privadas,
+  loopback o de documentación se etiquetan como tales en vez de mostrar un
+  país vacío; si una base solo conoce el país, se usa su centroide para no
+  perder el punto del mapa. Los orígenes públicos que no estén en la base se
+  informan como **sin geolocalizar** (`unlocated`) y no se mezclan con
+  ubicaciones de demostración.
 - **Mapa global** en el dashboard: puntos **rojos** = origen de los
   ataques (geolocalizados, tamaño por nº de eventos), punto **verde** =
   centro de datos objetivo y **líneas de trayectoria animadas** desde cada
@@ -255,22 +267,27 @@ Herramientas complementarias para producción (integración futura):
 - **Simulación multi-país**: `POST /api/deception/simulate?country=US`
   (códigos: US, DE, GB, FR, JP, BR, IN, CN, RU, AU, CA, MX, NL, SG, ZA,
   KR). El botón **Global** del dashboard simula ataques desde todos.
-- **Firewall** (`firewall_svc.py`): traduce la IP a una regla del firewall
-  local (pf en macOS, nftables/iptables en Linux, netsh en Windows). Por
-  defecto es **dry-run** (registra en blocklist y devuelve el comando);
-  con `NETPULSE_FIREWALL_ENABLED=true` aplica la regla (requiere permisos).
-  Endpoints: `POST /api/deception/firewall/block`, `/firewall/unblock`,
-  `GET /api/deception/firewall/status`.
+- **Firewall** (`firewall_svc.py`): el plano de control **no tiene autoridad
+  para mutar el firewall del host** ni para aislar la máquina del atacante.
+  `POST /firewall/block` y `/firewall/unblock` fallan cerrado; `GET
+  /firewall/status` solo informa la blocklist. La ficha del atacante genera
+  comandos `nftables`/`iptables` en modo **dry-run** para que el operador los
+  aplique en el firewall perimetral o en el helper de aislamiento autorizado.
+- **Respuesta al atacante**: desde la ficha se puede registrar/retirar la IP
+  de la blocklist (rol `admin`), copiar reglas de firewall para el perímetro,
+  actualizar la evidencia y abrir el detalle de cada evento. La anotación
+  `handling` (monitor, lock, redirect) documenta la intención, pero no ejecuta
+  bloqueo ni redirección real.
 
 ## Blocklist e IOCs (Fase G/H)
 
-- **Blocklist** (`blocklist_svc.py`, `deception/blocklist.json`): IPs
-  atacantes bloqueadas. Se puede bloquear a mano desde el dashboard (🚫)
-  o automáticamente ante alertas `critical`
-  (`NETPULSE_DECEPTION_AUTOBLOCK_CRITICAL=true`). El data plane/firewall
-  puede consumirla.
-- **IOCs** (`ioc_svc.py`): agrega atacantes (IP, eventos, dispositivos,
-  comandos, rango temporal, amenaza y estado) y exporta a CSV.
+- **Blocklist** (`blocklist_svc.py`, `deception/blocklist.json`): registro de
+  IPs atacantes que el operador decide bloquear. Se añade o retira desde la
+  ficha del atacante (rol `admin`) o vía API. **No aplica firewall por sí
+  sola**: el data plane o el firewall perimetral deben consumirla. No hay
+  autobloqueo desde alertas ni ejecución de aislamiento en el control.
+- **IOCs** (`ioc_svc.py`): agrega atacantes (IP, país/región/ciudad, eventos,
+  dispositivos, comandos, rango temporal, amenaza y estado) y exporta a CSV.
 
 ## Editor y NetBox
 

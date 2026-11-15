@@ -156,8 +156,22 @@ def notify_event(event_type: str, data: dict):
     for wh in webhooks:
         send_webhook(wh["url"], event_type, data)
 
-    # ── Canales adicionales (Telegram / Email) si están configurados ──
+    # ── Canales adicionales (Telegram / Email / Slack / ntfy) ──
     _notify_external_channels(event_type, data)
+
+
+def has_channels(event_type: str) -> bool:
+    """True si hay al menos un canal configurado para este evento."""
+    if _get_subscribed_webhooks(event_type):
+        return True
+    from app.core import settings
+
+    return bool(
+        (settings.TELEGRAM_BOT_TOKEN and settings.TELEGRAM_CHAT_ID)
+        or settings.SLACK_WEBHOOK_URL
+        or (settings.SMTP_HOST and settings.SMTP_TO)
+        or (settings.NTFY_URL and settings.NTFY_TOPIC)
+    )
 
 
 def _notify_external_channels(event_type: str, data: dict):
@@ -197,6 +211,50 @@ def _notify_external_channels(event_type: str, data: dict):
             logger.debug("Email: %s", "OK" if ok else "falló")
     except Exception as e:
         logger.warning("Email no enviado: %s", e)
+
+    try:
+        from app.core.settings import NTFY_URL, NTFY_TOPIC, NTFY_TOKEN
+        if NTFY_URL and NTFY_TOPIC:
+            _send_ntfy(NTFY_URL, NTFY_TOPIC, NTFY_TOKEN, event_type, title, message, data)
+    except Exception as e:
+        logger.warning("ntfy no enviado: %s", e)
+
+
+def _send_ntfy(
+    base_url: str, topic: str, token: str, event_type: str,
+    title: str, message: str, data: dict,
+) -> bool:
+    """Push autoalojado vía ntfy (texto plano + headers)."""
+    import httpx
+    from urllib.parse import quote
+
+    severity = str(data.get("severity") or "info").lower()
+    priority = {
+        "critical": "urgent", "high": "high", "medium": "default",
+        "low": "low", "info": "min",
+    }.get(severity, "default")
+    headers = {
+        "Title": _latin1(f"[IA] {title}")[:120],
+        "Priority": priority,
+        "Tags": "robot,shield",
+    }
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    body = f"{event_type}\n\n{message}"
+    with httpx.Client(timeout=10.0) as client:
+        response = client.post(
+            f"{base_url.rstrip('/')}/{quote(topic)}",
+            content=body.encode("utf-8"),
+            headers=headers,
+        )
+        response.raise_for_status()
+    logger.info("ntfy enviado (evento: %s)", event_type)
+    return True
+
+
+def _latin1(value: str) -> str:
+    """Los headers HTTP no admiten cualquier Unicode; degrada sin romper."""
+    return str(value).encode("latin-1", "ignore").decode("latin-1")
 
 
 # ── Eventos específicos ──────────────────────────────────────

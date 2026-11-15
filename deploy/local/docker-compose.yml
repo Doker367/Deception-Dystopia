@@ -208,6 +208,9 @@ services:
       - {type: volume, source: deception_db, target: /srv/deception}
       - {type: volume, source: control_config, target: /srv/local-config}
       - {type: volume, source: control_state, target: /srv/state}
+      # Base GeoLite2 actualizada. Sin este montaje se usa la incluida en el
+      # paquete Python; con él, el mapa refleja la base del host.
+      - ./geoip:/srv/local-config/geoip:ro
     tmpfs: ["/tmp:rw,noexec,nosuid,size=32m,uid=2000,gid=2000"]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8082/api/health', timeout=2).close()"]
