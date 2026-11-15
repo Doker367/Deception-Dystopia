@@ -224,6 +224,7 @@ class OvsFabricEngine:
     ``None``); el controller/API podrá exponerlos en la Fase 3b.
     """
 
+    kind = "ovs"  # selector de ``DYSTOPIA_FABRIC_ENGINE``
     def __init__(
         self,
         runner: Optional[CommandRunner] = None,
@@ -233,6 +234,23 @@ class OvsFabricEngine:
         self._privilege_check = privilege_check or _has_net_admin
         self.last_result: Optional[DeployResult] = None
         self.last_destroy_result: Optional[DestroyResult] = None
+
+    @property
+    def runner(self) -> CommandRunner:
+        """Runner inyectado (lo reutiliza el Lifecycle Manager)."""
+        return self._runner
+
+    def check_environment(self) -> list[str]:
+        """Errores de entorno (privilegios/herramientas); vacío si todo ok.
+
+        Reutiliza el preflight interno sin mutar el host: es la pieza que
+        el Lifecycle Manager agrega en su informe.
+        """
+        try:
+            self._preflight()
+            return []
+        except FabricDeployError as exc:
+            return list(exc.errors)
 
     # ── FabricEngine ────────────────────────────────────────
 
