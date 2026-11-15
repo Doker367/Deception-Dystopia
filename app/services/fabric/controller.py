@@ -62,6 +62,8 @@ DB_PATH = DECEPTION_DB
 
 # Doble gate §9.1: el JWT admin lo valida la API (Fase 6); aquí el entorno.
 FABRIC_ENABLE_ENV = "DYSTOPIA_FABRIC_ENABLED"
+# Selección del engine: ``stub`` (default) | ``ovs`` (Fase 3).
+FABRIC_ENGINE_ENV = "DYSTOPIA_FABRIC_ENGINE"
 
 # Un solo writer a la vez en el proceso (patrón de store_svc/audit_svc).
 _write_lock = threading.Lock()
@@ -160,6 +162,7 @@ class NullFabricEngine:
     error de la máquina de estados.
     """
 
+    kind = "stub"  # selector de ``DYSTOPIA_FABRIC_ENGINE``
     def __init__(self, fail_deploy: bool = False, fail_destroy: bool = False):
         self.fail_deploy = fail_deploy
         self.fail_destroy = fail_destroy
@@ -187,6 +190,26 @@ def _utc_now() -> str:
 def _gate_open() -> bool:
     """True solo si ``DYSTOPIA_FABRIC_ENABLED`` es exactamente ``true``."""
     return os.getenv(FABRIC_ENABLE_ENV, "false").strip().lower() == "true"
+
+
+def _default_engine() -> tuple[FabricEngine, str]:
+    """Engine por defecto según ``DYSTOPIA_FABRIC_ENGINE``.
+
+    ``stub`` (default) mantiene el comportamiento actual y funciona en
+    macOS; ``ovs`` importa perezosamente ``OvsFabricEngine`` para no
+    romper entornos sin OVS ni los tests existentes.
+    """
+    choice = os.getenv(FABRIC_ENGINE_ENV, "stub").strip().lower()
+    if choice == "ovs":
+        from app.services.fabric.deploy import OvsFabricEngine  # import perezoso
+
+        return OvsFabricEngine(), "ovs"
+    if choice not in {"stub", ""}:
+        logger.warning(
+            "[fabric] %s=%r no reconocido; se usa el engine stub",
+            FABRIC_ENGINE_ENV, choice,
+        )
+    return NullFabricEngine(), "stub"
 
 
 def _fabric_enabled_intent(raw: Any) -> bool:
@@ -282,6 +305,10 @@ class FabricController:
         manifest_loader: Optional[Callable[[], dict]] = None,
     ):
         self._engine: FabricEngine = engine if engine is not None else NullFabricEngine()
+        self._engine_kind = "custom" if engine is not None else "stub"
+        if engine is None:
+            self._engine, self._engine_kind = _default_engine()
+        self._last_operation: Optional[dict] = None
         self._db_path = Path(db_path) if db_path is not None else DB_PATH
         self._manifest_loader = manifest_loader or self._load_manifest
         self._lock = threading.RLock()
@@ -511,7 +538,9 @@ class FabricController:
         self._persist()
 
         try:
-            self._engine.deploy(plan, self._topology)
+            from app.services.fabric import lifecycle  # import perezoso anti-ciclo
+
+            summary = lifecycle.deploy(self._engine, plan, self._topology)
         except Exception as exc:  # el engine puede fallar de cualquier forma
             self._error = f"deploy falló: {exc}"
             self._transition(FabricState.ERROR)
@@ -528,6 +557,7 @@ class FabricController:
         self._destroyed_at = None
         self._transition(FabricState.DEPLOYED)
         self._persist()
+        self._last_operation = {"action": "deploy", "at": self._deployed_at, **summary}
         logger.info("[fabric] desplegado (%d dispositivos)", len(plan.devices))
         return {
             "success": True,
@@ -538,6 +568,7 @@ class FabricController:
             "switches": len(plan.bridges),
             "links": len(plan.links),
             "deployed_at": self._deployed_at,
+            **summary,
         }
 
     def _destroy_locked(self) -> dict:
@@ -550,7 +581,9 @@ class FabricController:
         self._persist()
 
         try:
-            self._engine.destroy(self._topology)
+            from app.services.fabric import lifecycle  # import perezoso anti-ciclo
+
+            summary = lifecycle.destroy(self._engine, self._topology)
         except Exception as exc:  # el engine puede fallar de cualquier forma
             self._error = f"destroy falló: {exc}"
             self._transition(FabricState.ERROR)
@@ -567,6 +600,7 @@ class FabricController:
         self._deployed_at = None
         self._transition(FabricState.READY)
         self._persist()
+        self._last_operation = {"action": "destroy", "at": self._destroyed_at, **summary}
         logger.info("[fabric] destruido; estado ready")
         return {
             "success": True,
@@ -574,6 +608,7 @@ class FabricController:
             "errors": [],
             "manifest_hash": self._manifest_hash,
             "destroyed_at": self._destroyed_at,
+            **summary,
         }
 
     def _transition(self, target: FabricState) -> None:
@@ -601,7 +636,12 @@ class FabricController:
     # ── Consultas ───────────────────────────────────────────
 
     def get_status(self) -> dict:
-        """Estado actual, gate, hash del manifiesto y conteos del plan."""
+        """Estado actual, gate, hash del manifiesto y conteos del plan.
+
+        Añade ``engine`` (stub/ovs/custom) y ``last_operation`` (resultado
+        estructurado del último deploy/destroy) sin alterar los campos
+        previos que consume la UI.
+        """
         with self._lock:
             self._ensure_loaded()
             topology = self._topology
@@ -619,7 +659,19 @@ class FabricController:
                 "switches": len(topology.config.switches) if topology else 0,
                 "links": len(topology.config.links) if topology else 0,
                 "devices": len(devices),
+                "engine": self._engine_kind,
+                "last_operation": dict(self._last_operation) if self._last_operation else None,
             }
+
+    def get_last_operation(self) -> dict:
+        """Resumen estructurado del último deploy/destroy; ``{}`` si no hay.
+
+        El detalle vive en memoria (no se persiste en ``fabric_state``);
+        se reinicia con el proceso.
+        """
+        with self._lock:
+            self._ensure_loaded()
+            return dict(self._last_operation) if self._last_operation else {}
 
     def get_topology(self) -> dict:
         """Topología validada (sin credenciales, AC13); ``{}`` si no hay."""
@@ -642,38 +694,52 @@ class FabricController:
             return [spec.model_dump() for spec in build_device_specs(self._topology)]
 
     def get_health(self) -> dict:
-        """Salud estructural del fabric.
+        """Salud del fabric.
 
-        Sin runtime todavía no se comprueban contenedores ni reachability:
-        ``runtime_available`` es false y la salud se limita a manifiesto y
-        estado de la máquina.
+        Con el engine stub mantiene el informe estructural previo
+        (``runtime_available=false``). Con el engine OVS delega en
+        ``lifecycle.health`` y agrega el detalle de runtime en ``runtime``
+        (bridges/links/devices/extra_ports) sin quitar campos.
         """
         with self._lock:
             self._ensure_loaded()
             topology = self._topology
             manifest_ok = topology is not None and self._error is None
             state_ok = self._state == FabricState.DEPLOYED
+            checks = [
+                {
+                    "name": "manifest",
+                    "ok": manifest_ok,
+                    "detail": self._error or "manifiesto validado",
+                },
+                {
+                    "name": "state",
+                    "ok": state_ok,
+                    "detail": self._state.value,
+                },
+            ]
+            runtime: Optional[dict] = None
+            runtime_available = False
+            if getattr(self._engine, "kind", "") == "ovs" and topology is not None:
+                from app.services.fabric import lifecycle  # import perezoso anti-ciclo
+
+                runtime = lifecycle.health(engine=self._engine, topology=topology)
+                runtime_available = bool(runtime.get("runtime_available"))
+                checks.extend(runtime.get("checks", []))
+            healthy = manifest_ok and state_ok
+            if runtime is not None:
+                healthy = healthy and bool(runtime.get("healthy"))
             return {
-                "healthy": manifest_ok and state_ok,
+                "healthy": healthy,
                 "state": self._state.value,
                 "gate_open": _gate_open(),
                 "manifest_hash": self._manifest_hash,
-                "checks": [
-                    {
-                        "name": "manifest",
-                        "ok": manifest_ok,
-                        "detail": self._error or "manifiesto validado",
-                    },
-                    {
-                        "name": "state",
-                        "ok": state_ok,
-                        "detail": self._state.value,
-                    },
-                ],
+                "checks": checks,
                 "switches": len(topology.config.switches) if topology else 0,
                 "links": len(topology.config.links) if topology else 0,
                 "devices": len(build_device_specs(topology)) if topology else 0,
-                "runtime_available": False,
+                "runtime_available": runtime_available,
+                "runtime": runtime,
             }
 
     def get_topology_graph(self) -> dict:
