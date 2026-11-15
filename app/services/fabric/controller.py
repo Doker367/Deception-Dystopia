@@ -676,6 +676,139 @@ class FabricController:
                 "runtime_available": False,
             }
 
+    def get_topology_graph(self) -> dict:
+        """Grafo ``{nodes, edges, groups}`` para D3/ECharts (§6).
+
+        - Nodos ``switch:<id>`` y ``device:<id>``; los dispositivos se
+          agrupan por la VLAN de su interfaz primaria (``vlan-<id>``).
+        - Aristas ``trunk`` entre switches y ``access`` switch↔dispositivo,
+          con el nombre del puerto OVS.
+        - ``groups`` incluye las VLANs de los segmentos y las extra
+          declaradas solo en switches, para colorear el diagrama.
+
+        Sin runtime real el estado de las aristas es ``up`` solo cuando la
+        máquina está ``deployed``; en el resto, ``down``.
+        """
+        with self._lock:
+            self._ensure_loaded()
+            if self._topology is None:
+                return {
+                    "nodes": [], "edges": [], "groups": [],
+                    "state": self._state.value,
+                }
+
+            topology = self._topology
+            segments = {segment.id: segment for segment in topology.segments}
+            roles = {device.id: device.role.value for device in topology.devices}
+            segment_by_device = {
+                override.id: override.interfaces[0].segment
+                for override in topology.config.device_overrides
+                if override.interfaces
+            }
+            devices = build_device_specs(topology)
+            edge_state = "up" if self._state == FabricState.DEPLOYED else "down"
+
+            groups: list[dict] = []
+            seen_groups: set[str] = set()
+
+            def add_group(group_id: str, label: str, vlan_id: Optional[int],
+                          segment_id: Optional[str]) -> None:
+                if group_id in seen_groups:
+                    return
+                seen_groups.add(group_id)
+                groups.append({
+                    "id": group_id,
+                    "label": label,
+                    "vlan_id": vlan_id,
+                    "segment": segment_id,
+                })
+
+            for segment in topology.segments:
+                if segment.vlan_id is not None:
+                    add_group(
+                        f"vlan-{segment.vlan_id}",
+                        f"VLAN {segment.vlan_id}",
+                        segment.vlan_id,
+                        segment.id,
+                    )
+            extra_vlans = sorted({
+                vlan
+                for switch in topology.config.switches
+                for vlan in switch.vlans
+                if f"vlan-{vlan}" not in seen_groups
+            })
+            for vlan in extra_vlans:
+                add_group(f"vlan-{vlan}", f"VLAN {vlan}", vlan, None)
+
+            nodes: list[dict] = []
+            for switch in topology.config.switches:
+                nodes.append({
+                    "id": f"switch:{switch.id}",
+                    "label": switch.id,
+                    "kind": "switch",
+                    "group": "switch",
+                    "switch_id": switch.id,
+                    "stp": switch.stp,
+                    "vlans": list(switch.vlans),
+                })
+
+            for spec in devices:
+                primary = spec.interfaces[0]
+                segment_id = segment_by_device.get(spec.device_id, "")
+                segment = segments.get(segment_id)
+                if segment is not None and segment.vlan_id is not None:
+                    group_id = f"vlan-{segment.vlan_id}"
+                else:
+                    group_id = f"segment-{segment_id}"
+                    add_group(group_id, segment_id, None, segment_id)
+                nodes.append({
+                    "id": f"device:{spec.device_id}",
+                    "label": spec.device_id,
+                    "kind": "device",
+                    "group": group_id,
+                    "device_id": spec.device_id,
+                    "container_name": spec.container_name,
+                    "role": roles.get(spec.device_id),
+                    "segment": segment_id,
+                    "switch": primary.switch,
+                    "vlan_tag": primary.vlan_tag,
+                    "ip": primary.ip,
+                    "mac": primary.mac,
+                })
+
+            edges: list[dict] = []
+            for link in build_link_specs(topology):
+                edges.append({
+                    "id": link.id,
+                    "source": f"switch:{link.from_switch}",
+                    "target": f"switch:{link.to_switch}",
+                    "kind": "trunk",
+                    "label": "trunk",
+                    "trunk": link.trunk,
+                    "bandwidth": link.bandwidth,
+                    "state": edge_state,
+                })
+            for spec in devices:
+                for iface in spec.interfaces:
+                    edges.append({
+                        "id": f"attach:{spec.device_id}:{iface.name}",
+                        "source": f"switch:{iface.switch}",
+                        "target": f"device:{spec.device_id}",
+                        "kind": "access",
+                        "label": f"VLAN {iface.vlan_tag}" if iface.vlan_tag is not None
+                                 else "sin etiqueta",
+                        "vlan_tag": iface.vlan_tag,
+                        "port": iface.host_veth,
+                        "state": edge_state,
+                    })
+
+            return {
+                "nodes": nodes,
+                "edges": edges,
+                "groups": groups,
+                "state": self._state.value,
+            }
+
     # ── Persistencia ────────────────────────────────────────
 
     def _ensure_db(self) -> None:
