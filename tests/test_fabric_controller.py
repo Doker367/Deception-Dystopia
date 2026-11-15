@@ -628,6 +628,52 @@ def test_get_health_tras_error(tmp_path):
     assert health["checks"][0]["ok"] is False
 
 
+# ── Grafo D3/ECharts ───────────────────────────────────────
+
+
+def test_get_topology_graph_estructura(tmp_path):
+    manifest = _manifest()
+    manifest["fabric"]["switches"][0]["vlans"] = [10, 20, 99]
+    controller = _make(tmp_path, manifest=manifest)
+    graph = controller.get_topology_graph()
+    assert graph["state"] == "ready"
+    assert {node["id"] for node in graph["nodes"]} == {
+        "switch:sw-core", "switch:sw-oficina", "switch:sw-servidores",
+        "device:pc-01", "device:srv-01",
+    }
+    switch = next(n for n in graph["nodes"] if n["id"] == "switch:sw-core")
+    assert switch["kind"] == "switch"
+    assert switch["group"] == "switch"
+    device = next(n for n in graph["nodes"] if n["id"] == "device:pc-01")
+    assert device["group"] == "vlan-10"
+    assert device["vlan_tag"] == 10
+    assert device["role"] == "pc"
+    assert {group["id"] for group in graph["groups"]} == {
+        "vlan-10", "vlan-20", "vlan-99",
+    }
+
+
+def test_get_topology_graph_enlaces_y_estado(tmp_path):
+    controller = _make(tmp_path)
+    graph = controller.get_topology_graph()
+    trunks = [edge for edge in graph["edges"] if edge["kind"] == "trunk"]
+    access = [edge for edge in graph["edges"] if edge["kind"] == "access"]
+    assert len(trunks) == 2
+    assert len(access) == 2
+    assert all(edge["state"] == "down" for edge in graph["edges"])
+
+    controller.deploy()
+    deployed = controller.get_topology_graph()
+    assert all(edge["state"] == "up" for edge in deployed["edges"])
+
+
+def test_get_topology_graph_vacio_sin_manifiesto_valido(tmp_path):
+    controller = _make(tmp_path, manifest=_broken_manifest())
+    assert controller.get_topology_graph() == {
+        "nodes": [], "edges": [], "groups": [], "state": "error",
+    }
+
+
 # ── Singleton y engine ─────────────────────────────────────
 
 
