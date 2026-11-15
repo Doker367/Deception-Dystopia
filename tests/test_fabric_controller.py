@@ -11,6 +11,7 @@ import json
 import sqlite3
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -704,3 +705,153 @@ def test_null_engine_simula_fallos():
         NullFabricEngine(fail_deploy=True).deploy(None, None)
     with pytest.raises(RuntimeError):
         NullFabricEngine(fail_destroy=True).destroy(None)
+
+
+# ── Selección de engine y lifecycle (Fase 3b) ───────────────
+
+
+def test_engine_stub_por_defecto(tmp_path, monkeypatch):
+    monkeypatch.delenv(controller_mod.FABRIC_ENGINE_ENV, raising=False)
+    controller = controller_mod.reset_controller(
+        db_path=tmp_path / "engine-stub.db", manifest_loader=lambda: _manifest(),
+    )
+    assert controller.get_status()["engine"] == "stub"
+
+
+def test_engine_ovs_por_env_sin_ejecutar_ovs(tmp_path, monkeypatch):
+    from app.services.fabric.deploy import OvsFabricEngine
+
+    monkeypatch.setenv(controller_mod.FABRIC_ENGINE_ENV, "ovs")
+    controller = controller_mod.reset_controller(
+        db_path=tmp_path / "engine-ovs.db", manifest_loader=lambda: _manifest(),
+    )
+    assert controller.get_status()["engine"] == "ovs"
+    assert isinstance(controller._engine, OvsFabricEngine)
+
+
+def test_engine_env_invalido_cae_a_stub(tmp_path, monkeypatch):
+    monkeypatch.setenv(controller_mod.FABRIC_ENGINE_ENV, "docker")
+    controller = controller_mod.reset_controller(
+        db_path=tmp_path / "engine-bogus.db", manifest_loader=lambda: _manifest(),
+    )
+    assert controller.get_status()["engine"] == "stub"
+
+
+def test_get_status_mantiene_contrato_y_anade_campos(tmp_path):
+    controller = _make(tmp_path)
+    status = controller.get_status()
+    for key in (
+        "state", "enabled", "gate_open", "name", "manifest_hash", "error",
+        "warnings", "deployed_at", "destroyed_at", "switches", "links", "devices",
+    ):
+        assert key in status
+    assert status["engine"] == "custom"  # engine inyectado por _make
+    assert status["last_operation"] is None
+
+
+def test_get_last_operation(tmp_path):
+    controller = _make(tmp_path)
+    assert controller.get_last_operation() == {}
+    controller.deploy()
+    last = controller.get_last_operation()
+    assert last["action"] == "deploy"
+    assert last["engine"] == "NullFabricEngine"
+    controller.destroy()
+    assert controller.get_last_operation()["action"] == "destroy"
+
+
+def test_get_health_stub_estructural_con_runtime_none(tmp_path):
+    controller = _make(tmp_path)
+    before = controller.get_health()
+    assert before["runtime_available"] is False
+    assert before["runtime"] is None
+    assert before["healthy"] is False
+
+    controller.deploy()
+    after = controller.get_health()
+    assert after["healthy"] is True
+    assert after["runtime_available"] is False
+    assert after["runtime"] is None
+
+
+class _FakeOvsRunner:
+    """Runner mínimo para ejercitar el engine OVS sin OVS real."""
+
+    def __init__(self):
+        self.bridges: set[str] = set()
+        self.links: set[str] = set()
+        self.ports: dict[str, str] = {}
+        self.calls: list[list[str]] = []
+
+    def run(self, args: list[str], check: bool = True):
+        self.calls.append(list(args))
+        returncode, stdout, stderr = self._dispatch(args)
+        return SimpleNamespace(
+            args=list(args), returncode=returncode, stdout=stdout, stderr=stderr
+        )
+
+    def _dispatch(self, args: list[str]) -> tuple[int, str, str]:
+        if args[:2] == ["ovs-vsctl", "--version"]:
+            return (0, "ovs-vsctl 3.1", "")
+        if args[:2] == ["ip", "-V"]:
+            return (0, "ip utility", "")
+        if args[:2] == ["ovs-vsctl", "br-exists"]:
+            return (0, "", "") if args[2] in self.bridges else (2, "", "")
+        if args[:2] == ["ovs-vsctl", "add-br"]:
+            self.bridges.add(args[2])
+            return (0, "", "")
+        if args[:3] == ["ovs-vsctl", "set", "bridge"]:
+            return (0, "", "")
+        if args[:2] == ["ovs-vsctl", "port-to-br"]:
+            if args[2] in self.ports:
+                return (0, self.ports[args[2]], "")
+            return (1, "", "no such port")
+        if args[:2] == ["ovs-vsctl", "add-port"]:
+            self.ports[args[3]] = args[2]
+            return (0, "", "")
+        if args[:2] == ["ovs-vsctl", "list-ports"]:
+            return (0, "\n".join(
+                port for port, bridge in self.ports.items() if bridge == args[2]
+            ), "")
+        if args[:2] == ["ip", "link"]:
+            if args[2] == "show":
+                return (0, "", "") if args[3] in self.links else (1, "", "no such device")
+            if args[2] == "add":
+                self.links.add(args[3])
+                self.links.add(args[8])
+                return (0, "", "")
+            if args[2] == "set":
+                return (0, "", "")
+            if args[2] == "del":
+                self.links.discard(args[3])
+                return (0, "", "")
+        return (1, "", f"comando no soportado: {args}")
+
+
+def test_get_health_delega_en_lifecycle_con_ovs(tmp_path):
+    from app.services.fabric.deploy import OvsFabricEngine
+
+    runner = _FakeOvsRunner()
+    controller = controller_mod.reset_controller(
+        engine=OvsFabricEngine(runner=runner, privilege_check=lambda: True),
+        db_path=tmp_path / "health-ovs.db",
+        manifest_loader=lambda: _manifest(),
+    )
+    controller.deploy()
+
+    health = controller.get_health()
+    assert health["runtime_available"] is True
+    assert health["healthy"] is True
+    assert health["runtime"] is not None
+    assert health["runtime"]["bridges"]["missing"] == []
+    assert health["runtime"]["links"]["missing"] == []
+    assert any(check["name"] == "bridges" for check in health["checks"])
+
+    # Un bridge que desaparece degrada la salud sin cambiar la state machine.
+    runner.bridges.discard("sw-oficina")
+    runner.ports = {port: bridge for port, bridge in runner.ports.items()
+                    if bridge != "sw-oficina"}
+    degraded = controller.get_health()
+    assert degraded["healthy"] is False
+    assert degraded["state"] == "deployed"
+    assert degraded["runtime"]["bridges"]["missing"] == ["sw-oficina"]
