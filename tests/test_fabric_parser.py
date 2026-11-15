@@ -29,7 +29,6 @@ from app.services.fabric.parser import (  # noqa: E402
 )
 
 EXAMPLE = REPO / "config" / "deception" / "network.fabric.example.yaml"
-LEGACY = REPO / "config" / "deception" / "network.yaml"
 
 
 def _manifest() -> dict:
@@ -427,9 +426,14 @@ def test_ejemplo_roundtrip_dump_validate():
 # ── Compatibilidad e integración con topology_svc ───────────
 
 
-def test_network_yaml_real_sin_fabric():
-    raw = yaml.safe_load(LEGACY.read_text(encoding="utf-8"))
-    assert "fabric" not in raw
+def test_manifiesto_legado_sin_fabric():
+    """Compatibilidad: un network.yaml sin bloque fabric sigue siendo válido."""
+    raw = {
+        "segments": [{"id": "vlan-x", "cidr": "10.0.0.0/24"}],
+        "devices": [{
+            "id": "dev-1", "role": "pc", "segment": "vlan-x", "ip": "10.0.0.2",
+        }],
+    }
     topology = parse_manifest(raw)
     assert topology.config == FabricConfig()
     assert topology.config.enabled is False
