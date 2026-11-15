@@ -355,9 +355,11 @@ def _join_sentences(items: Sequence[object]) -> str:
 def _rules_summary(candidate: dict) -> str:
     ports = ", ".join(f"{port}/{proto}" for port, proto in candidate["ports"][:6]) or "sin puerto"
     return (
-        f"Reglas: {candidate['count']} eventos, {candidate['logins']} intentos de login, "
-        f"{candidate['successes']} accesos aceptados, destinos {ports}. "
-        f"Origen {candidate['scope']}; requiere revisión humana."
+        f"Se vieron {candidate['count']} eventos desde esta IP: "
+        f"{candidate['logins']} intentos de inicio de sesión y "
+        f"{candidate['successes']} accesos aceptados. "
+        f"Puertos tocados: {ports}. "
+        f"Puede ser un escaneo o un intento de intrusión; requiere revisión humana."
     )
 
 

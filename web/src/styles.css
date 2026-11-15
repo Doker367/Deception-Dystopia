@@ -5644,6 +5644,20 @@ pre {
 .ai-banner.warning { border-color: rgba(var(--amber-rgb), 0.45); background: linear-gradient(90deg, rgba(var(--amber-rgb), 0.07), transparent 60%), var(--bg-panel); }
 .ai-banner.info { border-color: rgba(var(--blue-rgb), 0.35); }
 
+.ai-guide { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px; }
+.ai-guide article { position: relative; padding: 13px 15px 13px 46px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: linear-gradient(180deg, rgba(var(--cyan-rgb), 0.035), transparent 70%), var(--bg-panel); }
+.ai-guide-icon { position: absolute; left: 15px; top: 14px; color: var(--cyan); }
+.ai-guide strong { display: block; margin-bottom: 3px; color: var(--text); font-size: 13.5px; }
+.ai-guide p { margin: 0; color: var(--muted); font-size: 12.5px; line-height: 1.55; }
+
+.ai-advanced { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
+.ai-advanced summary { cursor: pointer; color: var(--muted); font-size: 12.5px; }
+.ai-advanced summary:hover { color: var(--text-soft); }
+.ai-advanced summary:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+.ai-advanced .ai-status-list { margin-top: 6px; }
+.ai-advanced .ai-status-list > div { padding: 7px 0; }
+.ai-advanced .ai-status-list strong { font-size: 12px; }
+
 .ai-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0 14px; padding: 4px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: rgba(var(--slate-rgb), 0.04); width: fit-content; max-width: 100%; }
 .ai-tabs button { padding: 7px 13px; border: 0; border-radius: 2px; background: transparent; color: var(--muted); font-size: 13px; font-weight: 550; cursor: pointer; }
 .ai-tabs button:hover { color: var(--text-soft); background: var(--bg-hover); }
@@ -5747,6 +5761,7 @@ pre {
 .ai-steps li { margin-bottom: 7px; }
 
 @media (max-width: 900px) {
+  .ai-guide { grid-template-columns: 1fr; }
   .ai-metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .ai-structured-grid { grid-template-columns: 1fr; }
 }

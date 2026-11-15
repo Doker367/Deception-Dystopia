@@ -95,40 +95,48 @@ async function openAi(page: Page) {
   await expect(page.getByRole("heading", { name: "IA de análisis" })).toBeVisible();
 }
 
+test("explica el propósito de la IA en lenguaje claro", async ({ page }) => {
+  await openAi(page);
+  await expect(page.getByRole("region", { name: "Cómo funciona la IA" })).toBeVisible();
+  await expect(page.getByText("Lee lo que pasó")).toBeVisible();
+  await expect(page.getByText("3. Tú decides", { exact: true })).toBeVisible();
+  await expect(page.getByText("solo aconseja · nunca bloquea")).toBeVisible();
+});
+
 test("muestra hallazgos, evidencia y acciones de revisión", async ({ page }) => {
   await openAi(page);
   await expect(page.getByText(`Ataque probable · ${IP}`)).toBeVisible();
-  await expect(page.getByText("pendiente")).toBeVisible();
-  await page.getByRole("button", { name: /Ver evidencia/ }).click();
+  await expect(page.getByText("sin revisar", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: /Ver de dónde sale/ }).click();
   await expect(page.getByText(/4 eventos, 2 intentos de login/)).toBeVisible();
-  await expect(page.getByRole("button", { name: /Escanea(r)? ahora/ })).toBeVisible();
-  await expect(page.getByRole("button", { name: /Indexar memoria/ })).toBeVisible();
-  await expect(page.getByRole("button", { name: /Analizar con IA/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Buscar amenazas ahora/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Actualizar memoria/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Preguntar por esta IP/ })).toBeVisible();
 });
 
 test("consulta la memoria y exige citas", async ({ page }) => {
   await openAi(page);
-  await page.getByRole("tab", { name: "Consultar" }).click();
-  await page.getByLabel("Pregunta").fill("¿Qué hizo 203.0.113.9?");
+  await page.getByRole("tab", { name: "Preguntar" }).click();
+  await page.getByLabel("¿Qué quieres saber?").fill("¿Qué hizo 203.0.113.9?");
   await page.getByRole("button", { name: /^Preguntar$/ }).click();
-  await expect(page.getByText("evidencia citada")).toBeVisible();
+  await expect(page.getByText("respuesta basada en fuentes")).toBeVisible();
   await expect(page.getByText(/Es consistente con T1110/)).toBeVisible();
   await expect(page.locator(".ai-cite").first()).toHaveText("[1]");
 });
 
 test("busca en la memoria con procedencia", async ({ page }) => {
   await openAi(page);
-  await page.getByRole("tab", { name: "Memoria" }).click();
+  await page.getByRole("tab", { name: "Buscar" }).click();
   await page.getByRole("button", { name: /^Buscar$/ }).click();
   await expect(page.getByText(/Resumen de honeypot · 4 eventos/)).toBeVisible();
-  await expect(page.getByText("sim 0.71")).toBeVisible();
+  await expect(page.getByText("parecido 71%")).toBeVisible();
 });
 
-test("muestra precisión y recall por separado", async ({ page }) => {
+test("muestra precisión y cobertura por separado", async ({ page }) => {
   await openAi(page);
-  await page.getByRole("tab", { name: "Evaluación" }).click();
-  await expect(page.getByText("Verdaderos positivos")).toBeVisible();
-  await expect(page.getByText("Falsos negativos", { exact: true })).toBeVisible();
+  await page.getByRole("tab", { name: "Calidad" }).click();
+  await expect(page.getByText("Aciertos (era ataque)")).toBeVisible();
+  await expect(page.getByText("Ataques que se escaparon")).toBeVisible();
   await expect(page.getByText("83%")).toBeVisible();
   await expect(page.getByText("100%")).toBeVisible();
   await expect(page.getByText(/no interpretar sin al menos 30 casos/i)).toBeVisible();

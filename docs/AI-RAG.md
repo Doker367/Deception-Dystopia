@@ -10,6 +10,22 @@ Dystopia sigue funcionando con sus reglas.
 > (`docker-compose.ai.yml`). Laya sigue siendo el motor de decisiones tipadas;
 > el RAG es memoria y explicación.
 
+## Cómo leer la pantalla (para quien no es experto)
+
+- **Memoria**: son los eventos y documentos que la IA tiene preparados para
+  consultar. “Documentos en memoria” indica cuántos hay y en cuántos trozos de
+  texto se dividieron para poder buscarlos.
+- **Alerta o sospecha**: una pista que la IA quiere que revises. No es una
+  prueba, no confirma un ataque y no bloquea nada.
+- **Confianza**: cuánto se parece lo observado a un patrón de ataque conocido.
+  No es una probabilidad matemática ni una orden.
+- **Aciertos al alertar (precisión)**: de las alertas que una persona revisó,
+  cuántas eran ataques reales. Más alto significa menos ruido.
+- **Ataques detectados (cobertura)**: de los ataques etiquetados, cuántos
+  encontró. Más alto significa que se le escapan menos.
+- **Qué nunca hace**: no bloquea, no aísla, no borra eventos y no silencia
+  alertas. Confirmar, descartar o contener siempre es una decisión humana.
+
 ## 1. Qué modelo usar en esta máquina
 
 Hardware medido: RTX 5070 Ti **16 GB**, Ryzen 7 7700X, 30 GB de RAM,
