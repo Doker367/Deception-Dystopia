@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Reinicia el control y el monitor de IA del laboratorio Docker con el
 # código y la web actuales. Requiere Docker (se re-ejecuta con sudo si hace
-# falta) y los modelos locales escuchando en 172.17.0.1:8081/8091.
+# falta) y los modelos locales escuchando en 172.25.0.1:8081/8091.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -29,10 +29,11 @@ COMPOSE=(
   -f docker-compose.ai.yml
 )
 
-echo "== comprobando modelos locales =="
+AI_HOST="${NETPULSE_AI_HOST:-172.25.0.1}"
+echo "== comprobando modelos locales en ${AI_HOST} =="
 for port in 8081 8091; do
-  if ! curl -fsS --max-time 3 "http://172.17.0.1:${port}/health" >/dev/null; then
-    echo "error: no responde 172.17.0.1:${port}; arranca dystopia-ai-embed/llm" >&2
+  if ! curl -fsS --max-time 3 "http://${AI_HOST}:${port}/health" >/dev/null; then
+    echo "error: no responde ${AI_HOST}:${port}; arranca dystopia-ai-embed/llm" >&2
     exit 1
   fi
 done
