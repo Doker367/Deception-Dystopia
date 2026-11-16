@@ -10,9 +10,9 @@ Cómo correr en Ubuntu 24.04::
     sudo ./.venv/bin/python -m pytest tests/integration/test_fabric_deploy.py -v
 
 El test crea dos bridges y un enlace troncal con nombres únicos por PID,
-verifica puertos y VLANs con ``ovs-vsctl`` y limpia todo al final. Los
-puertos de dispositivo no se crean en la Fase 3 (contenedores en Fase 4),
-así que la comprobación de ``tag=`` de acceso llegará con esa fase.
+verifica puertos y VLANs con ``ovs-vsctl`` y limpia todo al final. Se limita
+a switches y enlaces: los dispositivos (contenedores) se cubren en
+``test_fabric_devices.py``.
 """
 
 import os
@@ -62,9 +62,7 @@ def _manifest() -> dict:
             {"id": "vlan-10", "vlan_id": 10, "cidr": "10.10.0.0/24"},
             {"id": "vlan-20", "vlan_id": 20, "cidr": "10.20.0.0/24"},
         ],
-        "devices": [
-            {"id": "pc-01", "role": "pc", "segment": "vlan-10", "ip": "10.10.0.21"},
-        ],
+        "devices": [],
         "fabric": {
             "enabled": True,
             "switches": [
@@ -72,13 +70,7 @@ def _manifest() -> dict:
                 {"id": SW_B, "vlans": [10], "uplink": SW_A},
             ],
             "links": [],
-            "device_overrides": [{
-                "id": "pc-01",
-                "interfaces": [{
-                    "segment": "vlan-10", "ip": "10.10.0.21/24",
-                    "mac": "00:1c:42:10:10:21", "vlan_tag": 10, "switch": SW_B,
-                }],
-            }],
+            "device_overrides": [],
         },
     }
 
@@ -109,7 +101,6 @@ def _cleanup(plan: FabricPlan) -> None:
 def test_deploy_y_destroy_con_ovs_real():
     topology, plan = _plan()
     link = plan.links[0]
-    device_port = plan.devices[0].interfaces[0].host_veth
     engine = OvsFabricEngine()
 
     try:
@@ -118,7 +109,9 @@ def test_deploy_y_destroy_con_ovs_real():
         assert engine.last_result is not None
         assert set(engine.last_result.bridges_created) == {SW_A, SW_B}
         assert engine.last_result.links_created == [link.id]
-        assert engine.last_result.device_ports_skipped == [device_port]
+        # Sin dispositivos en el plan, no hay contenedores ni puertos de acceso.
+        assert engine.last_result.containers_created == []
+        assert engine.last_result.device_ports_created == []
 
         for bridge in (SW_A, SW_B):
             assert _run("ovs-vsctl", "br-exists", bridge).returncode == 0
@@ -133,9 +126,6 @@ def test_deploy_y_destroy_con_ovs_real():
         trunks_b = _run("ovs-vsctl", "get", "port", link.port_from, "trunks").stdout
         assert "10" in trunks_a and "20" in trunks_a
         assert "10" in trunks_b
-
-        # Fase 3 no crea puertos de dispositivo.
-        assert _run("ip", "link", "show", device_port).returncode != 0
     finally:
         engine.destroy(topology)
         _cleanup(plan)
