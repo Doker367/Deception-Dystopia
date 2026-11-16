@@ -405,7 +405,17 @@ def create_app(
 
 def main() -> None:
     """Entrypoint del servicio systemd (uvicorn, bind/puerto por entorno)."""
+    import logging
+
     import uvicorn
+
+    # Sin esto, los logger.info de los módulos propios no llegan al journal
+    # (uvicorn solo configura sus loggers). Los WARNING/ERROR sí salían, lo
+    # que hacía invisible el arranque del forwarder y del propio servicio.
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
 
     settings = load_settings()
     if settings.bind in {"0.0.0.0", "::", "[::]"}:
