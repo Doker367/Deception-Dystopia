@@ -577,7 +577,7 @@ class AnalyticsService:
             ).lower():
                 continue
             filtered.append(row)
-        page = filtered[offset: offset + max(1, min(limit, 100))]
+        page = filtered[offset: offset + max(1, min(limit, 300))]
         return {
             "total": len(filtered),
             "items": [

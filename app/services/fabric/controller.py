@@ -772,7 +772,11 @@ class FabricController:
             self._ensure_loaded()
             topology = self._topology
             devices = build_device_specs(topology) if topology is not None else []
-            forwarder = self._host_forwarder_status()
+            host_status = self._host_status()
+            forwarder = None
+            if isinstance(host_status, dict):
+                candidate = host_status.get("forwarder")
+                forwarder = candidate if isinstance(candidate, dict) else None
             return {
                 "state": self._state.value,
                 "enabled": self._enabled,
@@ -789,11 +793,16 @@ class FabricController:
                 "engine": self._engine_kind,
                 "last_operation": dict(self._last_operation) if self._last_operation else None,
                 "forwarder": forwarder,
+                "tls": bool(host_status.get("tls")) if isinstance(host_status, dict) else None,
+                "credentials_encrypted": (
+                    bool(host_status.get("credentials_encrypted"))
+                    if isinstance(host_status, dict) else None
+                ),
                 "health_summary": dict(self._last_health) if self._last_health else None,
             }
 
-    def _host_forwarder_status(self) -> Optional[dict]:
-        """Estado del forwarder del host (solo engine remote); None si no hay."""
+    def _host_status(self) -> Optional[dict]:
+        """Estado completo del servicio del host (solo engine remote)."""
         if getattr(self._engine, "kind", "") != "remote":
             return None
         status_fn = getattr(self._engine, "status", None)
@@ -804,10 +813,7 @@ class FabricController:
         except Exception as exc:  # noqa: BLE001 - el host puede no responder
             logger.warning("[fabric] estado del host no disponible: %s", exc)
             return None
-        if isinstance(host_status, dict):
-            forwarder = host_status.get("forwarder")
-            return forwarder if isinstance(forwarder, dict) else None
-        return None
+        return host_status if isinstance(host_status, dict) else None
 
     def get_device(self, device_id: str) -> Optional[dict]:
         """Detalle de un dispositivo con runtime y salud (pid, puertos, vecinos).

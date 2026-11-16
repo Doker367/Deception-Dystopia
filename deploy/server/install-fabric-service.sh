@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # NetPulse — instalación del servicio de fabric del host (Fase 4c).
 #
-# Crea usuario/grupo dedicados, directorio de estado, token bearer (0600),
-# instala la unit endurecida y verifica /health. Idempotente: reejecutarlo
-# conserva el token existente y reaplica la unit.
+# Crea directorios de estado, tokens bearer (0600), clave Fernet, certificado
+# TLS autofirmado, logrotate e instala la unit endurecida; verifica /health.
+# Idempotente: reejecutarlo conserva tokens, clave y certificado existentes.
 #
 #   sudo deploy/server/install-fabric-service.sh
 #
@@ -20,6 +20,11 @@ ENV_FILE="${ENV_DIR}/fabric.env"
 STATE_DIR="/var/lib/dystopia/fabric"
 KEY_FILE="/etc/dystopia/fabric.key"
 CREDENTIALS_DIR="/var/lib/dystopia/fabric/credentials"
+TLS_DIR="/etc/dystopia/fabric-tls"
+TLS_CERT="${TLS_DIR}/server.crt"
+TLS_KEY="${TLS_DIR}/server.key"
+LOGROTATE_SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/deploy/logrotate/dystopia-fabric"
+LOGROTATE_DST="/etc/logrotate.d/dystopia-fabric"
 PYTHON="/opt/dystopia/venv/bin/python"
 MANIFEST_DEFAULT="/opt/dystopia/current/config/deception/network.yaml"
 
@@ -37,7 +42,7 @@ if [[ -r /etc/os-release ]]; then
     esac
 fi
 
-for tool in systemctl curl getent groupadd useradd install sed grep; do
+for tool in systemctl curl getent install sed grep openssl logrotate; do
     command -v "$tool" >/dev/null 2>&1 || fail "falta el comando '$tool'"
 done
 [[ -x "$PYTHON" ]] || fail "no existe el venv del control en $PYTHON"
@@ -120,6 +125,37 @@ chown root:root "$KEY_FILE"
 chmod 0600 "$KEY_FILE"
 install -d -m 0700 -o root -g root "$CREDENTIALS_DIR"
 
+# ── TLS opcional del servicio (control ↔ host) ──────────────
+# Certificado autofirmado con SANs para el gateway de docker0 y
+# host.docker.internal. El control lo usa como CA (DYSTOPIA_FABRIC_REMOTE_CA).
+# Se conserva si ya existe: rotarlo es una decisión explícita del operador.
+install -d -m 0700 -o root -g root "$TLS_DIR"
+if [[ -s "$TLS_CERT" && -s "$TLS_KEY" ]]; then
+    log "certificado TLS existente conservado en $TLS_DIR"
+else
+    openssl req -x509 -newkey rsa:2048 -nodes -days 825 \
+        -keyout "$TLS_KEY" -out "$TLS_CERT" \
+        -subj "/CN=dystopia-fabric" \
+        -addext "subjectAltName=IP:172.17.0.1,IP:127.0.0.1,DNS:host.docker.internal,DNS:localhost" \
+        >/dev/null 2>&1 || fail "no se pudo generar el certificado TLS"
+    log "certificado TLS nuevo generado en $TLS_DIR"
+fi
+chown root:root "$TLS_CERT" "$TLS_KEY"
+chmod 0644 "$TLS_CERT"
+chmod 0600 "$TLS_KEY"
+# TLS desactivado por defecto: activarlo es una decisión del operador
+# (definir DYSTOPIA_FABRIC_TLS_CERT/KEY en fabric.env y usar https en el control).
+grep -q '^DYSTOPIA_FABRIC_TLS_CERT=' "$ENV_FILE" \
+    || printf '# DYSTOPIA_FABRIC_TLS_CERT=%s\n' "$TLS_CERT" >> "$ENV_FILE"
+grep -q '^DYSTOPIA_FABRIC_TLS_KEY=' "$ENV_FILE" \
+    || printf '# DYSTOPIA_FABRIC_TLS_KEY=%s\n' "$TLS_KEY" >> "$ENV_FILE"
+
+# ── Rotación de los JSONL del agente ────────────────────────
+if [[ -f "$LOGROTATE_SRC" ]]; then
+    install -m 0644 "$LOGROTATE_SRC" "$LOGROTATE_DST"
+    log "logrotate instalado en $LOGROTATE_DST"
+fi
+
 # ── Unit + arranque ─────────────────────────────────────────
 install -m 0644 "$UNIT_SRC" "$UNIT_DST"
 systemctl daemon-reload
@@ -139,9 +175,16 @@ case "$bind" in
 esac
 
 healthy=0
+scheme="http"
+curl_tls=()
+if grep -qE '^DYSTOPIA_FABRIC_TLS_CERT=.+' "$ENV_FILE"; then
+    scheme="https"
+    curl_tls=(--cacert "$TLS_CERT")
+fi
 for _ in $(seq 1 15); do
     if printf 'header = "Authorization: Bearer %s"\n' "$token" \
-        | curl -fsS --max-time 3 --config - "http://${url_host}:${port}/health" \
+        | curl -fsS --max-time 3 --config - "${curl_tls[@]}" \
+            "${scheme}://${url_host}:${port}/health" \
         | "$PYTHON" -c 'import json,sys; d=json.load(sys.stdin); sys.exit(0 if d.get("service")=="dystopia-fabric" else 1)' 2>/dev/null; then
         healthy=1
         break
@@ -152,7 +195,7 @@ done
 if [[ "$healthy" -ne 1 ]]; then
     systemctl status "$SERVICE.service" --no-pager -l >&2 || true
     journalctl -u "$SERVICE.service" -n 40 --no-pager >&2 || true
-    fail "el servicio no respondió a /health en http://${url_host}:${port}"
+    fail "el servicio no respondió a /health en ${scheme}://${url_host}:${port}"
 fi
 
-log "OK: $SERVICE escucha en ${url_host}:${port} (token en $ENV_FILE, 0600)"
+log "OK: $SERVICE escucha en ${scheme}://${url_host}:${port} (token en $ENV_FILE, 0600)"

@@ -24,6 +24,7 @@ from app.services.fabric.deploy import (  # noqa: E402
     FabricDeployError,
 )
 from app.services.fabric.remote_engine import (  # noqa: E402
+    REMOTE_CA_ENV,
     REMOTE_TIMEOUT_ENV,
     REMOTE_TOKEN_ENV,
     REMOTE_URL_ENV,
@@ -348,3 +349,32 @@ def test_status_devuelve_forwarder_del_host(tmp_path):
     assert payload["forwarder"]["sent"] == 4
     assert recorder.requests[0][0] == "GET"
     assert recorder.requests[0][1] == "/status"
+
+
+# ── TLS / CA del servicio del host ──────────────────────────
+
+
+def test_ca_configurada(monkeypatch, tmp_path):
+    ca = tmp_path / "ca.crt"
+    ca.write_text("cert")
+    monkeypatch.setenv(REMOTE_URL_ENV, "https://host.test:8090")
+    monkeypatch.setenv(REMOTE_TOKEN_ENV, "t" * 40)
+    monkeypatch.setenv(REMOTE_CA_ENV, str(ca))
+    settings = load_remote_settings()
+    assert settings.ca == ca
+    assert settings.tls is True
+
+
+def test_ca_inexistente_falla(monkeypatch, tmp_path):
+    monkeypatch.setenv(REMOTE_URL_ENV, "https://host.test:8090")
+    monkeypatch.setenv(REMOTE_TOKEN_ENV, "t" * 40)
+    monkeypatch.setenv(REMOTE_CA_ENV, str(tmp_path / "no.crt"))
+    with pytest.raises(RemoteEngineConfigError):
+        load_remote_settings()
+
+
+def test_url_http_no_es_tls(monkeypatch):
+    monkeypatch.setenv(REMOTE_URL_ENV, "http://host.test:8090")
+    monkeypatch.setenv(REMOTE_TOKEN_ENV, "t" * 40)
+    monkeypatch.delenv(REMOTE_CA_ENV, raising=False)
+    assert load_remote_settings().tls is False

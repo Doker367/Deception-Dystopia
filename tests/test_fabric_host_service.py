@@ -27,6 +27,8 @@ from app.services.fabric.host_service import (  # noqa: E402
     BIND_ENV,
     MANIFEST_ENV,
     PORT_ENV,
+    TLS_CERT_ENV,
+    TLS_KEY_ENV,
     TOKEN_ENV,
     HostServiceConfigError,
     HostServiceSettings,
@@ -379,3 +381,41 @@ def test_token_no_aparece_en_logs(client, caplog):
     assert client.post("/deploy", headers=AUTH).status_code == 200
     assert TOKEN not in caplog.text
     assert "admin123" not in caplog.text
+
+
+# ── TLS opcional ────────────────────────────────────────────
+
+
+def test_tls_requiere_cert_y_clave_juntos(monkeypatch, tmp_path):
+    monkeypatch.setenv(TOKEN_ENV, TOKEN)
+    monkeypatch.setenv(TLS_CERT_ENV, str(tmp_path / "server.crt"))
+    monkeypatch.delenv(TLS_KEY_ENV, raising=False)
+    with pytest.raises(HostServiceConfigError):
+        load_settings()
+
+
+def test_tls_con_cert_y_clave(monkeypatch, tmp_path):
+    cert = tmp_path / "server.crt"
+    key = tmp_path / "server.key"
+    cert.write_text("cert")
+    key.write_text("key")
+    monkeypatch.setenv(TOKEN_ENV, TOKEN)
+    monkeypatch.setenv(TLS_CERT_ENV, str(cert))
+    monkeypatch.setenv(TLS_KEY_ENV, str(key))
+    settings = load_settings()
+    assert settings.tls is True
+    assert settings.tls_cert == cert and settings.tls_key == key
+
+
+def test_tls_cert_inexistente_falla(monkeypatch, tmp_path):
+    monkeypatch.setenv(TOKEN_ENV, TOKEN)
+    monkeypatch.setenv(TLS_CERT_ENV, str(tmp_path / "no.crt"))
+    monkeypatch.setenv(TLS_KEY_ENV, str(tmp_path / "no.key"))
+    with pytest.raises(HostServiceConfigError):
+        load_settings()
+
+
+def test_status_expone_tls_y_cifrado(client):
+    payload = client.get("/status", headers=AUTH).json()
+    assert "tls" in payload
+    assert "credentials_encrypted" in payload

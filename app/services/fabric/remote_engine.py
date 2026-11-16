@@ -47,6 +47,7 @@ REMOTE_TIMEOUT_ENV = "DYSTOPIA_FABRIC_REMOTE_TIMEOUT"
 # Misma variable que usa el servicio del host: en el control apunta a la
 # copia montada del manifiesto para verificar el hash.
 REMOTE_MANIFEST_ENV = "DYSTOPIA_FABRIC_MANIFEST"
+REMOTE_CA_ENV = "DYSTOPIA_FABRIC_REMOTE_CA"
 DEFAULT_REMOTE_TIMEOUT = 120.0
 MIN_TOKEN_LENGTH = 32
 
@@ -63,6 +64,11 @@ class RemoteEngineSettings:
     token: str
     timeout: float
     manifest: Path
+    ca: Optional[Path] = None
+
+    @property
+    def tls(self) -> bool:
+        return self.base_url.startswith("https://")
 
 
 def load_remote_settings() -> RemoteEngineSettings:
@@ -89,8 +95,14 @@ def load_remote_settings() -> RemoteEngineSettings:
     if timeout <= 0:
         raise RemoteEngineConfigError(f"{REMOTE_TIMEOUT_ENV} debe ser > 0")
     manifest = Path(os.getenv(REMOTE_MANIFEST_ENV, "config/deception/network.yaml"))
+    raw_ca = os.getenv(REMOTE_CA_ENV, "").strip()
+    ca = Path(raw_ca) if raw_ca else None
+    if ca is not None and not ca.is_file():
+        raise RemoteEngineConfigError(
+            f"{REMOTE_CA_ENV} apunta a un fichero inexistente: {ca}"
+        )
     return RemoteEngineSettings(
-        base_url=base_url, token=token, timeout=timeout, manifest=manifest
+        base_url=base_url, token=token, timeout=timeout, manifest=manifest, ca=ca
     )
 
 
@@ -113,11 +125,16 @@ class RemoteFabricEngine:
         client: Optional[httpx.Client] = None,
     ):
         self._settings = settings or load_remote_settings()
-        self._client = client or httpx.Client(
-            base_url=self._settings.base_url,
-            timeout=self._settings.timeout,
-            headers={"Authorization": f"Bearer {self._settings.token}"},
-        )
+        client_kwargs = {
+            "base_url": self._settings.base_url,
+            "timeout": self._settings.timeout,
+            "headers": {"Authorization": f"Bearer {self._settings.token}"},
+        }
+        if self._settings.ca is not None:
+            # Verifica el certificado del servicio del host contra la CA
+            # indicada (certificado autofirmado generado por el instalador).
+            client_kwargs["verify"] = str(self._settings.ca)
+        self._client = client or httpx.Client(**client_kwargs)
         self.last_result: Optional[DeployResult] = None
         self.last_destroy_result: Optional[DestroyResult] = None
 

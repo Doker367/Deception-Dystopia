@@ -1,0 +1,27 @@
+# NetPulse — rotación de los JSONL del Network Fabric.
+#
+# Lo instala deploy/server/install-fabric-service.sh en
+# /etc/logrotate.d/dystopia-fabric (idempotente).
+#
+# copytruncate: el agente de cada dispositivo mantiene abierto
+# events.jsonl en modo append; renombrarlo (create) dejaría al agente
+# escribiendo en el inodo rotado y los eventos nuevos no llegarían al
+# forwarder. Con copytruncate se copia el contenido y se trunca el mismo
+# inodo, así que el descriptor sigue siendo válido.
+#
+# El forwarder detecta el truncado (tamaño < offset) y reinicia el offset
+# a 0 para ese archivo (event_forwarder.EventForwarder.collect), de modo
+# que no se pierde ni se duplica nada tras cada rotación.
+#
+# su root root: el servicio corre como root confinado y los directorios
+# de logs son 0750 owner 2000 group root; logrotate se ejecuta como root.
+/var/lib/dystopia/fabric/logs/*/events.jsonl {
+    daily
+    rotate 7
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+    su root root
+}

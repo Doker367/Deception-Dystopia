@@ -59,6 +59,8 @@ EVENTS_URL_ENV = "DYSTOPIA_FABRIC_EVENTS_URL"
 EVENTS_INTERVAL_ENV = "DYSTOPIA_FABRIC_EVENTS_INTERVAL"
 EVENTS_ENABLED_ENV = "DYSTOPIA_FABRIC_EVENTS_ENABLED"
 DEVICES_DIR_ENV = "DYSTOPIA_FABRIC_DEVICES_DIR"
+TLS_CERT_ENV = "DYSTOPIA_FABRIC_TLS_CERT"
+TLS_KEY_ENV = "DYSTOPIA_FABRIC_TLS_KEY"
 
 DEFAULT_MANIFEST = "config/deception/network.yaml"
 DEFAULT_BIND = "127.0.0.1"
@@ -89,6 +91,13 @@ class HostServiceSettings:
     events_interval: float = DEFAULT_EVENTS_INTERVAL
     events_enabled: bool = True
     devices_dir: Path = Path(DEFAULT_DEVICES_DIR)
+    # TLS opcional del servicio (cert+clave). Ambos o ninguno.
+    tls_cert: Optional[Path] = None
+    tls_key: Optional[Path] = None
+
+    @property
+    def tls(self) -> bool:
+        return self.tls_cert is not None and self.tls_key is not None
 
 
 def load_settings() -> HostServiceSettings:
@@ -120,10 +129,25 @@ def load_settings() -> HostServiceSettings:
         ) from exc
     events_enabled = os.getenv(EVENTS_ENABLED_ENV, "true").strip().lower() != "false"
     devices_dir = Path(os.getenv(DEVICES_DIR_ENV, DEFAULT_DEVICES_DIR))
+    raw_cert = os.getenv(TLS_CERT_ENV, "").strip()
+    raw_key = os.getenv(TLS_KEY_ENV, "").strip()
+    if bool(raw_cert) != bool(raw_key):
+        raise HostServiceConfigError(
+            f"{TLS_CERT_ENV} y {TLS_KEY_ENV} deben definirse juntos (o ninguno)"
+        )
+    tls_cert = Path(raw_cert) if raw_cert else None
+    tls_key = Path(raw_key) if raw_key else None
+    if tls_cert is not None:
+        for label, path in (("certificado", tls_cert), ("clave", tls_key)):
+            if not path.is_file():
+                raise HostServiceConfigError(
+                    f"TLS: no existe el {label} en {path}"
+                )
     return HostServiceSettings(
         token=token, manifest=manifest, bind=bind, port=port,
         events_url=events_url, events_interval=events_interval,
         events_enabled=events_enabled, devices_dir=devices_dir,
+        tls_cert=tls_cert, tls_key=tls_key,
     )
 
 
@@ -306,12 +330,16 @@ def status(request: Request) -> dict:
     last_destroy = getattr(engine, "last_destroy_result", None)
     lock: threading.Lock = request.app.state.operation_lock
     forwarder = getattr(request.app.state, "forwarder", None)
+    from app.services.fabric import credential_store
+
     return {
         "service": SERVICE_NAME,
         "engine": type(engine).__name__,
         "manifest": str(settings.manifest),
         "manifest_hash": _manifest_hash(settings),
         "busy": lock.locked(),
+        "tls": settings.tls,
+        "credentials_encrypted": credential_store.is_configured(),
         "last_deploy": last_deploy.model_dump() if last_deploy is not None else None,
         "last_destroy": last_destroy.model_dump() if last_destroy is not None else None,
         "forwarder": (
@@ -438,11 +466,20 @@ def main() -> None:
             forwarder.start()  # hilo daemon: nunca bloquea deploy/destroy
     app = create_app(settings, forwarder=forwarder)
     logger.info(
-        "[fabric-host] escuchando en %s:%d (manifest=%s)",
-        settings.bind, settings.port, settings.manifest,
+        "[fabric-host] escuchando en %s:%d (manifest=%s, tls=%s)",
+        settings.bind, settings.port, settings.manifest, settings.tls,
     )
+    tls_kwargs = {}
+    if settings.tls:
+        tls_kwargs = {
+            "ssl_certfile": str(settings.tls_cert),
+            "ssl_keyfile": str(settings.tls_key),
+        }
     try:
-        uvicorn.run(app, host=settings.bind, port=settings.port, log_level="info")
+        uvicorn.run(
+            app, host=settings.bind, port=settings.port, log_level="info",
+            **tls_kwargs,
+        )
     finally:
         if forwarder is not None:
             forwarder.stop()
