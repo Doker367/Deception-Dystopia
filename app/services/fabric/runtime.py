@@ -425,13 +425,17 @@ class DeviceRuntime:
                 encoding="utf-8",
             )
             os.chmod(config_path, 0o600)
-            os.chmod(logs_dir, 0o700)
+            # El agente (uid 2000) escribe aquí; el forwarder del host service
+            # corre como root pero SIN CAP_DAC_OVERRIDE, así que necesita
+            # permiso de grupo para leer. 0750 root:2000 → dueño escribe,
+            # grupo root lee, nadie más accede.
+            os.chmod(logs_dir, 0o750)
             if hasattr(os, "geteuid") and os.geteuid() == 0:
                 # El contenedor corre como uid 2000: debe poder leer la
                 # config y escribir los logs/keys.
                 os.chown(config_path, 2000, 2000)
                 os.chown(config_dir, 2000, 2000)
-                os.chown(logs_dir, 2000, 2000)
+                os.chown(logs_dir, 2000, 0)
         except OSError as exc:
             if hasattr(os, "geteuid") and os.geteuid() == 0:
                 result.error_step = "device_config"
