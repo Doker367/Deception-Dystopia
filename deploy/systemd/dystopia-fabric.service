@@ -1,0 +1,77 @@
+[Unit]
+Description=Dystopia Network Fabric host service (OVS + Docker)
+Documentation=file:/opt/dystopia/current/docs/specs/DYSTOPIA_NETWORK_FABRIC_SPEC.md
+After=network.target docker.service openvswitch-switch.service
+Requires=docker.service openvswitch-switch.service
+ConditionPathExists=/etc/dystopia/fabric.env
+
+[Service]
+Type=simple
+# Usuario dedicado sin login, creado por deploy/server/install-fabric-service.sh.
+User=dystopia-fabric
+Group=dystopia-fabric
+# Acceso al socket de Docker (/run/docker.sock) sin montarlo en el control.
+SupplementaryGroups=docker
+WorkingDirectory=/opt/dystopia/current
+EnvironmentFile=/etc/dystopia/fabric.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=HOME=/var/lib/dystopia/fabric
+# Bind/puerto por defecto; /etc/dystopia/fabric.env puede sobreescribirlos.
+Environment=DYSTOPIA_FABRIC_BIND=127.0.0.1
+Environment=DYSTOPIA_FABRIC_PORT=8090
+ExecStart=/opt/dystopia/venv/bin/python -m app.services.fabric.host_service
+Restart=on-failure
+RestartSec=5
+UMask=0077
+
+# ── Privilegios mínimos ─────────────────────────────────────
+# NET_ADMIN: crear bridges OVS, veth pairs, direcciones/MAC y VLANs.
+# NET_RAW:   ping de reachability desde el netns de los dispositivos.
+# SYS_ADMIN: nsenter/setns hacia el netns de cada contenedor (CLONE_NEWNET).
+# No se necesitan más: no se monta nada ni se crean namespaces propios.
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_ADMIN
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_ADMIN
+
+# ── Aislamiento del sistema de archivos ─────────────────────
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+# setns(CLONE_NEWNET) debe seguir permitido para nsenter; solo se bloquea
+# la creación/unión de user namespaces.
+RestrictNamespaces=user
+# NETLINK es imprescindible para `ip link`/`ovs-vsctl`; UNIX para los
+# sockets de Docker/OVSDB; INET/INET6 para el bind local y el ping.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=setns
+SystemCallFilter=~@mount @raw-io @reboot @swap
+# NO se usa IPAddressDeny: el ping de health corre dentro del netns del
+# contenedor y un filtro cgroup bloquearía también ese tráfico.
+# NO se usa ProtectProc=invisible/ProcSubset: nsenter necesita
+# /proc/<pid>/ns/net de otros procesos.
+
+# ── Escritura y datos sensibles ─────────────────────────────
+ReadWritePaths=/var/lib/dystopia/fabric
+InaccessiblePaths=-/var/lib/dystopia/deception -/var/lib/dystopia/ingest \
+    -/var/lib/dystopia/sensor -/var/lib/dystopia/cells \
+    -/var/lib/dystopia/control -/etc/dystopia/control.env
+
+# ── Límites ─────────────────────────────────────────────────
+TasksMax=256
+MemoryMax=1G
+LimitNOFILE=4096
+LimitCORE=0
+
+[Install]
+WantedBy=multi-user.target
