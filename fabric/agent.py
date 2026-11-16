@@ -23,12 +23,16 @@ eventos JSONL y arranca un listener nativo por servicio declarado.
 Eventos: una línea JSON por evento en ``/var/log/fabric/events.jsonl``
 (``flush`` tras cada escritura)::
 
-    {"detail": {...}, "device_id": "...", "proto": "ssh", "src_ip": "...",
-     "src_port": 4242, "success": false, "ts": "2026-...Z",
-     "type": "login_attempt", "username": "admin"}
+    {"detail": {"password": "…capturada…"}, "device_id": "...",
+     "proto": "ssh", "src_ip": "...", "src_port": 4242, "success": false,
+     "ts": "2026-...Z", "type": "login_attempt", "username": "admin"}
 
-Las claves sensibles (``password``, ``credentials``, ``secret``, …) se
-eliminan del ``detail``: el JSONL nunca contiene credenciales.
+Las credenciales **capturadas del atacante** (``password``/``username``
+que prueba) SÍ se registran: son el objetivo del honeypot. Lo que nunca
+se escribe es la **configuración del manifiesto**: ``device.json`` no se
+pasa al sink y las claves de configuración (``credentials``, ``secret``,
+``token``, ``authorization``, ``api_key``) se eliminan del ``detail``. El
+control agrupa las capturadas en ``detail.credentials`` al ingerirlas.
 
 La host key SSH se persiste en ``/var/log/fabric/keys/ssh_host_rsa_key``
 (volumen persistente); ``NETPULSE_DECEPTION_SSH_HOST_KEY`` se fija **antes**
@@ -62,9 +66,14 @@ DEFAULT_CONFIG = "/etc/fabric/device.json"
 DEFAULT_LOG_DIR = "/var/log/fabric"
 LISTEN_HOST = "0.0.0.0"
 
-# Claves que nunca deben llegar al JSONL (credenciales capturadas).
+# Claves que se eliminan del detail: son **configuración** del dispositivo
+# (manifiesto), no datos del atacante. Las credenciales *capturadas*
+# (``password``/``username`` que el atacante prueba) SÍ se registran: son
+# el objetivo del honeypot y el control las normaliza a
+# ``detail.credentials``. ``device.json`` nunca se pasa al sink, así que
+# el contenido del manifiesto no puede acabar en el JSONL.
 _SENSITIVE_KEYS = frozenset({
-    "password", "passwd", "credentials", "secret", "token",
+    "credentials", "secret", "token",
     "authorization", "api_key",
 })
 
