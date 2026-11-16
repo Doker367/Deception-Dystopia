@@ -183,13 +183,14 @@ def test_ac5_ac6_despliegue_y_aislamiento(device_image):
     try:
         engine.deploy(plan, topology)
 
-        # ── Contenedores running ────────────────────────────
+        # ── Contenedores running (solo los de este test) ────
         ps = _run("docker", "ps", "--format", "{{.Names}}", "--filter",
                   "label=dystopia.fabric=true")
-        running = set(ps.stdout.split())
-        assert running == {
+        expected = {
             f"dystopia-fabric-{PCA}", f"dystopia-fabric-{PCB}", f"dystopia-fabric-{SRV}",
         }
+        running = set(ps.stdout.split()) & expected
+        assert running == expected, (running, ps.stdout)
 
         # ── Puertos OVS con tag correcto ────────────────────
         for spec, expected_tag in ((plan.devices[0], "10"), (plan.devices[1], "10"),
