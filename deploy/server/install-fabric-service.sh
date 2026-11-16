@@ -20,8 +20,6 @@ ENV_FILE="${ENV_DIR}/fabric.env"
 STATE_DIR="/var/lib/dystopia/fabric"
 PYTHON="/opt/dystopia/venv/bin/python"
 MANIFEST_DEFAULT="/opt/dystopia/current/config/deception/network.yaml"
-RUN_USER="dystopia-fabric"
-RUN_GROUP="dystopia-fabric"
 
 fail() { printf 'install-fabric-service: %s\n' "$*" >&2; exit 1; }
 log() { printf 'install-fabric-service: %s\n' "$*"; }
@@ -44,19 +42,11 @@ done
 [[ -f "$UNIT_SRC" ]] || fail "no se encuentra la unit en $UNIT_SRC"
 getent group docker >/dev/null || fail "no existe el grupo 'docker' (instala Docker primero)"
 
-# ── Usuario/grupo dedicados ─────────────────────────────────
-if ! getent group "$RUN_GROUP" >/dev/null; then
-    groupadd --system "$RUN_GROUP"
-    log "grupo $RUN_GROUP creado"
-fi
-if ! id -u "$RUN_USER" >/dev/null 2>&1; then
-    useradd --system --gid "$RUN_GROUP" --no-create-home \
-        --home-dir "$STATE_DIR" --shell /usr/sbin/nologin "$RUN_USER"
-    log "usuario $RUN_USER creado"
-fi
-
+# ── Directorios de estado y configuración ───────────────────
+# El servicio corre como root (ver la unit: el socket de OVSDB es root:root),
+# así que el estado también es root:root 0700.
 install -d -m 0755 "$ENV_DIR"
-install -d -m 0700 -o "$RUN_USER" -g "$RUN_GROUP" "$STATE_DIR"
+install -d -m 0700 -o root -g root "$STATE_DIR"
 
 # ── Token bearer (solo en el host; nunca en el repo) ────────
 generate_token() {

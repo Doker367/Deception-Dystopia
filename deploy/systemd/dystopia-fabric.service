@@ -7,11 +7,16 @@ ConditionPathExists=/etc/dystopia/fabric.env
 
 [Service]
 Type=simple
-# Usuario dedicado sin login, creado por deploy/server/install-fabric-service.sh.
-User=dystopia-fabric
-Group=dystopia-fabric
-# Acceso al socket de Docker (/run/docker.sock) sin montarlo en el control.
-SupplementaryGroups=docker
+# Este servicio es el único componente con privilegios de red del host: opera
+# OVS y Docker en nombre del control (que corre en un contenedor endurecido).
+#
+# Se ejecuta como root porque el socket de OVSDB (/run/openvswitch/db.sock) es
+# root:root 0660 y Debian no crea un grupo 'openvswitch'; un ACL no sobrevive a
+# los reinicios de ovsdb-server. El confinamiento real lo dan las directivas de
+# abajo (CapabilityBoundingSet, ProtectSystem, SystemCallFilter, ReadWritePaths,
+# InaccessiblePaths) y el token bearer del propio servicio.
+User=root
+Group=root
 WorkingDirectory=/opt/dystopia/current
 EnvironmentFile=/etc/dystopia/fabric.env
 Environment=PYTHONDONTWRITEBYTECODE=1
@@ -63,6 +68,8 @@ SystemCallFilter=~@mount @raw-io @reboot @swap
 
 # ── Escritura y datos sensibles ─────────────────────────────
 ReadWritePaths=/var/lib/dystopia/fabric
+# OVSDB y Docker: sockets de sistema necesarios para operar el fabric.
+ReadWritePaths=/run/openvswitch /run/docker.sock
 InaccessiblePaths=-/var/lib/dystopia/deception -/var/lib/dystopia/ingest \
     -/var/lib/dystopia/sensor -/var/lib/dystopia/cells \
     -/var/lib/dystopia/control -/etc/dystopia/control.env
