@@ -33,6 +33,10 @@ from app.services.fabric.lifecycle import (  # noqa: E402
     reconcile,
 )
 from app.services.fabric.parser import parse_manifest  # noqa: E402
+from app.services.fabric.runtime import (  # noqa: E402
+    DeviceDestroyResult,
+    DeviceRuntimeResult,
+)
 from app.services.fabric.topology import (  # noqa: E402
     build_bridge_specs,
     build_device_specs,
@@ -174,8 +178,41 @@ def net_file(tmp_path, monkeypatch):
     topology_svc.invalidate_cache()
 
 
+class StubDeviceRuntime:
+    """DeviceRuntime falso para los tests de orquestación."""
+
+    def __init__(self, fail_for: set[str] | None = None):
+        self.deployed: list[str] = []
+        self.destroyed: list[str] = []
+        self.fail_for = set(fail_for or [])
+
+    def deploy_device(self, spec) -> DeviceRuntimeResult:
+        self.deployed.append(spec.device_id)
+        if spec.device_id in self.fail_for:
+            return DeviceRuntimeResult(
+                device_id=spec.device_id, container_name=spec.container_name,
+                success=False, error_step="container_create",
+                errors=["fallo simulado del device runtime"],
+            )
+        return DeviceRuntimeResult(
+            device_id=spec.device_id, container_name=spec.container_name,
+            success=True, container_id=f"cid-{spec.container_name}", pid=4242,
+        )
+
+    def destroy_device(self, spec) -> DeviceDestroyResult:
+        self.destroyed.append(spec.device_id)
+        return DeviceDestroyResult(
+            device_id=spec.device_id, container_name=spec.container_name,
+            success=True, container_removed=True,
+        )
+
+
 def _ovs_engine(runner: FakeRunner, privileged: bool = True) -> OvsFabricEngine:
-    return OvsFabricEngine(runner=runner, privilege_check=lambda: privileged)
+    return OvsFabricEngine(
+        runner=runner,
+        privilege_check=lambda: privileged,
+        device_runtime=StubDeviceRuntime(),
+    )
 
 
 # ── Preflight ───────────────────────────────────────────────
@@ -437,8 +474,9 @@ def test_deploy_wrapper_devuelve_resultado_estructurado():
     assert summary["engine"] == "OvsFabricEngine"
     assert summary["bridges_created"] == ["sw-a", "sw-b"]
     assert summary["links_created"] == ["lk00"]
-    assert summary["device_ports_skipped"] == ["dv00-pc01"]
-    assert summary["warnings"]
+    assert summary["device_ports_created"] == ["dv00-pc01"]
+    assert summary["devices"][0]["success"] is True
+    assert summary["warnings"] == []
 
 
 def test_deploy_wrapper_con_stub():
@@ -457,6 +495,7 @@ def test_destroy_wrapper_devuelve_eliminados():
     assert summary["engine"] == "OvsFabricEngine"
     assert summary["bridges_removed"] == ["sw-b", "sw-a"]
     assert summary["links_removed"] == ["lk00"]
+    assert summary["containers_removed"] == ["pc-01"]
 
 
 def test_rebuild_wrapper_es_idempotente():
@@ -470,6 +509,7 @@ def test_rebuild_wrapper_es_idempotente():
     assert result["engine"] == "OvsFabricEngine"
     assert result["destroy"]["bridges_removed"] == ["sw-b", "sw-a"]
     assert result["deploy"]["bridges_created"] == ["sw-a", "sw-b"]
+    assert result["deploy"]["containers_created"] == ["pc-01"]
     # El estado final replica el plan (destroy limpio + create).
     assert runner.bridges == {"sw-a", "sw-b"}
     assert {link.port_from, link.port_to} <= runner.links

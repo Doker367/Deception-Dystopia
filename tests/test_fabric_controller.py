@@ -777,10 +777,13 @@ def test_get_health_stub_estructural_con_runtime_none(tmp_path):
 class _FakeOvsRunner:
     """Runner mínimo para ejercitar el engine OVS sin OVS real."""
 
-    def __init__(self):
+    def __init__(self, pid: int = 4242):
         self.bridges: set[str] = set()
         self.links: set[str] = set()
+        self.pairs: dict[str, str] = {}
         self.ports: dict[str, str] = {}
+        self.containers: dict[str, dict] = {}
+        self.pid = pid
         self.calls: list[list[str]] = []
 
     def run(self, args: list[str], check: bool = True):
@@ -791,8 +794,49 @@ class _FakeOvsRunner:
         )
 
     def _dispatch(self, args: list[str]) -> tuple[int, str, str]:
+        if args[:2] == ["docker", "create"]:
+            name = args[args.index("--name") + 1]
+            self.containers[name] = {
+                "id": f"cid-{name}", "name": name, "state": "created", "pid": 0,
+            }
+            return (0, f"cid-{name}", "")
+        if args[:2] == ["docker", "start"]:
+            container = self._by_id(args[2])
+            if container is None:
+                return (1, "", "no such container")
+            container["state"] = "running"
+            container["pid"] = self.pid
+            return (0, container["id"], "")
+        if args[:2] == ["docker", "stop"]:
+            container = self._by_id(args[2])
+            if container is None:
+                return (1, "", "no such container")
+            container["state"] = "exited"
+            container["pid"] = 0
+            return (0, container["id"], "")
+        if args[:2] == ["docker", "rm"]:
+            container = self._by_id(args[3])
+            if container is None:
+                return (1, "", "no such container")
+            self.containers.pop(container["name"], None)
+            return (0, container["id"], "")
+        if args[:2] == ["docker", "inspect"]:
+            container = self._by_id(args[-1])
+            if container is None:
+                return (1, "", "no such container")
+            if args[3] == "{{.Id}}":
+                return (0, container["id"], "")
+            payload = {
+                "Id": container["id"],
+                "Name": f"/{container['name']}",
+                "State": {"Pid": container["pid"], "Status": container["state"]},
+                "Config": {"Image": "img", "Labels": {}},
+            }
+            return (0, json.dumps(payload), "")
         if args[:2] == ["ovs-vsctl", "--version"]:
             return (0, "ovs-vsctl 3.1", "")
+        if args[:2] == ["nsenter", "-t"]:
+            return (0, "", "")
         if args[:2] == ["ip", "-V"]:
             return (0, "ip utility", "")
         if args[:2] == ["ovs-vsctl", "br-exists"]:
@@ -809,6 +853,9 @@ class _FakeOvsRunner:
         if args[:2] == ["ovs-vsctl", "add-port"]:
             self.ports[args[3]] = args[2]
             return (0, "", "")
+        if args[:2] == ["ovs-vsctl", "del-port"]:
+            self.ports.pop(args[3], None)
+            return (0, "", "")
         if args[:2] == ["ovs-vsctl", "list-ports"]:
             return (0, "\n".join(
                 port for port, bridge in self.ports.items() if bridge == args[2]
@@ -819,13 +866,27 @@ class _FakeOvsRunner:
             if args[2] == "add":
                 self.links.add(args[3])
                 self.links.add(args[8])
+                self.pairs[args[3]] = args[8]
+                self.pairs[args[8]] = args[3]
                 return (0, "", "")
             if args[2] == "set":
                 return (0, "", "")
             if args[2] == "del":
+                peer = self.pairs.pop(args[3], None)
                 self.links.discard(args[3])
+                if peer is not None:
+                    self.links.discard(peer)
+                    self.pairs.pop(peer, None)
                 return (0, "", "")
         return (1, "", f"comando no soportado: {args}")
+
+    def _by_id(self, value: str) -> dict | None:
+        if value in self.containers:
+            return self.containers[value]
+        for container in self.containers.values():
+            if container["id"] == value:
+                return container
+        return None
 
 
 def test_get_health_delega_en_lifecycle_con_ovs(tmp_path):
@@ -855,3 +916,175 @@ def test_get_health_delega_en_lifecycle_con_ovs(tmp_path):
     assert degraded["healthy"] is False
     assert degraded["state"] == "deployed"
     assert degraded["runtime"]["bridges"]["missing"] == ["sw-oficina"]
+
+
+# ── fabric_device_state y vistas con runtime (Fase 4) ───────
+
+
+class _StubDeviceRuntime:
+    """DeviceRuntime falso para probar persistencia y fallo parcial."""
+
+    def __init__(self, fail_for: set[str] | None = None):
+        self.fail_for = set(fail_for or [])
+
+    def deploy_device(self, spec):
+        from app.services.fabric.runtime import DeviceRuntimeResult
+
+        if spec.device_id in self.fail_for:
+            return DeviceRuntimeResult(
+                device_id=spec.device_id, container_name=spec.container_name,
+                success=False, error_step="container_create",
+                errors=["fallo simulado del device runtime"],
+            )
+        return DeviceRuntimeResult(
+            device_id=spec.device_id, container_name=spec.container_name,
+            success=True, container_id=f"cid-{spec.container_name}", pid=4242,
+        )
+
+    def destroy_device(self, spec):
+        from app.services.fabric.runtime import DeviceDestroyResult
+
+        return DeviceDestroyResult(
+            device_id=spec.device_id, container_name=spec.container_name,
+            success=True, container_removed=True,
+        )
+
+    def device_health(self, spec) -> dict:
+        healthy = spec.device_id not in self.fail_for
+        return {
+            "device_id": spec.device_id,
+            "healthy": healthy,
+            "runtime_available": True,
+            "container": {},
+            "interfaces": [],
+            "neighbors": [],
+            "checks": [],
+            "errors": [],
+            "warnings": [],
+        }
+
+
+def _device_rows(db_path: Path) -> list[dict]:
+    with sqlite3.connect(str(db_path)) as conn:
+        conn.row_factory = sqlite3.Row
+        return [dict(row) for row in conn.execute(
+            "SELECT * FROM fabric_device_state ORDER BY device_id"
+        )]
+
+
+def _ovs_controller(tmp_path: Path, device_runtime=None, runner=None):
+    from app.services.fabric.deploy import OvsFabricEngine
+
+    return controller_mod.reset_controller(
+        engine=OvsFabricEngine(
+            runner=runner if runner is not None else _FakeOvsRunner(),
+            privilege_check=lambda: True,
+            device_runtime=device_runtime,
+        ),
+        db_path=tmp_path / "devices.db",
+        manifest_loader=lambda: _manifest(),
+    )
+
+
+def test_fabric_device_state_persistido_tras_deploy(tmp_path):
+    db_path = tmp_path / "devices.db"
+    controller = _ovs_controller(tmp_path)
+    controller.deploy()
+
+    rows = _device_rows(db_path)
+    assert [row["device_id"] for row in rows] == ["pc-01", "srv-01"]
+    for row in rows:
+        assert row["state"] == "running"
+        assert row["container_id"] == f"cid-{row['container_name']}"
+        assert row["container_name"] == f"dystopia-fabric-{row['device_id']}"
+        assert row["last_health"]
+    by_id = {row["device_id"]: row for row in rows}
+    assert by_id["pc-01"]["ip"] == "10.10.0.21/24"
+    assert by_id["pc-01"]["switch_id"] == "sw-oficina"
+    assert by_id["pc-01"]["vlan_tag"] == 10
+    assert by_id["srv-01"]["switch_id"] == "sw-servidores"
+    assert by_id["srv-01"]["vlan_tag"] == 20
+
+
+def test_fabric_device_state_upsert(tmp_path):
+    db_path = tmp_path / "devices.db"
+    controller = _ovs_controller(tmp_path)
+    controller.deploy()
+    controller.deploy()  # idempotente: recrea, no duplica filas
+    rows = _device_rows(db_path)
+    assert len(rows) == 2
+    assert all(row["state"] == "running" for row in rows)
+
+
+def test_fabric_device_state_tras_destroy(tmp_path):
+    db_path = tmp_path / "devices.db"
+    controller = _ovs_controller(tmp_path)
+    controller.deploy()
+    controller.destroy()
+    rows = _device_rows(db_path)
+    assert len(rows) == 2
+    assert all(row["state"] == "stopped" for row in rows)
+    assert all(row["container_id"] == "" for row in rows)
+
+
+def test_get_devices_incluye_runtime(tmp_path):
+    controller = _ovs_controller(tmp_path)
+    before = controller.get_devices()
+    assert [device["runtime"]["state"] for device in before] == ["pending", "pending"]
+
+    controller.deploy()
+    after = controller.get_devices()
+    assert all(device["runtime"]["state"] == "running" for device in after)
+    assert all(device["runtime"]["container_id"] for device in after)
+    # Contrato previo intacto: campos del plan presentes.
+    assert after[0]["interfaces"][0]["switch"] == "sw-oficina"
+
+
+def test_get_health_incluye_salud_por_dispositivo(tmp_path):
+    controller = _ovs_controller(tmp_path)
+    before = controller.get_health()
+    # Con engine OVS la salud por dispositivo se evalúa siempre (sin
+    # contenedores aún: unhealthy).
+    assert len(before["devices_health"]) == 2
+    assert all(not device["healthy"] for device in before["devices_health"])
+    assert before["healthy"] is False
+
+    controller.deploy()
+    health = controller.get_health()
+    assert len(health["devices_health"]) == 2
+    assert all(device["healthy"] for device in health["devices_health"])
+    assert health["healthy"] is True
+    assert health["devices_health"][0]["checks"]
+
+
+def test_get_health_stub_sin_devices_health(tmp_path):
+    controller = _make(tmp_path)
+    controller.deploy()
+    health = controller.get_health()
+    assert health["devices_health"] == []
+    assert health["runtime"] is None
+
+
+def test_fallo_parcial_de_device_persiste_error(tmp_path):
+    controller = _ovs_controller(
+        tmp_path, device_runtime=_StubDeviceRuntime(fail_for={"srv-01"})
+    )
+    result = controller.deploy()
+    assert result["success"] is True  # el resto continúa
+    rows = {row["device_id"]: row for row in _device_rows(tmp_path / "devices.db")}
+    assert rows["pc-01"]["state"] == "running"
+    assert rows["srv-01"]["state"] == "error"
+    assert "fallo simulado" in (rows["srv-01"]["error"] or "")
+    assert controller.get_health()["healthy"] is False
+
+
+def test_fallo_global_de_devices_persiste_error_y_estado(tmp_path):
+    controller = _ovs_controller(
+        tmp_path, device_runtime=_StubDeviceRuntime(fail_for={"pc-01", "srv-01"})
+    )
+    result = controller.deploy()
+    assert result["success"] is False
+    assert controller.get_status()["state"] == "error"
+    rows = _device_rows(tmp_path / "devices.db")
+    assert len(rows) == 2
+    assert all(row["state"] == "error" for row in rows)

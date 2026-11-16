@@ -5,6 +5,7 @@ verificar la secuencia exacta de comandos, VLANs, idempotencia,
 aislamiento y manejo de errores. Corren en macOS y Linux.
 """
 
+import json
 import sys
 from pathlib import Path
 
@@ -22,6 +23,10 @@ from app.services.fabric.deploy import (  # noqa: E402
     SubprocessRunner,
 )
 from app.services.fabric.parser import parse_manifest  # noqa: E402
+from app.services.fabric.runtime import (  # noqa: E402
+    DeviceDestroyResult,
+    DeviceRuntimeResult,
+)
 from app.services.fabric.topology import (  # noqa: E402
     build_bridge_specs,
     build_device_specs,
@@ -143,7 +148,47 @@ class FakeCommandRunner:
 
 
 def _engine(runner: FakeCommandRunner, privileged: bool = True) -> OvsFabricEngine:
-    return OvsFabricEngine(runner=runner, privilege_check=lambda: privileged)
+    return OvsFabricEngine(
+        runner=runner,
+        privilege_check=lambda: privileged,
+        device_runtime=StubDeviceRuntime(),
+    )
+
+
+class StubDeviceRuntime:
+    """DeviceRuntime falso: registra llamadas y simula éxito/fallo."""
+
+    def __init__(self, fail_for: set[str] | None = None):
+        self.deployed: list[str] = []
+        self.destroyed: list[str] = []
+        self.fail_for = set(fail_for or [])
+
+    def deploy_device(self, spec) -> DeviceRuntimeResult:
+        self.deployed.append(spec.device_id)
+        if spec.device_id in self.fail_for:
+            return DeviceRuntimeResult(
+                device_id=spec.device_id,
+                container_name=spec.container_name,
+                success=False,
+                error_step="container_create",
+                errors=["fallo simulado del device runtime"],
+            )
+        return DeviceRuntimeResult(
+            device_id=spec.device_id,
+            container_name=spec.container_name,
+            success=True,
+            container_id=f"cid-{spec.container_name}",
+            pid=4242,
+        )
+
+    def destroy_device(self, spec) -> DeviceDestroyResult:
+        self.destroyed.append(spec.device_id)
+        return DeviceDestroyResult(
+            device_id=spec.device_id,
+            container_name=spec.container_name,
+            success=True,
+            container_removed=True,
+        )
 
 
 def _add_port_calls(runner: FakeCommandRunner) -> list[list[str]]:
@@ -219,12 +264,22 @@ def test_resultado_estructurado():
     assert result.bridges_existing == []
     assert result.links_created == ["lk00"]
     assert result.links_existing == []
-    assert result.device_ports_skipped == ["dv00-pc01"]
+    assert result.containers_created == ["pc-01"]
+    assert result.containers_failed == []
+    assert result.device_ports_created == ["dv00-pc01"]
+    assert result.devices == [{
+        "device_id": "pc-01",
+        "container_id": "cid-dystopia-fabric-pc-01",
+        "pid": 4242,
+        "success": True,
+        "step": "",
+        "error": "",
+    }]
     assert result.errors == []
-    assert any("Fase 4" in warning for warning in result.warnings)
+    assert result.warnings == []
 
 
-def test_puertos_de_dispositivo_no_se_crean():
+def test_puertos_de_dispositivo_en_resultado():
     runner = FakeCommandRunner()
     engine = _engine(runner)
     topology, plan = _topology_and_plan()
@@ -235,10 +290,12 @@ def test_puertos_de_dispositivo_no_se_crean():
         if port.kind == "device"
     }
     assert device_ports == {"dv00-pc01"}
+    # El engine no emite comandos OVS para puertos de dispositivo: los
+    # añade el DeviceRuntime (con tag) durante su propio attachment.
     added = {call[3] for call in _add_port_calls(runner)}
     assert added.isdisjoint(device_ports)
     assert engine.last_result is not None
-    assert engine.last_result.device_ports_skipped == ["dv00-pc01"]
+    assert engine.last_result.device_ports_created == ["dv00-pc01"]
 
 
 def test_enlace_trunk_false_avisa_pero_se_configura_troncal():
@@ -408,6 +465,198 @@ def test_aislamiento_solo_puertos_de_enlace():
 
 def test_engine_cumple_el_protocolo():
     assert isinstance(_engine(FakeCommandRunner()), FabricEngine)
+
+
+class DockerFakeCommandRunner(FakeCommandRunner):
+    """Fake con soporte de docker para ejercitar engine + DeviceRuntime."""
+
+    def __init__(self, pid: int = 4242, **kwargs):
+        super().__init__(**kwargs)
+        self.containers: dict[str, dict] = {}
+        self.pid = pid
+
+    def _dispatch(self, args: list[str]) -> tuple[int, str, str]:
+        if args[:2] == ["docker", "create"]:
+            name = args[args.index("--name") + 1]
+            container = {
+                "id": f"cid-{name}", "name": name, "state": "created", "pid": 0,
+            }
+            self.containers[name] = container
+            return (0, container["id"], "")
+        if args[:2] == ["docker", "start"]:
+            container = self.containers.get(args[2]) or self._by_id(args[2])
+            if container is None:
+                return (1, "", "no such container")
+            container["state"] = "running"
+            container["pid"] = self.pid
+            return (0, container["id"], "")
+        if args[:2] == ["docker", "stop"]:
+            container = self._by_id(args[2])
+            if container is None:
+                return (1, "", "no such container")
+            container["state"] = "exited"
+            container["pid"] = 0
+            return (0, container["id"], "")
+        if args[:2] == ["docker", "rm"]:
+            container = self._by_id(args[3])
+            if container is None:
+                return (1, "", "no such container")
+            self.containers.pop(container["name"], None)
+            return (0, container["id"], "")
+        if args[:2] == ["docker", "inspect"]:
+            container = self._by_id(args[-1])
+            if container is None:
+                return (1, "", "no such container")
+            if args[3] == "{{.Id}}":
+                return (0, container["id"], "")
+            payload = {
+                "Id": container["id"],
+                "Name": f"/{container['name']}",
+                "State": {"Pid": container["pid"], "Status": container["state"]},
+                "Config": {"Image": "img", "Labels": {}},
+            }
+            return (0, json.dumps(payload), "")
+        if args[:2] == ["nsenter", "-t"]:
+            return (0, "", "")
+        return super()._dispatch(args)
+
+    def _by_id(self, value: str) -> dict | None:
+        if value in self.containers:
+            return self.containers[value]
+        for container in self.containers.values():
+            if container["id"] == value:
+                return container
+        return None
+
+
+def _real_engine(runner: DockerFakeCommandRunner) -> OvsFabricEngine:
+    """Engine con el DeviceRuntime real (DockerCliRuntime) sobre el fake."""
+    from app.services.fabric.runtime import DeviceRuntime, DockerCliRuntime
+
+    return OvsFabricEngine(
+        runner=runner,
+        privilege_check=lambda: True,
+        device_runtime=DeviceRuntime(DockerCliRuntime(runner=runner), runner=runner),
+    )
+
+
+def test_orden_switches_links_y_devices():
+    """§8.1: los contenedores se crean después de bridges y enlaces."""
+    runner = DockerFakeCommandRunner()
+    engine = _real_engine(runner)
+    topology, plan = _topology_and_plan()
+    engine.deploy(plan, topology)
+
+    first_docker = next(
+        index for index, call in enumerate(runner.calls)
+        if call[:2] == ["docker", "create"]
+    )
+    last_trunk = max(
+        index for index, call in enumerate(runner.calls)
+        if call[:2] == ["ovs-vsctl", "add-port"]
+        and any(arg.startswith("trunks=") for arg in call)
+    )
+    device_port = min(
+        index for index, call in enumerate(runner.calls)
+        if call[:2] == ["ovs-vsctl", "add-port"] and call[3].startswith("dv")
+    )
+    assert last_trunk < first_docker < device_port
+    add_port = runner.calls[device_port]
+    assert add_port == ["ovs-vsctl", "add-port", "sw-b", "dv00-pc01", "tag=10"]
+
+
+def test_destroy_orden_inverso_devices():
+    """§8.2: los dispositivos se destruyen antes que enlaces y bridges."""
+    runner = DockerFakeCommandRunner()
+    engine = _real_engine(runner)
+    topology, plan = _topology_and_plan()
+    engine.deploy(plan, topology)
+    engine.destroy(topology)
+
+    docker_rm = next(
+        index for index, call in enumerate(runner.calls)
+        if call[:2] == ["docker", "rm"]
+    )
+    first_link_delport = min(
+        index for index, call in enumerate(runner.calls)
+        if call[:2] == ["ovs-vsctl", "del-port"] and call[3].startswith("lk")
+    )
+    assert docker_rm < first_link_delport
+    assert engine.last_destroy_result is not None
+    assert engine.last_destroy_result.containers_removed == ["pc-01"]
+
+
+def _manifest_dos_dispositivos() -> dict:
+    manifest = _manifest()
+    manifest["devices"].append({
+        "id": "srv-01", "role": "server", "segment": "vlan-20", "ip": "10.20.0.10",
+    })
+    manifest["fabric"]["device_overrides"].append({
+        "id": "srv-01",
+        "interfaces": [{
+            "segment": "vlan-20", "ip": "10.20.0.10/24",
+            "mac": "00:1c:42:20:10:10", "vlan_tag": 20, "switch": "sw-a",
+        }],
+    })
+    return manifest
+
+
+def test_fallo_parcial_de_dispositivo_no_aborta():
+    topology = parse_manifest(_manifest_dos_dispositivos())
+    plan = FabricPlan(
+        bridges=build_bridge_specs(topology),
+        links=build_link_specs(topology),
+        devices=build_device_specs(topology),
+    )
+    runtime = StubDeviceRuntime(fail_for={"srv-01"})
+    runner = FakeCommandRunner()
+    engine = OvsFabricEngine(
+        runner=runner, privilege_check=lambda: True, device_runtime=runtime,
+    )
+    engine.deploy(plan, topology)
+
+    result = engine.last_result
+    assert result is not None
+    assert result.containers_created == ["pc-01"]
+    assert [failed["device_id"] for failed in result.containers_failed] == ["srv-01"]
+    assert result.containers_failed[0]["error"] == "fallo simulado del device runtime"
+    assert any("srv-01" in warning for warning in result.warnings)
+    assert runtime.deployed == ["pc-01", "srv-01"]
+
+
+def test_todos_los_dispositivos_fallan_lanza():
+    topology = parse_manifest(_manifest_dos_dispositivos())
+    plan = FabricPlan(
+        bridges=build_bridge_specs(topology),
+        links=build_link_specs(topology),
+        devices=build_device_specs(topology),
+    )
+    runtime = StubDeviceRuntime(fail_for={"pc-01", "srv-01"})
+    engine = OvsFabricEngine(
+        runner=FakeCommandRunner(), privilege_check=lambda: True,
+        device_runtime=runtime,
+    )
+    with pytest.raises(FabricDeployError) as excinfo:
+        engine.deploy(plan, topology)
+    assert "Ningún dispositivo" in str(excinfo.value)
+
+
+def test_destroy_registra_dispositivos_en_resultado():
+    runner = FakeCommandRunner()
+    engine = _engine(runner)
+    topology, plan = _topology_and_plan()
+    engine.deploy(plan, topology)
+    engine.destroy(topology)
+    result = engine.last_destroy_result
+    assert result is not None
+    assert result.containers_removed == ["pc-01"]
+    assert result.devices == [{
+        "device_id": "pc-01",
+        "container_removed": True,
+        "success": True,
+        "step": "",
+        "error": "",
+    }]
 
 
 # ── Destroy ─────────────────────────────────────────────────
