@@ -307,6 +307,10 @@ class EventForwarder:
                 "offsets": dict(self._offsets),
                 "dir": str(self._devices_dir),
                 "dir_exists": self._devices_dir.exists(),
+                "dir_entries": (
+                    sorted(p.name for p in self._devices_dir.iterdir())
+                    if self._devices_dir.exists() else []
+                ),
                 "files": [str(path) for path in self._files()],
             }
 
