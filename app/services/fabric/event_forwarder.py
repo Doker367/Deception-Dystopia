@@ -215,6 +215,11 @@ class EventForwarder:
         if not self._enabled:
             return {"sent": 0, "failed": 0, "pending": 0, "error": None}
         items = self.collect()
+        if items:
+            logger.info(
+                "[fabric-forwarder] %d evento(s) nuevos en %d archivo(s)",
+                len(items), len({key for _event, key, _end in items}),
+            )
         error: Optional[str] = None
         sent = 0
         failed = 0
