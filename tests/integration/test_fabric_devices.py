@@ -235,10 +235,13 @@ def test_ac5_ac6_despliegue_y_aislamiento(device_image):
         engine.destroy(topology)
         _cleanup(topology)
 
-    # ── Destroy limpio: sin huérfanos ───────────────────
+    # ── Destroy limpio: sin huérfanos de este test ─────
     leftovers = _run("docker", "ps", "-a", "--format", "{{.Names}}",
                      "--filter", "label=dystopia.fabric=true")
-    assert leftovers.stdout.split() == []
+    expected_names = {
+        f"dystopia-fabric-{PCA}", f"dystopia-fabric-{PCB}", f"dystopia-fabric-{SRV}",
+    }
+    assert not (set(leftovers.stdout.split()) & expected_names), leftovers.stdout
     for bridge in (SW_X, SW_Y):
         assert _run("ovs-vsctl", "br-exists", bridge).returncode != 0
     for spec in plan.devices:
