@@ -304,6 +304,8 @@ class EventForwarder:
                 "sent": self._sent,
                 "failed": self._failed,
                 "last_error": self._last_error,
+                "offsets": dict(self._offsets),
+                "files": [str(path) for path in self._files()],
             }
 
 
