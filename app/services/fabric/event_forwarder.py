@@ -36,6 +36,7 @@ reenviarán cuando se configure el token y se reinicie el servicio (los
 offsets persistidos no se pierden).
 """
 
+import hashlib
 import json
 import logging
 import os
@@ -61,6 +62,28 @@ DEFAULT_BATCH_SIZE = 100
 DEFAULT_MAX_RETRIES = 3
 DEFAULT_BACKOFF = 0.5
 HTTP_TIMEOUT = 5.0
+
+# Bytes máximos que se leen para calcular la huella de la primera línea.
+HEAD_BYTES = 4096
+
+
+def _head_fingerprint(path: Path) -> str:
+    """SHA-256 de la primera línea del archivo ("" si no se puede leer).
+
+    La primera línea es estable mientras el archivo no se rote o trunque, así
+    que sirve para detectar ``copytruncate`` aunque el tamaño coincida con el
+    offset anterior. No se usa un prefijo de N bytes porque en archivos más
+    cortos que N la huella cambiaría al crecer el fichero.
+    """
+    try:
+        with open(path, "rb") as handle:
+            chunk = handle.read(HEAD_BYTES)
+    except OSError:
+        return ""
+    if not chunk:
+        return ""
+    line, separator, _rest = chunk.partition(b"\n")
+    return hashlib.sha256(line + separator).hexdigest()
 # 4xx que nunca tendrán éxito reintentando (el lote se descarta).
 _PERMANENT_STATUS = frozenset({400, 401, 403, 404, 413, 422})
 
@@ -102,6 +125,11 @@ class EventForwarder:
         self._pending = 0
         self._last_error: Optional[str] = None
         self._thread: Optional[threading.Thread] = None
+        # Huella de los primeros bytes de cada archivo. Detecta rotaciones con
+        # ``copytruncate`` en las que el archivo nuevo tiene exactamente el
+        # mismo tamaño que el offset anterior (size >= offset, pero contenido
+        # distinto): sin esto se perderían los eventos nuevos.
+        self._heads: dict[str, str] = {}
         self._load_state()
 
     # ── Estado persistente ──────────────────────────────────
@@ -111,11 +139,19 @@ class EventForwarder:
             data = json.loads(self._state_path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return
-        offsets = data.get("offsets") if isinstance(data, dict) else None
+        if not isinstance(data, dict):
+            return
+        offsets = data.get("offsets")
         if isinstance(offsets, dict):
             self._offsets = {
                 str(key): int(value) for key, value in offsets.items()
                 if isinstance(value, int) and value >= 0
+            }
+        heads = data.get("heads")
+        if isinstance(heads, dict):
+            self._heads = {
+                str(key): str(value) for key, value in heads.items()
+                if isinstance(value, str)
             }
 
     def _save_state(self) -> None:
@@ -124,7 +160,10 @@ class EventForwarder:
             self._state_path.parent.mkdir(parents=True, exist_ok=True)
             tmp = self._state_path.with_suffix(".json.tmp")
             tmp.write_text(
-                json.dumps({"offsets": self._offsets}, sort_keys=True),
+                json.dumps(
+                    {"offsets": self._offsets, "heads": self._heads},
+                    sort_keys=True,
+                ),
                 encoding="utf-8",
             )
             os.replace(tmp, self._state_path)
@@ -155,10 +194,15 @@ class EventForwarder:
                 size = path.stat().st_size
             except OSError:
                 continue
-            if size < offset:
+            head = _head_fingerprint(path)
+            rotated = offset > 0 and (
+                size < offset or self._heads.get(key, head) != head
+            )
+            if rotated:
                 logger.warning(
-                    "[fabric-forwarder] %s truncado (%d < %d); se relee desde 0",
-                    path, size, offset,
+                    "[fabric-forwarder] %s rotado/truncado (offset=%d, size=%d); "
+                    "se relee desde 0",
+                    path, offset, size,
                 )
                 offset = 0
             try:
@@ -174,6 +218,7 @@ class EventForwarder:
             if not complete:
                 continue  # solo una línea parcial: nada consolidado
             candidate[key] = offset + len(complete) + 1
+            self._heads[key] = head
             for line in complete.split(b"\n"):
                 text = line.decode("utf-8", errors="replace").strip()
                 if not text:

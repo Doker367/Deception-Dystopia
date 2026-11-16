@@ -138,6 +138,55 @@ def test_archivo_truncado_reinicia_offset(tmp_path):
     assert [request["events"][0]["n"] for request in transport.requests[1:]] == [3]
 
 
+def test_rotacion_copytruncate_no_pierde_ni_duplica(tmp_path):
+    """Simula logrotate con ``copytruncate`` (copia + truncado del mismo inodo).
+
+    El agente mantiene el descriptor abierto en append: tras la rotación el
+    inodo se vacía y el agente sigue escribiendo en él. El forwarder debe
+    releer desde 0 y enviar exactamente los eventos nuevos.
+    """
+    log = tmp_path / "logs" / "pc-01" / "events.jsonl"
+    _write_events(log, [_event(1), _event(2)])
+    transport = FakeTransport()
+    forwarder = _forwarder(tmp_path, transport)
+    assert forwarder.run_once()["sent"] == 2
+
+    # copytruncate: copia el contenido y trunca el MISMO inodo (no renombra).
+    rotated = log.with_name("events.jsonl.1")
+    rotated.write_bytes(log.read_bytes())
+    with open(log, "r+b") as handle:
+        handle.truncate(0)
+    # El agente sigue escribiendo en el descriptor original (append).
+    with open(log, "a", encoding="utf-8") as handle:
+        handle.write(json.dumps(_event(3)) + "\n")
+        handle.write(json.dumps(_event(4)) + "\n")
+
+    result = forwarder.run_once()
+    assert result["sent"] == 2
+    sent = [event["n"] for request in transport.requests[1:] for event in request["events"]]
+    assert sent == [3, 4]
+    # La copia rotada no se lee (el glob solo cubre ``*/events.jsonl``).
+    assert rotated.exists()
+
+
+def test_logrotate_instalado_es_compatible_con_el_forwarder():
+    """El fichero de logrotate del repo rota los JSONL con copytruncate."""
+    config = (REPO / "deploy" / "logrotate" / "dystopia-fabric").read_text(
+        encoding="utf-8"
+    )
+    directives = {
+        line.strip() for line in config.splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    }
+    assert "/var/lib/dystopia/fabric/logs/*/events.jsonl {" in directives
+    # copytruncate conserva el inodo que el agente tiene abierto; sin él el
+    # agente escribiría en el fichero rotado y no llegaría al forwarder.
+    assert "copytruncate" in directives
+    assert "su root root" in directives
+    assert {"daily", "compress", "missingok", "notifempty"} <= directives
+    assert any(line.startswith("rotate 7") for line in directives)
+
+
 def test_linea_parcial_no_se_consume(tmp_path):
     log = tmp_path / "logs" / "pc-01" / "events.jsonl"
     log.parent.mkdir(parents=True, exist_ok=True)
