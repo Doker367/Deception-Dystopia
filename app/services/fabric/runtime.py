@@ -52,7 +52,9 @@ excepciones crípticas: el resultado es estructurado por dispositivo.
 
 import json
 import logging
+import os
 import re
+from pathlib import Path
 from typing import Optional, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -120,6 +122,8 @@ class ContainerSpec(BaseModel):
         default_factory=lambda: ["no-new-privileges:true"]
     )
     command: list[str] = Field(default_factory=list)
+    # Valores de `--mount` (device.json read-only y volumen de logs del agente).
+    mounts: list[str] = Field(default_factory=list)
 
 
 class ContainerRuntime(Protocol):
@@ -175,6 +179,8 @@ class DockerCliRuntime:
         ]
         for key, value in spec.labels.items():
             args += ["--label", f"{key}={value}"]
+        for mount in spec.mounts:
+            args += ["--mount", mount]
         args.append(spec.image)
         args += list(spec.command)
         result = self._run("container_create", args)
@@ -284,15 +290,23 @@ class DeviceRuntime:
         runner: Optional[CommandRunner] = None,
         pids_limit: int = _DEFAULT_PIDS_LIMIT,
         user: str = _DEFAULT_USER,
+        config_root: Optional[Path] = None,
+        logs_root: Optional[Path] = None,
     ):
         self._runtime = runtime
         self._runner: CommandRunner = runner or SubprocessRunner()
         self._pids_limit = pids_limit
         self._user = user
+        # Estado del agente en el host (device.json + logs JSONL). Sin
+        # roots no se monta nada (tests/embedding).
+        self._config_root = Path(config_root) if config_root is not None else None
+        self._logs_root = Path(logs_root) if logs_root is not None else None
 
     # ── Deploy ──────────────────────────────────────────────
 
-    def deploy_device(self, spec: DeviceSpec) -> DeviceRuntimeResult:
+    def deploy_device(
+        self, spec: DeviceSpec, agent_config: Optional[dict] = None
+    ) -> DeviceRuntimeResult:
         """Crea el contenedor, el veth y configura el netns y el puerto OVS."""
         result = DeviceRuntimeResult(
             device_id=spec.device_id, container_name=spec.container_name
@@ -310,7 +324,7 @@ class DeviceRuntime:
             result.errors.extend(name_errors)
             return result
 
-        container_id, pid = self._prepare_container(spec, result)
+        container_id, pid = self._prepare_container(spec, result, agent_config)
         if container_id is None or pid is None:
             return result
 
@@ -335,9 +349,15 @@ class DeviceRuntime:
         return result
 
     def _prepare_container(
-        self, spec: DeviceSpec, result: DeviceRuntimeResult
+        self,
+        spec: DeviceSpec,
+        result: DeviceRuntimeResult,
+        agent_config: Optional[dict] = None,
     ) -> tuple[Optional[str], Optional[int]]:
         """Recrea/crea el contenedor y devuelve (id, pid)."""
+        mounts = self._device_mounts(spec, agent_config, result)
+        if mounts is None:
+            return None, None
         try:
             if self._runtime.exists(spec.container_name):
                 result.warnings.append(
@@ -355,6 +375,7 @@ class DeviceRuntime:
                 cpus=spec.cpus,
                 pids_limit=self._pids_limit,
                 user=self._user,
+                mounts=mounts,
             )
             container_id = self._runtime.create(container_spec)
             result.steps.append(RuntimeStep(name="container_create", ok=True))
@@ -377,6 +398,56 @@ class DeviceRuntime:
 
         result.steps.append(RuntimeStep(name="container_pid", ok=True))
         return container_id, info.pid
+
+    def _device_mounts(
+        self,
+        spec: DeviceSpec,
+        agent_config: Optional[dict],
+        result: DeviceRuntimeResult,
+    ) -> Optional[list[str]]:
+        """Prepara ``device.json`` y el directorio de logs del agente.
+
+        Devuelve los ``--mount`` o ``None`` si falló (error registrado).
+        Sin ``config_root``/``logs_root`` o sin configuración no se monta
+        nada (tests/embedding). Si no hay permisos y no somos root (macOS,
+        tests) se avisa y se continúa sin montajes.
+        """
+        if agent_config is None or self._config_root is None or self._logs_root is None:
+            return []
+        config_dir = self._config_root / spec.device_id
+        logs_dir = self._logs_root / spec.device_id
+        config_path = config_dir / "device.json"
+        try:
+            config_dir.mkdir(parents=True, exist_ok=True)
+            logs_dir.mkdir(parents=True, exist_ok=True)
+            config_path.write_text(
+                json.dumps(agent_config, ensure_ascii=False, sort_keys=True),
+                encoding="utf-8",
+            )
+            os.chmod(config_path, 0o600)
+            os.chmod(logs_dir, 0o700)
+            if hasattr(os, "geteuid") and os.geteuid() == 0:
+                # El contenedor corre como uid 2000: debe poder leer la
+                # config y escribir los logs/keys.
+                os.chown(config_path, 2000, 2000)
+                os.chown(config_dir, 2000, 2000)
+                os.chown(logs_dir, 2000, 2000)
+        except OSError as exc:
+            if hasattr(os, "geteuid") and os.geteuid() == 0:
+                result.error_step = "device_config"
+                result.errors.append(
+                    f"No se pudo preparar device.json para '{spec.device_id}': {exc}"
+                )
+                return None
+            result.warnings.append(
+                f"Sin estado persistente para '{spec.device_id}' ({exc}); "
+                "el agente no recibirá device.json"
+            )
+            return []
+        return [
+            f"type=bind,source={config_path},target=/etc/fabric/device.json,readonly",
+            f"type=bind,source={logs_dir},target=/var/log/fabric",
+        ]
 
     def _attach_interface(
         self,

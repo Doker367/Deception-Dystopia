@@ -43,6 +43,7 @@ import logging
 import os
 import re
 import subprocess
+from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Optional, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -233,6 +234,48 @@ def _validate_ifname(name: str, role: str, errors: list[str]) -> None:
         )
 
 
+def _agent_config(topology: FabricTopology, device_id: str) -> dict:
+    """Config del agente (device.json) para un dispositivo del manifiesto.
+
+    Incluye credenciales señuelo: el archivo se monta read-only con modo
+    0600 y nunca sale por la API (AC13).
+    """
+    device = next((item for item in topology.devices if item.id == device_id), None)
+    if device is None:
+        return {}
+    override = next(
+        (item for item in topology.config.device_overrides if item.id == device_id),
+        None,
+    )
+    return {
+        "device_id": device.id,
+        "role": device.role.value,
+        "persona": {
+            "vendor": device.persona.vendor,
+            "os": device.persona.os,
+            "hostname": device.persona.hostname,
+        },
+        "services": [
+            {
+                "port": service.port,
+                "proto": service.proto,
+                "engine": service.engine.value,
+                "banner": service.banner,
+            }
+            for service in device.services
+        ],
+        "credentials": [
+            {
+                "username": credential.username,
+                "password": credential.password,
+                "service": credential.service,
+                "purpose": credential.purpose,
+            }
+            for credential in (override.credentials if override is not None else [])
+        ],
+    }
+
+
 class OvsFabricEngine:
     """Implementación de ``FabricEngine`` con primitivas OVS/ip.
 
@@ -259,7 +302,16 @@ class OvsFabricEngine:
             from app.services.fabric.runtime import DeviceRuntime, DockerCliRuntime
 
             self._device_runtime = DeviceRuntime(
-                DockerCliRuntime(runner=self._runner), runner=self._runner
+                DockerCliRuntime(runner=self._runner),
+                runner=self._runner,
+                config_root=Path(os.getenv(
+                    "DYSTOPIA_FABRIC_DEVICE_CONFIG_DIR",
+                    "/var/lib/dystopia/fabric/devices",
+                )),
+                logs_root=Path(os.getenv(
+                    "DYSTOPIA_FABRIC_DEVICE_LOG_DIR",
+                    "/var/lib/dystopia/fabric/logs",
+                )),
             )
         self.last_result: Optional[DeployResult] = None
         self.last_destroy_result: Optional[DestroyResult] = None
@@ -321,7 +373,10 @@ class OvsFabricEngine:
         # §8.1: switches → enlaces → dispositivos. Un fallo de dispositivo
         # no aborta el deploy; solo si no queda ninguno desplegado.
         for device in plan.devices:
-            outcome = self._device_runtime.deploy_device(device)
+            agent_config = _agent_config(topology, device.device_id)
+            outcome = self._device_runtime.deploy_device(
+                device, agent_config=agent_config
+            )
             detail = {
                 "device_id": device.device_id,
                 "container_id": outcome.container_id,

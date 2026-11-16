@@ -163,7 +163,7 @@ class StubDeviceRuntime:
         self.destroyed: list[str] = []
         self.fail_for = set(fail_for or [])
 
-    def deploy_device(self, spec) -> DeviceRuntimeResult:
+    def deploy_device(self, spec, agent_config=None) -> DeviceRuntimeResult:
         self.deployed.append(spec.device_id)
         if spec.device_id in self.fail_for:
             return DeviceRuntimeResult(

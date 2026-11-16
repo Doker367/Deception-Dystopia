@@ -80,9 +80,12 @@ def _manifest() -> dict:
              "gateway": "10.220.0.1"},
         ],
         "devices": [
-            {"id": PCA, "role": "pc", "segment": "vlan-10", "ip": "10.210.0.11"},
-            {"id": PCB, "role": "pc", "segment": "vlan-10", "ip": "10.210.0.12"},
-            {"id": SRV, "role": "server", "segment": "vlan-20", "ip": "10.220.0.10"},
+            {"id": PCA, "role": "pc", "segment": "vlan-10", "ip": "10.210.0.11",
+             "services": [{"port": 80, "proto": "http", "engine": "native"}]},
+            {"id": PCB, "role": "pc", "segment": "vlan-10", "ip": "10.210.0.12",
+             "services": [{"port": 80, "proto": "http", "engine": "native"}]},
+            {"id": SRV, "role": "server", "segment": "vlan-20", "ip": "10.220.0.10",
+             "services": [{"port": 80, "proto": "http", "engine": "native"}]},
         ],
         "fabric": {
             "enabled": True,
@@ -142,7 +145,10 @@ def device_image():
     if _run("docker", "image", "inspect", _IMAGE).returncode == 0:
         yield _IMAGE
         return
-    build = _run("docker", "build", "-t", _IMAGE, str(REPO / "fabric"))
+    build = _run(
+        "docker", "build", "-t", _IMAGE,
+        "-f", str(REPO / "fabric" / "Dockerfile"), str(REPO),
+    )
     assert build.returncode == 0, build.stderr[-2000:]
     yield _IMAGE
 

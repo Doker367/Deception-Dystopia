@@ -927,7 +927,7 @@ class _StubDeviceRuntime:
     def __init__(self, fail_for: set[str] | None = None):
         self.fail_for = set(fail_for or [])
 
-    def deploy_device(self, spec):
+    def deploy_device(self, spec, agent_config=None):
         from app.services.fabric.runtime import DeviceRuntimeResult
 
         if spec.device_id in self.fail_for:

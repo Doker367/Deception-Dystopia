@@ -1,33 +1,53 @@
-# NetPulse — imagen base de dispositivo del fabric (Fase 4).
+# NetPulse — imagen de dispositivo del fabric (Fase 5a).
 #
-# Contenedor señuelo mínimo y endurecido: sin secretos embebidos, sin
-# socket de Docker y con usuario no root. La configuración de red (veth,
-# IP, rutas, ARP) la aplica el Device Runtime desde el host con nsenter;
-# el contenedor solo aporta el netns y el sistema base.
+# Contenedor señuelo endurecido: sin secretos embebidos, sin socket de
+# Docker y con usuario no root. El Device Runtime monta:
+#   - /etc/fabric/device.json  (read-only, 0600): configuración del agente
+#   - /var/log/fabric          (rw): events.jsonl + host key SSH persistente
+# La red (veth/IP/rutas/ARP) la configura el host con nsenter.
 #
-#   docker build -t dystopia/fabric-device:v1 fabric/
+# El contexto de build es la RAÍZ del repo (se copia app/):
+#
+#   docker build -t dystopia/fabric-device:v1 -f fabric/Dockerfile .
 #
 FROM debian:trixie-slim
 
-ENV DEBIAN_FRONTEND=noninteractive
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/opt/dystopia
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
+        python3 \
+        python3-venv \
         iproute2 \
         iputils-ping \
         procps \
         ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
+# Solo las dependencias de los listeners (telemetry/store) y del agente.
+RUN python3 -m venv /opt/venv \
+    && /opt/venv/bin/pip install --no-cache-dir --no-compile \
+        pydantic==2.11.7 \
+        PyYAML==6.0.2 \
+        paramiko==5.1.0 \
+        prometheus-client==0.22.1
+
 # UID/GID fijos y no root (mismo criterio que las celdas de honeypots).
 RUN groupadd --gid 2000 fabric \
     && useradd --uid 2000 --gid 2000 --no-create-home \
         --shell /usr/sbin/nologin fabric
 
-COPY device-entry.sh /usr/local/bin/device-entry.sh
-RUN chmod 0755 /usr/local/bin/device-entry.sh
+COPY app/ /opt/dystopia/app/
+COPY fabric/agent.py /opt/dystopia/fabric/agent.py
+
+# Directorios de montaje con owner 2000 (el bind mount conserva el dueño
+# del host; el Device Runtime hace chown 2000:2000).
+RUN mkdir -p /etc/fabric /var/log/fabric/keys \
+    && chown -R 2000:2000 /opt/dystopia /etc/fabric /var/log/fabric
 
 USER 2000:2000
 
-# Mantiene el contenedor vivo hasta que la Fase 5 arranque los servicios.
-ENTRYPOINT ["/usr/local/bin/device-entry.sh"]
+ENTRYPOINT ["/opt/venv/bin/python", "/opt/dystopia/fabric/agent.py"]
