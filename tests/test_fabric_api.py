@@ -149,6 +149,7 @@ def test_rutas_registradas():
         "/api/fabric/switches",
         "/api/fabric/switches/{switch_id}",
         "/api/fabric/health",
+        "/api/fabric/events",
     ]:
         assert path in paths
 
@@ -388,3 +389,72 @@ def test_health_antes_y_despues_de_deploy(auth, client):
     after = client.get("/api/fabric/health", headers=auth["viewer"]).json()
     assert after["healthy"] is True
     assert after["state"] == "deployed"
+
+
+# ── Fase 6: forwarder, salud y eventos ─────────────────────
+
+
+def test_status_incluye_forwarder_y_health_summary(auth, client):
+    status = client.get("/api/fabric/status", headers=auth["viewer"]).json()
+    assert status["forwarder"] is None  # engine stub: no hay host service
+    assert status["health_summary"] is None
+
+    health = client.get("/api/fabric/health", headers=auth["viewer"]).json()
+    summary = client.get("/api/fabric/status", headers=auth["viewer"]).json()["health_summary"]
+    assert summary == {
+        "healthy": health["healthy"],
+        "runtime_available": health["runtime_available"],
+    }
+
+    # Un deploy cambia el estado: el resumen cacheado se invalida.
+    assert client.post("/api/fabric/deploy", headers=auth["admin"]).status_code == 200
+    assert client.get("/api/fabric/status", headers=auth["viewer"]).json()["health_summary"] is None
+
+
+def test_device_detalle_incluye_runtime_y_servicios(auth, client):
+    device = client.get(
+        "/api/fabric/devices/pc-recepcion-01", headers=auth["viewer"],
+    ).json()
+    assert "runtime" in device
+    assert device["runtime"]["state"] == "pending"
+    assert device["services"], "el detalle debe incluir los servicios del manifiesto"
+    assert device["services"][0]["proto"] == "ssh"
+
+
+def test_events_filtra_por_device_del_fabric(auth, client, tmp_path, monkeypatch):
+    from app.models.deception import DeceptionEventIn
+    from app.services.deception import store_svc
+
+    monkeypatch.setattr(store_svc, "DB_PATH", tmp_path / "deception.db")
+    store_svc.log_event(DeceptionEventIn(
+        device_id="pc-recepcion-01", src_ip="203.0.113.9",
+        proto="ssh", type="connect",
+    ))
+    store_svc.log_event(DeceptionEventIn(
+        device_id="otro-device", src_ip="203.0.113.10",
+        proto="ssh", type="connect",
+    ))
+
+    filtered = client.get(
+        "/api/fabric/events?device_id=pc-recepcion-01", headers=auth["viewer"],
+    )
+    assert filtered.status_code == 200
+    assert [event["device_id"] for event in filtered.json()] == ["pc-recepcion-01"]
+
+    all_events = client.get("/api/fabric/events", headers=auth["viewer"]).json()
+    assert [event["device_id"] for event in all_events] == ["pc-recepcion-01"]
+
+    foreign = client.get(
+        "/api/fabric/events?device_id=otro-device", headers=auth["viewer"],
+    )
+    assert foreign.status_code == 403
+
+
+@pytest.mark.parametrize("limit", ["0", "201", "abc"])
+def test_events_limit_invalido(limit, auth, client):
+    response = client.get(f"/api/fabric/events?limit={limit}", headers=auth["viewer"])
+    assert response.status_code == 422
+
+
+def test_events_requiere_auth(client):
+    assert client.get("/api/fabric/events").status_code in (401, 403)

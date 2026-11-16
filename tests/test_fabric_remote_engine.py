@@ -335,3 +335,16 @@ def test_timeout_por_entorno(monkeypatch, tmp_path):
     settings = load_remote_settings()
     assert settings.timeout == 42
     assert settings.manifest == tmp_path / "m.yaml"
+
+
+def test_status_devuelve_forwarder_del_host(tmp_path):
+    recorder = Recorder([(
+        "GET", "/status", 200,
+        {"forwarder": {"enabled": True, "pending": 0, "sent": 4,
+                       "failed": 0, "last_error": None}},
+    )])
+    engine = _engine(tmp_path, recorder)
+    payload = engine.status()
+    assert payload["forwarder"]["sent"] == 4
+    assert recorder.requests[0][0] == "GET"
+    assert recorder.requests[0][1] == "/status"

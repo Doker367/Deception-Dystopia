@@ -1217,3 +1217,67 @@ def test_arranque_tras_destroy_no_restaura_deployed(tmp_path):
 
     second = _make(tmp_path, name="restore-destroy.db")
     assert second.get_status()["state"] == "ready"
+
+
+# ── Fase 6: detalle de dispositivo y forwarder ─────────────
+
+
+def test_get_device_con_runtime_ovs(tmp_path):
+    controller = _ovs_controller(tmp_path)
+    controller.deploy()
+    device = controller.get_device("pc-01")
+    assert device is not None
+    assert device["runtime"]["state"] == "running"
+    assert device["runtime"]["pid"] == 4242
+    assert device["runtime"]["container_state"] == "running"
+    assert device["runtime"]["healthy"] is True
+    assert device["runtime"]["interfaces"][0]["port_present"] is True
+    assert isinstance(device["runtime"]["neighbors"], list)
+    assert device["services"] == []
+    assert controller.get_device("no-existe") is None
+
+
+class _FakeRemoteEngine:
+    """Engine remote mínimo para el estado del forwarder."""
+
+    kind = "remote"
+
+    def __init__(self, fail: bool = False):
+        self.fail = fail
+
+    def status(self) -> dict:
+        if self.fail:
+            raise RuntimeError("host caído")
+        return {"forwarder": {
+            "enabled": True, "pending": 2, "sent": 10,
+            "failed": 0, "last_error": None,
+        }}
+
+    def deploy(self, plan, topology) -> None:  # pragma: no cover - no usado
+        return None
+
+    def destroy(self, topology) -> None:  # pragma: no cover - no usado
+        return None
+
+
+def test_status_incluye_forwarder_remoto(tmp_path):
+    controller = controller_mod.reset_controller(
+        engine=_FakeRemoteEngine(),
+        db_path=tmp_path / "remote.db",
+        manifest_loader=lambda: _manifest(),
+    )
+    status = controller.get_status()
+    assert status["engine"] == "custom"  # engine inyectado
+    assert status["forwarder"] == {
+        "enabled": True, "pending": 2, "sent": 10,
+        "failed": 0, "last_error": None,
+    }
+
+
+def test_status_forwarder_null_si_host_no_responde(tmp_path):
+    controller = controller_mod.reset_controller(
+        engine=_FakeRemoteEngine(fail=True),
+        db_path=tmp_path / "remote-down.db",
+        manifest_loader=lambda: _manifest(),
+    )
+    assert controller.get_status()["forwarder"] is None
