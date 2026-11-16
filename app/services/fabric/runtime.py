@@ -423,9 +423,13 @@ class DeviceRuntime:
             if hasattr(os, "geteuid") and os.geteuid() == 0:
                 # El directorio de config debe ser de root ANTES de escribir:
                 # el servicio corre sin CAP_DAC_OVERRIDE y un dir 0700 de uid
-                # 2000 le impediría crear device.json.
+                # 2000 le impediría crear device.json. Un device.json previo
+                # (de una versión anterior, uid 2000) tampoco se puede truncar
+                # sin ser de root.
                 os.chown(config_dir, 0, 0)
                 os.chmod(config_dir, 0o700)
+                if config_path.exists():
+                    os.chown(config_path, 0, 0)
             config_path.write_text(
                 json.dumps(agent_config, ensure_ascii=False, sort_keys=True),
                 encoding="utf-8",
