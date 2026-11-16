@@ -5,7 +5,14 @@ vía ``telemetry_svc`` y responde con una persona falsa. El motor
 (``engine_svc``) instancia uno por cada servicio del dispositivo.
 """
 
-from app.services.deception.listeners.base import BaseListener, read_line
+from app.services.deception.listeners.base import (
+    BaseListener,
+    emit_event,
+    emit_sync,
+    get_event_sink,
+    read_line,
+    set_event_sink,
+)
 from app.services.deception.listeners.telnet_listener import TelnetListener
 from app.services.deception.listeners.http_listener import HttpListener
 from app.services.deception.listeners.banner_listener import BannerListener
@@ -48,6 +55,10 @@ def build_listener(device_id: str, role: str, host: str, port: int,
 __all__ = [
     "BaseListener",
     "read_line",
+    "emit_event",
+    "emit_sync",
+    "get_event_sink",
+    "set_event_sink",
     "TelnetListener",
     "HttpListener",
     "BannerListener",

@@ -9,7 +9,8 @@ import asyncio
 import logging
 from typing import Optional
 
-from app.services.deception import personas, snmp_agent, telemetry_svc, topology_svc
+from app.services.deception import personas, snmp_agent, topology_svc
+from app.services.deception.listeners.base import emit_event
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +59,7 @@ class UdpListener:
 
     async def on_datagram(self, data: bytes, addr) -> None:
         src_ip, src_port = addr[0], addr[1]
-        await telemetry_svc.emit(
+        await emit_event(
             self.device_id, src_ip, self.proto, "snmp_query",
             src_port=src_port,
             detail={"service": "snmp", "bytes": len(data)},

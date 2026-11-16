@@ -19,7 +19,8 @@ import threading
 from typing import Optional
 
 from app.core.settings import DECEPTION_SSH_HOST_KEY
-from app.services.deception import personas, telemetry_svc
+from app.services.deception import personas
+from app.services.deception.listeners.base import emit_sync
 
 logger = logging.getLogger(__name__)
 
@@ -136,7 +137,7 @@ class SshListener:
             transport.close()
             return
 
-        telemetry_svc.emit_sync(self.device_id, src_ip, "ssh", "connect",
+        emit_sync(self.device_id, src_ip, "ssh", "connect",
                                 src_port=src_port)
         chan = transport.accept(20)
         if chan is None:
@@ -154,7 +155,7 @@ class SshListener:
                 if not command:
                     chan.send(prompt.encode())
                     continue
-                telemetry_svc.emit_sync(
+                emit_sync(
                     self.device_id, src_ip, "ssh", "command",
                     username=server.username,
                     detail={"service": "ssh", "command": command},
@@ -197,7 +198,7 @@ class _SSHServer:
                 creds = personas.credentials_for(self.listener.role)
                 weak = (username, password) in creds
                 if weak or self.failed_attempts >= self.listener.ATTEMPTS_BEFORE_ACCEPT:
-                    telemetry_svc.emit_sync(
+                    emit_sync(
                         self.listener.device_id, self.src_ip, "ssh", "login_success",
                         username=username, success=True, src_port=self.src_port,
                         detail={"service": "ssh", "password": password, "weak": weak},
@@ -206,7 +207,7 @@ class _SSHServer:
                     return paramiko.AUTH_SUCCESSFUL  # pyright: ignore[reportAttributeAccessIssue]
                 # Primeros intentos: rechazar (como un equipo real).
                 self.failed_attempts += 1
-                telemetry_svc.emit_sync(
+                emit_sync(
                     self.listener.device_id, self.src_ip, "ssh", "login_attempt",
                     username=username, success=False, src_port=self.src_port,
                     detail={"service": "ssh", "password": password},

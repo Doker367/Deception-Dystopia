@@ -6,14 +6,70 @@ conexión a la subclase. Centraliza el registro de eventos vía
 """
 
 import asyncio
+import inspect
 import logging
-from typing import Optional
+from typing import Callable, Optional
 
 from app.services.deception import telemetry_svc
 
 logger = logging.getLogger(__name__)
 
 READ_TIMEOUT = 30.0  # segundos de inactividad antes de cerrar
+
+# Sink de eventos inyectable (p. ej. el agente del fabric escribe JSONL).
+# Firma: sink(device_id, src_ip, proto, event_type, **kwargs) → dict | None.
+EventSink = Callable[..., object]
+_event_sink: Optional[EventSink] = None
+
+
+def set_event_sink(sink: Optional[EventSink]) -> None:
+    """Instala (o retira con ``None``) el sink global de eventos."""
+    global _event_sink
+    _event_sink = sink
+
+
+def get_event_sink() -> Optional[EventSink]:
+    """Sink activo, o ``None`` si los eventos van a ``telemetry_svc``."""
+    return _event_sink
+
+
+def _call_sink(sink: EventSink, device_id: str, src_ip: str, proto: str,
+               event_type, **kwargs):
+    return sink(device_id, src_ip, proto, event_type, **kwargs)
+
+
+async def _emit_with_sink(sink: EventSink, device_id: str, src_ip: str,
+                          proto: str, event_type, **kwargs):
+    """Invoca el sink admitiendo implementaciones síncronas o asíncronas."""
+    result = _call_sink(sink, device_id, src_ip, proto, event_type, **kwargs)
+    if inspect.isawaitable(result):
+        return await result
+    return result
+
+
+async def emit_event(device_id: str, src_ip: str, proto: str, event_type, **kwargs):
+    """Emite un evento asíncrono: sink si existe, si no ``telemetry_svc``."""
+    sink = get_event_sink()
+    if sink is not None:
+        return await _emit_with_sink(
+            sink, device_id, src_ip, proto, event_type, **kwargs
+        )
+    return await telemetry_svc.emit(device_id, src_ip, proto, event_type, **kwargs)
+
+
+def emit_sync(device_id: str, src_ip: str, proto: str, event_type, **kwargs):
+    """Emite desde un hilo (SSH): sink si existe, si no ``telemetry_svc``.
+
+    Un sink asíncrono se ejecuta con ``asyncio.run`` (el listener SSH corre
+    en un thread sin loop propio).
+    """
+    sink = get_event_sink()
+    if sink is None:
+        return telemetry_svc.emit_sync(device_id, src_ip, proto, event_type, **kwargs)
+    result = _call_sink(sink, device_id, src_ip, proto, event_type, **kwargs)
+    if inspect.isawaitable(result):
+        return asyncio.run(result)
+    return result
 
 
 async def read_line(reader: asyncio.StreamReader,
@@ -92,8 +148,8 @@ class BaseListener:
     # ── Utilidades ───────────────────────────────────────────
 
     async def emit(self, src_ip: str, event_type, **kwargs) -> dict:
-        """Reporta un evento asociado a este dispositivo/protocolo."""
-        return await telemetry_svc.emit(
+        """Reporta un evento; usa el sink global si está instalado."""
+        return await emit_event(
             self.device_id, src_ip, self.proto, event_type, **kwargs
         )
 

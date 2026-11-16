@@ -60,7 +60,7 @@ class _FakeListener:
 
 def _server(monkeypatch):
     import paramiko
-    monkeypatch.setattr(ssh_listener.telemetry_svc, "emit_sync", lambda *a, **k: None)
+    monkeypatch.setattr(ssh_listener, "emit_sync", lambda *a, **k: None)
     return paramiko, ssh_listener._SSHServer(_FakeListener(), "203.0.113.9", 1234)
 
 
