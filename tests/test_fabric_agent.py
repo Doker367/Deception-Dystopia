@@ -122,25 +122,44 @@ def test_sink_formato_exacto(tmp_path):
     datetime.fromisoformat(record["ts"])  # ISO-8601 válido
 
 
-def test_sink_sin_credenciales(tmp_path):
+def test_sink_credencial_capturada_y_configuracion_fuera(tmp_path):
+    """La password capturada llega; la lista de credenciales del manifiesto no."""
     sink = agent.JsonlSink(tmp_path / "events.jsonl")
     sink(
         "pc-01", "203.0.113.9", "ssh", "login_success",
         detail={
             "service": "ssh",
-            "password": "admin123",
+            "password": "admin123",  # capturada del atacante
             "command": "ls",
-            "nested": {"password": "toor", "credentials": ["x"]},
+            "credentials": [  # forma de configuración (manifiesto): fuera
+                {"username": "admin", "password": "admin123"},
+            ],
+            "nested": {"token": "abc", "password": "toor"},
         },
         username="admin", success=True,
     )
     text = (tmp_path / "events.jsonl").read_text(encoding="utf-8")
-    assert "admin123" not in text
-    assert "toor" not in text
-    assert '"password"' not in text
-    assert '"credentials"' not in text
     record = json.loads(text)
-    assert record["detail"] == {"service": "ssh", "command": "ls", "nested": {}}
+    # Capturada del atacante: presente.
+    assert record["detail"]["password"] == "admin123"
+    assert record["detail"]["nested"]["password"] == "toor"
+    assert record["detail"]["command"] == "ls"
+    # Configuración del manifiesto: nunca aparece.
+    assert "credentials" not in record["detail"]
+    assert "credentials" not in record["detail"]["nested"]
+    assert "token" not in record["detail"]["nested"]
+    assert record["username"] == "admin"
+
+
+def test_sink_contenido_de_device_json_no_aparece(tmp_path):
+    """El contenido del manifiesto (credenciales configuradas) no se loguea."""
+    config = agent.load_device_config(_write_config(tmp_path, _config()))
+    sink = agent.JsonlSink(tmp_path / "events.jsonl")
+    # El sink no recibe la config; un evento normal no puede arrastrarla.
+    sink(config.device_id, "203.0.113.9", "ssh", "connect")
+    text = (tmp_path / "events.jsonl").read_text(encoding="utf-8")
+    assert "admin123" not in text  # password configurada en device.json
+    assert '"credentials"' not in text
 
 
 def test_sink_append_y_flush(tmp_path):

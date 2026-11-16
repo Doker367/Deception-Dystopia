@@ -5,6 +5,7 @@ límites de lote (413/422), device_id ajeno (403), eventos inválidos que
 no tumban el lote y llamada correcta a ``telemetry_svc.emit_sync``.
 """
 
+import json
 import sys
 from pathlib import Path
 
@@ -25,18 +26,19 @@ AUTH = {"X-Fabric-Token": TOKEN}
 
 
 def _manifest() -> dict:
-    """Fabric con dos dispositivos conocidos (pc-01, srv-01)."""
+    """Fabric con dos VLANs y un dispositivo cada una."""
     return {
         "segments": [
             {"id": "vlan-10", "vlan_id": 10, "cidr": "10.10.0.0/24"},
+            {"id": "vlan-20", "vlan_id": 20, "cidr": "10.20.0.0/24"},
         ],
         "devices": [
             {"id": "pc-01", "role": "pc", "segment": "vlan-10", "ip": "10.10.0.21"},
-            {"id": "srv-01", "role": "server", "segment": "vlan-10", "ip": "10.10.0.22"},
+            {"id": "srv-01", "role": "server", "segment": "vlan-20", "ip": "10.20.0.10"},
         ],
         "fabric": {
             "enabled": True,
-            "switches": [{"id": "sw-a", "vlans": [10]}],
+            "switches": [{"id": "sw-a", "vlans": [10, 20]}],
             "device_overrides": [{
                 "id": "pc-01",
                 "interfaces": [{
@@ -256,3 +258,107 @@ def test_emit_que_falla_no_tumba_el_lote(client, emitted, monkeypatch):
     assert payload["accepted"] == 1
     assert payload["rejected"] == 1
     assert "sqlite bloqueada" in payload["errors"][0]["error"]
+
+
+# ── Fase 7: credenciales capturadas y alertas del fabric ───
+
+
+def test_normaliza_credenciales_capturadas(client, emitted):
+    batch = [_event(detail={
+        "service": "ssh", "username": "admin", "password": "admin123",
+    })]
+    response = client.post("/api/fabric/events", headers=AUTH, json={"events": batch})
+    assert response.status_code == 200
+    assert response.json()["accepted"] == 1
+    assert emitted[0]["detail"] == {
+        "service": "ssh",
+        "credentials": {"username": "admin", "password": "admin123"},
+    }
+
+
+def test_credenciales_ya_normalizadas_no_duplican(client, emitted):
+    batch = [_event(detail={
+        "service": "ssh",
+        "credentials": {"username": "admin", "password": "admin123"},
+    })]
+    response = client.post("/api/fabric/events", headers=AUTH, json={"events": batch})
+    assert response.status_code == 200
+    assert emitted[0]["detail"] == {
+        "service": "ssh",
+        "credentials": {"username": "admin", "password": "admin123"},
+    }
+
+
+def test_credenciales_invalidas_rechazan_el_evento(client, emitted):
+    batch = [
+        _event(),
+        _event(device_id="srv-01", detail={"credentials": {"username": 123}}),
+        _event(device_id="srv-01", detail={"credentials": "no-dict"}),
+        _event(device_id="srv-01", detail={
+            "credentials": {"password": "x" * 300},
+        }),
+    ]
+    response = client.post("/api/fabric/events", headers=AUTH, json={"events": batch})
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["accepted"] == 1
+    assert payload["rejected"] == 3
+    assert len(payload["errors"]) == 3
+    assert len(emitted) == 1
+
+
+def test_credenciales_largas_acotadas(client, emitted):
+    batch = [_event(detail={
+        "credentials": {"username": "u" * 129, "password": "p"},
+    })]
+    response = client.post("/api/fabric/events", headers=AUTH, json={"events": batch})
+    assert response.status_code == 200
+    assert response.json()["rejected"] == 1
+    assert "128" in response.json()["errors"][0]["error"]
+    assert emitted == []
+
+
+def test_alertas_del_fabric_se_despachan(client, tmp_path, monkeypatch):
+    from app.services.deception import alert_svc, store_svc
+
+    monkeypatch.setattr(store_svc, "DB_PATH", tmp_path / "deception.db")
+    captured = []
+    monkeypatch.setattr(
+        alert_svc, "dispatch_external",
+        lambda alerts: captured.extend(alerts) or alerts,
+    )
+
+    # El atacante aparece en la VLAN 10 (pc-01) y luego en la 20 (srv-01).
+    # ts=None: el store usa "ahora" (un ts fijo quedaría fuera de la ventana).
+    assert client.post(
+        "/api/fabric/events", headers=AUTH,
+        json={"events": [_event(device_id="pc-01", src_ip="198.51.100.7", ts=None)]},
+    ).status_code == 200
+    assert client.post(
+        "/api/fabric/events", headers=AUTH,
+        json={"events": [_event(device_id="srv-01", src_ip="198.51.100.7", ts=None)]},
+    ).status_code == 200
+
+    rules = [alert["rule"] for alert in captured]
+    assert "fabric_lateral_movement" in rules
+    assert "fabric_new_device_probed" in rules
+    lateral = next(alert for alert in captured
+                   if alert["rule"] == "fabric_lateral_movement")
+    assert lateral["severity"] == "high"
+    assert lateral["detail"]["vlans"] == [10, 20]
+    assert json.dumps(captured).count("admin123") == 0  # sin credenciales
+
+
+def test_fallo_de_alertas_no_tumba_la_ingesta(client, emitted, monkeypatch):
+    import app.services.fabric.fabric_alerts as fabric_alerts_module
+
+    def failing_evaluate(records, topology=None, window=None):
+        raise RuntimeError("alertas caídas")
+
+    monkeypatch.setattr(fabric_alerts_module, "evaluate_batch", failing_evaluate)
+    response = client.post(
+        "/api/fabric/events", headers=AUTH, json={"events": [_event()]},
+    )
+    assert response.status_code == 200
+    assert response.json()["accepted"] == 1
+    assert len(emitted) == 1
