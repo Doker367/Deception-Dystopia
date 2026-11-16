@@ -1130,6 +1130,46 @@ def test_engine_remote_sin_token_falla_accionable(tmp_path, monkeypatch):
     assert "DYSTOPIA_FABRIC_REMOTE_TOKEN" in str(excinfo.value)
 
 
+def test_health_remote_delega_en_el_host(tmp_path, monkeypatch):
+    """Con engine remote, /health refleja el estado real del servicio del host."""
+    monkeypatch.setenv(controller_mod.FABRIC_ENGINE_ENV, "remote")
+    monkeypatch.setenv("DYSTOPIA_FABRIC_REMOTE_URL", "http://host.test:8090")
+    monkeypatch.setenv("DYSTOPIA_FABRIC_REMOTE_TOKEN", "t" * 40)
+    controller = controller_mod.reset_controller(
+        db_path=tmp_path / "health-remote.db", manifest_loader=lambda: _manifest(),
+    )
+    controller._engine.health = lambda: {  # type: ignore[method-assign]
+        "runtime_available": True,
+        "healthy": True,
+        "checks": [{"name": "bridges", "ok": True, "detail": "4/4"}],
+        "devices_health": [
+            {"device_id": "pc-01", "healthy": True},
+        ],
+    }
+    health = controller.get_health()
+    assert health["runtime_available"] is True
+    assert any(check.get("name") == "bridges" for check in health["checks"])
+    assert health["devices_health"][0]["device_id"] == "pc-01"
+
+
+def test_health_remote_caido_no_rompe(tmp_path, monkeypatch):
+    """Si el host no responde, /health sigue devolviendo estructura válida."""
+    monkeypatch.setenv(controller_mod.FABRIC_ENGINE_ENV, "remote")
+    monkeypatch.setenv("DYSTOPIA_FABRIC_REMOTE_URL", "http://host.test:8090")
+    monkeypatch.setenv("DYSTOPIA_FABRIC_REMOTE_TOKEN", "t" * 40)
+    controller = controller_mod.reset_controller(
+        db_path=tmp_path / "health-remote-caido.db", manifest_loader=lambda: _manifest(),
+    )
+
+    def _boom():
+        raise RuntimeError("sin conexión")
+
+    controller._engine.health = _boom  # type: ignore[method-assign]
+    health = controller.get_health()
+    assert health["runtime_available"] is False
+    assert "healthy" in health
+
+
 def test_modos_previos_no_cambian(tmp_path, monkeypatch):
     monkeypatch.delenv(controller_mod.FABRIC_ENGINE_ENV, raising=False)
     stub = controller_mod.reset_controller(

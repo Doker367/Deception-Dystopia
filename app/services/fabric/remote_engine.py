@@ -150,6 +150,16 @@ class RemoteFabricEngine:
             len(self.last_destroy_result.containers_removed),
         )
 
+    def health(self) -> dict:
+        """Estado real del fabric según el servicio del host (``GET /health``).
+
+        Devuelve el payload del host en la misma forma que
+        ``lifecycle.health``: ``runtime_available``, ``healthy``, ``checks``
+        y el detalle de bridges/links/devices.
+        """
+        payload = self._request("GET", "/health", "health")
+        return payload
+
     # ── HTTP ────────────────────────────────────────────────
 
     def _verify_manifest(self, operation: str) -> None:

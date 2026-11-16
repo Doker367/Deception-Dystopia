@@ -772,6 +772,19 @@ class FabricController:
                     devices_health = [
                         health_fn(spec) for spec in build_device_specs(topology)
                     ]
+            elif getattr(self._engine, "kind", "") == "remote":
+                # El runtime vive en el host: su /health es la fuente de verdad.
+                remote_health = getattr(self._engine, "health", None)
+                if remote_health is not None:
+                    try:
+                        runtime = remote_health()
+                    except Exception as exc:  # noqa: BLE001 - se reporta, no se propaga
+                        logger.warning("[fabric] health remoto no disponible: %s", exc)
+                        runtime = None
+                    if runtime is not None:
+                        runtime_available = bool(runtime.get("runtime_available"))
+                        checks.extend(runtime.get("checks", []))
+                        devices_health = list(runtime.get("devices_health") or [])
             healthy = manifest_ok and state_ok
             if runtime is not None:
                 healthy = healthy and bool(runtime.get("healthy"))
