@@ -6,7 +6,6 @@ no tumban el lote y llamada correcta a ``telemetry_svc.emit_sync``.
 """
 
 import json
-import logging
 import sys
 from pathlib import Path
 
@@ -69,8 +68,9 @@ def _event(**overrides) -> dict:
 
 @pytest.fixture()
 def fabric_env(tmp_path, monkeypatch):
-    """Control con manifiesto temporal, engine stub y token de servicio."""
-    monkeypatch.setenv("DYSTOPIA_FABRIC_REMOTE_TOKEN", TOKEN)
+    """Control con manifiesto temporal, engine stub y token de ingesta."""
+    monkeypatch.setenv("DYSTOPIA_FABRIC_EVENTS_TOKEN", TOKEN)
+    monkeypatch.delenv("DYSTOPIA_FABRIC_REMOTE_TOKEN", raising=False)
     target = tmp_path / "network.yaml"
     target.write_text(yaml.safe_dump(_manifest()), encoding="utf-8")
     monkeypatch.setattr(controller_mod.topology_svc, "NETWORK_FILE", target)
@@ -108,7 +108,7 @@ def emitted(monkeypatch):
 
 
 def test_sin_token_configurado_503(client, monkeypatch):
-    monkeypatch.delenv("DYSTOPIA_FABRIC_REMOTE_TOKEN", raising=False)
+    monkeypatch.delenv("DYSTOPIA_FABRIC_EVENTS_TOKEN", raising=False)
     response = client.post("/api/fabric/events", json={"events": [_event()]})
     assert response.status_code == 503
     assert "fail-closed" in response.json()["detail"] or "deshabilitada" in response.json()["detail"]
@@ -392,17 +392,23 @@ def test_solo_token_de_eventos(client, monkeypatch):
     assert response.status_code == 200
 
 
-def test_fallback_token_deprecado(client, monkeypatch, caplog):
-    import app.routers.fabric as fabric_router
-
+def test_sin_fallback_al_token_de_operacion(client, monkeypatch):
+    """Fase 9: el token del engine remote ya NO sirve para la ingesta."""
     monkeypatch.delenv("DYSTOPIA_FABRIC_EVENTS_TOKEN", raising=False)
     monkeypatch.setenv("DYSTOPIA_FABRIC_REMOTE_TOKEN", "r" * 40)
-    monkeypatch.setattr(fabric_router, "_legacy_token_warned", False)
-    caplog.set_level(logging.WARNING)
     response = client.post(
         "/api/fabric/events", headers={"X-Fabric-Token": "r" * 40},
         json={"events": [_event()]},
     )
-    assert response.status_code == 200
-    assert "deprecado" in caplog.text
-    assert "DYSTOPIA_FABRIC_EVENTS_TOKEN" in caplog.text
+    assert response.status_code == 503
+    assert "DYSTOPIA_FABRIC_EVENTS_TOKEN" in response.json()["detail"]
+
+
+def test_token_de_eventos_corto_503(client, monkeypatch):
+    """Un token de menos de 32 caracteres cuenta como no configurado."""
+    monkeypatch.setenv("DYSTOPIA_FABRIC_EVENTS_TOKEN", "corto")
+    response = client.post(
+        "/api/fabric/events", headers={"X-Fabric-Token": "corto"},
+        json={"events": [_event()]},
+    )
+    assert response.status_code == 503

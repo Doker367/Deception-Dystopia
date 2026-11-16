@@ -275,6 +275,7 @@ def test_forwarder_desde_entorno(tmp_path, monkeypatch):
     monkeypatch.setenv("DYSTOPIA_FABRIC_EVENTS_ENABLED", "true")
     monkeypatch.setenv("DYSTOPIA_FABRIC_EVENTS_URL", URL)
     monkeypatch.setenv("DYSTOPIA_FABRIC_EVENTS_INTERVAL", "2")
+    monkeypatch.setenv("DYSTOPIA_FABRIC_EVENTS_TOKEN", "e" * 40)
     monkeypatch.setenv("DYSTOPIA_FABRIC_DEVICES_DIR", str(tmp_path / "logs"))
     forwarder = forwarder_from_env(TOKEN)
     assert forwarder is not None
@@ -293,12 +294,11 @@ def test_forwarder_usa_token_de_eventos(tmp_path, monkeypatch):
     assert forwarder._token == "e" * 40
 
 
-def test_forwarder_fallback_al_token_de_operacion(tmp_path, monkeypatch, caplog):
+def test_forwarder_sin_token_de_eventos_no_se_crea(tmp_path, monkeypatch, caplog):
+    """Fase 9: sin token de eventos no hay fallback al token de operación."""
     monkeypatch.setenv("DYSTOPIA_FABRIC_EVENTS_ENABLED", "true")
     monkeypatch.delenv("DYSTOPIA_FABRIC_EVENTS_TOKEN", raising=False)
     monkeypatch.setenv("DYSTOPIA_FABRIC_DEVICES_DIR", str(tmp_path / "logs"))
     caplog.set_level(logging.WARNING)
-    forwarder = forwarder_from_env("o" * 40)
-    assert forwarder is not None
-    assert forwarder._token == "o" * 40
-    assert "deprecado" in caplog.text
+    assert forwarder_from_env("o" * 40) is None
+    assert "DYSTOPIA_FABRIC_EVENTS_TOKEN" in caplog.text

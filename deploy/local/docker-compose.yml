@@ -208,7 +208,10 @@ services:
       DYSTOPIA_FABRIC_ENGINE: ${DYSTOPIA_FABRIC_ENGINE:-stub}
       DYSTOPIA_FABRIC_REMOTE_URL: ${DYSTOPIA_FABRIC_REMOTE_URL:-http://host.docker.internal:8090}
       DYSTOPIA_FABRIC_REMOTE_TOKEN: ${DYSTOPIA_FABRIC_REMOTE_TOKEN:-}
-      # Token de ingesta de eventos (forwarder → control); distinto del de operación.
+      # Token de ingesta de eventos (forwarder → control); distinto del de
+      # operación y OBLIGATORIO para la ingesta: sin él POST /api/fabric/events
+      # responde 503 (fail-closed; ya no se reutiliza REMOTE_TOKEN). Valor =
+      # DYSTOPIA_FABRIC_EVENTS_TOKEN de /etc/dystopia/fabric.env.
       DYSTOPIA_FABRIC_EVENTS_TOKEN: ${DYSTOPIA_FABRIC_EVENTS_TOKEN:-}
       DYSTOPIA_FABRIC_REMOTE_TIMEOUT: ${DYSTOPIA_FABRIC_REMOTE_TIMEOUT:-120}
       # Copia read-only del manifiesto del host: el engine "remote" verifica

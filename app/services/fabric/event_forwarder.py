@@ -21,7 +21,19 @@ Garantías:
 
 Variables de entorno: ``DYSTOPIA_FABRIC_EVENTS_URL`` (default
 ``http://127.0.0.1:8082/api/fabric/events``), ``DYSTOPIA_FABRIC_EVENTS_INTERVAL``
-(default 5s) y ``DYSTOPIA_FABRIC_EVENTS_ENABLED`` (default true).
+(default 5s), ``DYSTOPIA_FABRIC_EVENTS_ENABLED`` (default true) y
+``DYSTOPIA_FABRIC_EVENTS_TOKEN`` (obligatorio para enviar).
+
+Token de ingesta (Fase 9)
+-------------------------
+El forwarder envía **solo** con ``DYSTOPIA_FABRIC_EVENTS_TOKEN``. Antes
+caía al token de operación del servicio (``DYSTOPIA_FABRIC_TOKEN``) con
+un warning "deprecado"; ese fallback se retiró junto con el del control
+(``app/routers/fabric.py``) para que ambos lados validen el mismo
+secreto. Sin token de eventos el forwarder **no se crea** (``None``) y el
+servicio sigue funcionando sin ingesta: los JSONL quedan en disco y se
+reenviarán cuando se configure el token y se reinicie el servicio (los
+offsets persistidos no se pierden).
 """
 
 import json
@@ -321,17 +333,24 @@ def forwarder_from_env(
     devices_dir: Optional[Path | str] = None,
     state_path: Optional[Path | str] = None,
 ) -> Optional[EventForwarder]:
-    """Construye el forwarder según el entorno; ``None`` si está deshabilitado."""
+    """Construye el forwarder según el entorno; ``None`` si no puede enviar.
+
+    ``None`` cuando está deshabilitado (``DYSTOPIA_FABRIC_EVENTS_ENABLED=false``)
+    o cuando falta ``DYSTOPIA_FABRIC_EVENTS_TOKEN`` (fail-closed: no se
+    reutiliza el token de operación ``settings_token``).
+    """
     enabled = os.getenv(EVENTS_ENABLED_ENV, "true").strip().lower() != "false"
     if not enabled:
         return None
     token = os.getenv(EVENTS_TOKEN_ENV, "").strip()
     if len(token) < 32:
         logger.warning(
-            "[fabric-forwarder] %s no configurado; usando el token de operación "
-            "(deprecado: separa los tokens)", EVENTS_TOKEN_ENV,
+            "[fabric-forwarder] %s no configurado (≥32 caracteres); ingesta "
+            "deshabilitada. Añádelo a /etc/dystopia/fabric.env y reinicia el "
+            "servicio; los eventos quedan en disco hasta entonces.",
+            EVENTS_TOKEN_ENV,
         )
-        token = settings_token
+        return None
     devices = Path(devices_dir or os.getenv(DEVICES_DIR_ENV, DEFAULT_DEVICES_DIR))
     url = os.getenv(EVENTS_URL_ENV, DEFAULT_EVENTS_URL).strip() or DEFAULT_EVENTS_URL
     raw_interval = os.getenv(EVENTS_INTERVAL_ENV, str(DEFAULT_INTERVAL)).strip()

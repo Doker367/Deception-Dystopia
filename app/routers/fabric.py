@@ -13,10 +13,28 @@ segundo filtro recursivo en la frontera HTTP.
 ``POST /api/fabric/events`` es la excepción de autenticación: no usa JWT
 porque el emisor es un **servicio** (el forwarder del host service), no un
 usuario; se autentica con ``X-Fabric-Token`` contra
-``DYSTOPIA_FABRIC_REMOTE_TOKEN`` (el mismo secreto del engine remote).
+``DYSTOPIA_FABRIC_EVENTS_TOKEN``, un secreto **dedicado a la ingesta**
+distinto del token de operación ``DYSTOPIA_FABRIC_REMOTE_TOKEN``.
 A diferencia del ingest legacy retirado (410), es una ruta interna
 control→servicio del host: secreto de servicio dedicado, lotes acotados y
 solo ``device_id`` presentes en el manifiesto del fabric.
+
+Migración (Fase 9)
+------------------
+Hasta la Fase 8 la ingesta aceptaba como *fallback* deprecado
+``DYSTOPIA_FABRIC_REMOTE_TOKEN`` cuando faltaba el token de eventos. Ese
+fallback **se retiró**: reutilizar el token de operación (que viaja en
+cada petición de deploy/destroy) ampliaba su superficie de exposición y
+mezclaba dos privilegios distintos. Si el operador no define
+``DYSTOPIA_FABRIC_EVENTS_TOKEN`` en el ``.env`` del control, la ingesta
+responde **503 fail-closed** (no 401: el endpoint está deshabilitado, no
+mal autenticado) y el forwarder del host deja de enviar. Pasos:
+
+1. Copia ``DYSTOPIA_FABRIC_EVENTS_TOKEN`` de ``/etc/dystopia/fabric.env``
+   (lo genera el instalador) al ``.env`` de ``deploy/local``.
+2. Recrea el control: ``docker compose up -d control``.
+3. Verifica ``GET /api/fabric/status`` → ``forwarder.failed`` estable y
+   ``pending`` a 0 tras unos ciclos.
 """
 
 import ipaddress
@@ -51,8 +69,6 @@ _FORBIDDEN_KEYS = frozenset({"credentials", "password"})
 
 # ── Ingesta de eventos del fabric (§7) ──────────────────────
 SERVICE_TOKEN_ENV = "DYSTOPIA_FABRIC_EVENTS_TOKEN"
-# Fallback deprecado: antes la ingesta reutilizaba el token del engine remote.
-LEGACY_SERVICE_TOKEN_ENV = "DYSTOPIA_FABRIC_REMOTE_TOKEN"
 MIN_SERVICE_TOKEN = 32
 MAX_EVENTS = 200
 MAX_BODY_BYTES = 256 * 1024
@@ -258,35 +274,25 @@ def get_health():
 # ── Ingesta de eventos del fabric (control ← host service) ──
 
 
-_legacy_token_warned = False
+def _events_token() -> str:
+    """Token de ingesta (solo ``DYSTOPIA_FABRIC_EVENTS_TOKEN``) o ``""``.
 
-
-def _events_token() -> tuple[str, bool]:
-    """Token de ingesta y si viene del env legacy (deprecado)."""
+    Sin fallback: el token de operación del engine remote ya no sirve para
+    la ingesta (ver "Migración (Fase 9)" en el docstring del módulo).
+    """
     token = os.getenv(SERVICE_TOKEN_ENV, "").strip()
-    if len(token) >= MIN_SERVICE_TOKEN:
-        return token, False
-    legacy = os.getenv(LEGACY_SERVICE_TOKEN_ENV, "").strip()
-    if len(legacy) >= MIN_SERVICE_TOKEN:
-        return legacy, True
-    return "", False
+    return token if len(token) >= MIN_SERVICE_TOKEN else ""
 
 
 async def _require_service_token(request: Request) -> None:
     """Token de servicio en ``X-Fabric-Token``; 503 si no está configurado."""
-    global _legacy_token_warned
-    token, legacy = _events_token()
+    token = _events_token()
     if not token:
         raise HTTPException(
             503,
             "Ingesta de eventos deshabilitada: "
-            f"{SERVICE_TOKEN_ENV} no está configurado (fail-closed)",
-        )
-    if legacy and not _legacy_token_warned:
-        _legacy_token_warned = True
-        logger.warning(
-            "[fabric] %s no configurado; usando %s (deprecado: separa los tokens)",
-            SERVICE_TOKEN_ENV, LEGACY_SERVICE_TOKEN_ENV,
+            f"{SERVICE_TOKEN_ENV} no está configurado (fail-closed); "
+            "define el token de eventos en el .env del control",
         )
     header = request.headers.get("x-fabric-token", "")
     if not header or not secrets.compare_digest(
