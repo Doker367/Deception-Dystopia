@@ -83,6 +83,12 @@ fabric:
   switches:
     - id: sw-core
       vlans: [10]
+  links:                              # enlaces explícitos entre switches
+    - from: sw-core
+      to: sw-oficina
+      trunk: true
+      latency_ms: 50                  # emulación WAN (opcional, ver §3.1)
+      jitter_ms: 5
   device_overrides:
     - id: pc-recepcion-01
       interfaces:
@@ -96,6 +102,39 @@ fabric:
 
 Ejemplo completo y válido: [`config/deception/network.fabric.example.yaml`](../config/deception/network.fabric.example.yaml).
 Reglas de integridad (device/segment/switch/VLAN/IP, unicidad): spec §3.3.
+
+### 3.1 Emulación WAN de los enlaces (Fase 10)
+
+Cada entrada de `fabric.links` acepta cuatro parámetros opcionales que el
+engine traduce a un qdisc `netem` de `tc` **en ambos extremos** del veth
+(el enlace se degrada en los dos sentidos):
+
+| Campo | Rango | Efecto (`tc netem`) |
+|---|---|---|
+| `latency_ms` | 0–5000 | `delay <n>ms` |
+| `jitter_ms` | 0–1000, **≤ `latency_ms`** | `delay <lat>ms <jitter>ms` |
+| `loss_pct` | 0–100 | `loss <n>%` |
+| `bandwidth_mbps` | 0.1–100000 | `rate <n>mbit` |
+
+```yaml
+links:
+  - {from: sw-core, to: sw-oficina, latency_ms: 50, jitter_ms: 5}
+  - {from: sw-core, to: sw-servidores, loss_pct: 0.5, bandwidth_mbps: 20}
+```
+
+- Las cláusulas no declaradas se omiten: `latency_ms: 50` solo emite
+  `delay 50ms`.
+- `jitter_ms` exige `latency_ms` y no puede superarlo (netem no admite
+  jitter sin delay ni retardos negativos); el parser lo rechaza.
+- `bandwidth` (entero) queda como **alias deprecado** de `bandwidth_mbps`;
+  si se declaran ambos deben coincidir y `bandwidth_mbps` prevalece.
+- Los uplinks automáticos (`switches[].uplink`) no heredan parámetros WAN:
+  declara un `links` explícito para ese par.
+- Re-desplegar aplica `tc qdisc replace`: cambiar los parámetros recalcula
+  el qdisc sin destruir el enlace. `destroy` borra el qdisc (tolerante a
+  su ausencia). El resultado del deploy lo lista en `wan_links`.
+- Requiere `tc` (iproute2) y el módulo `sch_netem`; si falta, el deploy
+  falla en el preflight con un error accionable (no se ignora).
 
 ## 4. Cómo se habilita (doble gate)
 
@@ -171,6 +210,8 @@ Página **Fabric** (sección Operación):
   host (docker0 ↔ contenedor); TLS/mTLS pendiente.
 - **Sin métricas OVS** (contadores de puertos) ni reachability programada: la
   salud se calcula al consultar.
+- **WAN solo en enlaces entre switches**: los dispositivos no declaran
+  latencia/pérdida propias (se aplicaría al veth de acceso, no al enlace).
 - **Un deploy concurrente**: el segundo recibe 409.
 - **Destroy usa el manifiesto actual**: si cambió desde el deploy, revisa
   huérfanos con el health/reconcile antes de asumir limpieza.

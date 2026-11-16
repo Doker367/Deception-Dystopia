@@ -147,6 +147,34 @@ sudo tail -n 5 /var/lib/dystopia/fabric/logs/pc-recepcion-01/events.jsonl
 curl -s -H "Authorization: Bearer $TOKEN" http://172.17.0.1:18100/status | python3 -c 'import json,sys; print(json.load(sys.stdin)["forwarder"])'
 ```
 
+### Emulación WAN (`tc netem`, Fase 10)
+
+Si algún enlace de `fabric.links` declara `latency_ms`, `jitter_ms`,
+`loss_pct` o `bandwidth_mbps`, el deploy deja un qdisc `netem` en los
+**dos** extremos del veth (`lk<NN>a-*` y `lk<NN>b-*`):
+
+```bash
+# ¿Qué qdisc hay en cada extremo del enlace?
+sudo tc qdisc show dev lk00a-swcore
+sudo tc qdisc show dev lk00b-swofici
+#   qdisc netem 8001: root refcnt 2 limit 1000 delay 50ms 5ms
+
+# RTT real entre dos dispositivos de switches distintos
+PID=$(sudo docker inspect -f '{{.State.Pid}}' dystopia-fabric-pc-recepcion-01)
+sudo nsenter -t $PID -n -- ping -c 5 10.20.0.10
+
+# Parámetros aplicados según el último deploy (JSON del host service)
+curl -s -H "Authorization: Bearer $TOKEN" http://172.17.0.1:18100/status \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["last_deploy"]["wan_links"])'
+
+# Limpieza manual (el destroy ya lo hace)
+sudo tc qdisc del dev lk00a-swcore root
+sudo tc qdisc del dev lk00b-swofici root
+```
+
+Sin qdisc netem, `tc qdisc show` responde `qdisc noqueue 0: root refcnt 2`
+(o `pfifo_fast`). El destroy borra el qdisc y es idempotente.
+
 ================================================================
 7) OPERACIÓN DIARIA
 ================================================================
@@ -188,6 +216,10 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" http://172.17.0.1:18100/destro
 | `Address already in use` en 8090/8091 | Puertos ocupados en el host | Usa **18100** (`ss -ltnp | grep 18100`) y alinea `DYSTOPIA_FABRIC_REMOTE_URL` del control |
 | `503 Ingesta de eventos deshabilitada` | `DYSTOPIA_FABRIC_EVENTS_TOKEN` sin configurar en el control | Define el token de eventos en el `.env` del control y recrea el contenedor |
 | `401 token inválido` en operaciones | Tokens desalineados entre control y host | Compara `DYSTOPIA_FABRIC_REMOTE_TOKEN` (control) con `DYSTOPIA_FABRIC_TOKEN` (host) |
+| `El manifiesto declara emulación WAN … pero 'tc' no está disponible` | Falta `tc` (iproute2) o el módulo `sch_netem` | `sudo apt install iproute2`; verifica `tc -V` y `sudo modprobe sch_netem`; el preflight falla a propósito (no se ignora) |
+| `jitter_ms sin latency_ms` / `no puede superar la latencia` | Manifiesto con jitter sin delay o mayor que la latencia | Declara `latency_ms` y deja `jitter_ms ≤ latency_ms` |
+| `tc qdisc replace` devuelve `Operation not permitted` | El servicio no tiene `CAP_NET_ADMIN` | La unit ya lo incluye; comprueba `systemctl show -p CapabilityBoundingSet dystopia-fabric` |
+| El RTT no cambia tras editar la latencia | El manifiesto del host difiere del local (el engine remote aborta) o no se re-desplegó | Sincroniza `network.yaml` y ejecuta **Deploy** (usa `replace`, no hace falta destroy) |
 | `422 Manifiesto inválido` al desplegar | El manifiesto del host difiere del del control o tiene errores | Ejecuta Validate en la UI; sincroniza `config/deception/network.yaml` (el engine remote compara hashes) |
 | Contenedor `Restarting`/exits | El agente no encuentra `/etc/fabric/device.json` o ningún listener arranca | `sudo docker logs dystopia-fabric-<device>`; verifica que hubo clave del fabric y servicios en el manifiesto |
 
