@@ -330,6 +330,8 @@ No se comparten contraseñas, API keys ni secretos entre entornos.
 - [Integración operativa offline](docs/OPS-INTEGRATION.md)
 - [Puente de consulta Unix](docs/QUERY-BRIDGE.md)
 - [IA local y RAG de ataques](docs/AI-RAG.md)
+- [Network Fabric: guía de usuario](docs/FABRIC.md)
+- [Network Fabric: runbook de operación](docs/FABRIC-OPERATIONS.md)
 - [Migración](MIGRATION.md)
 - [Procedencia de dependencias](docs/DEPENDENCY-PROVENANCE.md)
 - [Licencia](LICENSE)

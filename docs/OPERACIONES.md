@@ -258,10 +258,18 @@ Variables (en `/etc/dystopia/fabric.env`, las añade el instalador):
 | `DYSTOPIA_FABRIC_EVENTS_URL` | `http://127.0.0.1:8082/api/fabric/events` | Endpoint del control. |
 | `DYSTOPIA_FABRIC_EVENTS_INTERVAL` | `5` | Segundos entre ciclos (mín. 0.5). |
 | `DYSTOPIA_FABRIC_DEVICES_DIR` | `/var/lib/dystopia/fabric/logs` | Raíz de los volúmenes de logs. |
+| `DYSTOPIA_FABRIC_TOKEN` | generado | Token de **operación** (control→host). |
+| `DYSTOPIA_FABRIC_EVENTS_TOKEN` | generado, distinto | Token de **ingesta** (forwarder→control). |
 
-En el control, `POST /api/fabric/events` exige `DYSTOPIA_FABRIC_REMOTE_TOKEN`
-(el mismo secreto del engine `remote`; ya se pasa en el compose del lab):
-sin él el endpoint responde **503 fail-closed**, con token erróneo **401**,
-`device_id` ajeno al manifiesto **403** y lotes >200 eventos/256 KB **413**.
-El estado del forwarder se consulta en `GET /status` del host service
-(`forwarder: {enabled, pending, sent, failed, last_error}`).
+En el control, `POST /api/fabric/events` exige `DYSTOPIA_FABRIC_EVENTS_TOKEN`
+(el instalador lo genera separado del token de operación; el compose del lab
+lo pasa como variable): sin él el endpoint responde **503 fail-closed**, con
+token erróneo **401**, `device_id` ajeno al manifiesto **403** y lotes >200
+eventos/256 KB **413**. El estado del forwarder se consulta en `GET /status`
+del host service (`forwarder: {enabled, pending, sent, failed, last_error}`).
+
+En el despliegue real (control en contenedor, engine `remote`): el host
+service escucha en `DYSTOPIA_FABRIC_BIND=172.17.0.1` (gateway de docker0,
+estable; `host.docker.internal` resuelve ahí) y puerto `18100`; el control
+apunta a `http://host.docker.internal:18100`. Runbook completo:
+[`docs/FABRIC-OPERATIONS.md`](FABRIC-OPERATIONS.md).

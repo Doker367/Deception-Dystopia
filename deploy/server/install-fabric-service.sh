@@ -89,6 +89,11 @@ else
 fi
 grep -q '^DYSTOPIA_FABRIC_MANIFEST=' "$ENV_FILE" \
     || printf 'DYSTOPIA_FABRIC_MANIFEST=%s\n' "$MANIFEST_DEFAULT" >> "$ENV_FILE"
+# BIND recomendado con control en contenedor: 172.17.0.1 (gateway de docker0,
+# estable; host.docker.internal resuelve ahí). NO usar la IP de la red compose:
+# cambia al recrear la red y el control se queda sin servicio (~120 s de timeout).
+# Firewall (INPUT DROP por defecto):
+#   ufw allow from 172.16.0.0/12 to 172.17.0.1 port <DYSTOPIA_FABRIC_PORT> proto tcp
 grep -q '^DYSTOPIA_FABRIC_BIND=' "$ENV_FILE" \
     || printf 'DYSTOPIA_FABRIC_BIND=127.0.0.1\n' >> "$ENV_FILE"
 grep -q '^DYSTOPIA_FABRIC_PORT=' "$ENV_FILE" \
