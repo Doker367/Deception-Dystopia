@@ -55,9 +55,10 @@ ProtectClock=yes
 RestrictSUIDSGID=yes
 RestrictRealtime=yes
 LockPersonality=yes
-# setns(CLONE_NEWNET) debe seguir permitido para nsenter; solo se bloquea
-# la creación/unión de user namespaces.
-RestrictNamespaces=user
+# NO se usa RestrictNamespaces=user: nsenter llama setns(fd, 0) y el filtro
+# de systemd no puede distinguir el tipo, así que bloquea también la unión al
+# netns del contenedor (EPERM). El confinamiento de namespaces lo da el resto
+# de la unit (sin unshare propio, SystemCallFilter y CapabilityBoundingSet).
 # NETLINK es imprescindible para `ip link`/`ovs-vsctl`; UNIX para los
 # sockets de Docker/OVSDB; INET/INET6 para el bind local y el ping.
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
