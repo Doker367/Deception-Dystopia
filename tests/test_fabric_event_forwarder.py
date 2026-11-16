@@ -239,11 +239,15 @@ def test_status_refleja_contadores(tmp_path):
     forwarder.run_once()
 
     status = forwarder.status()
-    assert status == {
-        "enabled": True, "pending": 2, "sent": 0, "failed": 2,
-        "last_error": status["last_error"],
-    }
+    assert {
+        key: status[key] for key in ("enabled", "pending", "sent", "failed")
+    } == {"enabled": True, "pending": 2, "sent": 0, "failed": 2}
     assert "503" in (status["last_error"] or "")
+    # Diagnóstico de operación: archivos y offsets visibles en /status.
+    assert status["dir"] == str(tmp_path / "logs")
+    assert status["files"] == [str(log)]
+    # Sin envío confirmado el offset sigue vacío: se reintenta el lote.
+    assert status["offsets"] == {}
 
     transport.script = [200]
     forwarder.run_once()
