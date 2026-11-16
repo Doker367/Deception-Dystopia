@@ -51,8 +51,41 @@ class FabricLink(BaseModel):
     from_: str = Field(..., alias="from", description="Switch de origen", examples=["sw-core"])
     to: str = Field(..., description="Switch de destino", examples=["sw-oficina"])
     trunk: bool = Field(default=True, description="Enlace troncal (802.1Q)")
+    # ── Emulación WAN (Fase 10: tc netem en ambos extremos del veth) ──
+    latency_ms: Optional[float] = Field(
+        default=None,
+        ge=0,
+        le=5000,
+        description="Latencia base del enlace en milisegundos (0–5000)",
+        examples=[50],
+    )
+    jitter_ms: Optional[float] = Field(
+        default=None,
+        ge=0,
+        le=1000,
+        description="Variación de la latencia en milisegundos (0–1000, ≤ latency_ms)",
+        examples=[10],
+    )
+    loss_pct: Optional[float] = Field(
+        default=None,
+        ge=0,
+        le=100,
+        description="Pérdida de paquetes en porcentaje (0–100)",
+        examples=[0.5],
+    )
+    bandwidth_mbps: Optional[float] = Field(
+        default=None,
+        gt=0,
+        le=100000,
+        description="Ancho de banda del enlace en Mbps (0.1–100000)",
+        examples=[100],
+    )
     bandwidth: Optional[int] = Field(
-        default=None, description="Ancho de banda reservado (Fase 2)"
+        default=None,
+        description=(
+            "DEPRECADO: alias de bandwidth_mbps (Fase 2). Si se declara, "
+            "bandwidth_mbps prevalece; migra a bandwidth_mbps"
+        ),
     )
 
 

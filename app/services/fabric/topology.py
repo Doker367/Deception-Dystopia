@@ -24,6 +24,7 @@ from app.services.fabric.models import (
     FabricConfig,
     FabricDeviceOverride,
     FabricInterface,
+    FabricLink,
     FabricTopology,
 )
 
@@ -156,6 +157,12 @@ class LinkSpec(BaseModel):
     ``source`` indica qué declaración lo originó: un ``uplink`` de switch
     o una entrada de ``links``. Los extremos se listan en el orden de esa
     declaración.
+
+    Los parámetros WAN (Fase 10) se copian tal cual del manifiesto y son
+    ``None`` cuando no se declaran: el engine solo aplica ``tc netem`` si
+    hay al menos uno. ``bandwidth_mbps`` ya resuelve el alias deprecado
+    ``bandwidth`` (``bandwidth_mbps`` prevalece), así que el engine no
+    necesita conocer la compatibilidad.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -166,8 +173,20 @@ class LinkSpec(BaseModel):
     port_from: str
     port_to: str
     trunk: bool = True
-    bandwidth: Optional[int] = None
+    latency_ms: Optional[float] = None
+    jitter_ms: Optional[float] = None
+    loss_pct: Optional[float] = None
+    bandwidth_mbps: Optional[float] = None
     source: Literal["uplink", "explicit"]
+
+    @property
+    def wan_enabled(self) -> bool:
+        """True si el enlace declara algún parámetro de emulación WAN."""
+        return any(
+            value is not None
+            for value in (self.latency_ms, self.jitter_ms, self.loss_pct,
+                          self.bandwidth_mbps)
+        )
 
 
 # ── Nombres de interfaz deterministas ───────────────────────
@@ -234,8 +253,20 @@ class _PlannedLink(NamedTuple):
     from_switch: str
     to_switch: str
     trunk: bool
-    bandwidth: Optional[int]
+    latency_ms: Optional[float]
+    jitter_ms: Optional[float]
+    loss_pct: Optional[float]
+    bandwidth_mbps: Optional[float]
     source: Literal["uplink", "explicit"]
+
+
+def _effective_bandwidth(link: FabricLink) -> Optional[float]:
+    """Ancho de banda efectivo: ``bandwidth_mbps`` manda sobre el alias."""
+    if link.bandwidth_mbps is not None:
+        return link.bandwidth_mbps
+    if link.bandwidth is not None:
+        return float(link.bandwidth)
+    return None
 
 
 def _planned_links(config: FabricConfig) -> list[_PlannedLink]:
@@ -244,7 +275,7 @@ def _planned_links(config: FabricConfig) -> list[_PlannedLink]:
     Reglas de deduplicación (deterministas y documentadas):
 
     1. Los ``links`` explícitos van primero, en orden de declaración: son
-       la declaración más específica (``trunk``/``bandwidth``).
+       la declaración más específica (``trunk`` y parámetros WAN).
     2. Después, cada ``uplink`` de switch en orden de declaración. Si el
        par ya existe, se omite: el enlace explícito manda.
     3. Solo hay un enlace lógico por par de switches en el MVP (no hay
@@ -262,7 +293,10 @@ def _planned_links(config: FabricConfig) -> list[_PlannedLink]:
             from_switch=link.from_,
             to_switch=link.to,
             trunk=link.trunk,
-            bandwidth=link.bandwidth,
+            latency_ms=link.latency_ms,
+            jitter_ms=link.jitter_ms,
+            loss_pct=link.loss_pct,
+            bandwidth_mbps=_effective_bandwidth(link),
             source="explicit",
         ))
 
@@ -277,7 +311,10 @@ def _planned_links(config: FabricConfig) -> list[_PlannedLink]:
             from_switch=switch.id,
             to_switch=switch.uplink,
             trunk=True,
-            bandwidth=None,
+            latency_ms=None,
+            jitter_ms=None,
+            loss_pct=None,
+            bandwidth_mbps=None,
             source="uplink",
         ))
 
@@ -347,7 +384,10 @@ def build_link_specs(topology: FabricTopology) -> list[LinkSpec]:
             port_from=port_from,
             port_to=port_to,
             trunk=planned.trunk,
-            bandwidth=planned.bandwidth,
+            latency_ms=planned.latency_ms,
+            jitter_ms=planned.jitter_ms,
+            loss_pct=planned.loss_pct,
+            bandwidth_mbps=planned.bandwidth_mbps,
             source=planned.source,
         ))
     return specs

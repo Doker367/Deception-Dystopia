@@ -19,7 +19,10 @@ sys.path.insert(0, str(REPO))
 
 from app.models.deception import DeceptionNetwork  # noqa: E402
 from app.services.fabric.models import FabricConfig, FabricTopology  # noqa: E402
-from app.services.fabric.parser import parse_manifest  # noqa: E402
+from app.services.fabric.parser import (  # noqa: E402
+    FabricValidationError,
+    parse_manifest,
+)
 from app.services.fabric import topology as topology_mod  # noqa: E402
 from app.services.fabric.topology import (  # noqa: E402
     DeviceSpec,
@@ -195,14 +198,82 @@ def test_link_explicito_conserva_trunk_y_bandwidth():
     manifest = _manifest()
     manifest["fabric"]["links"].append({
         "from": "sw-oficina", "to": "sw-servidores",
-        "trunk": False, "bandwidth": 100,
+        "trunk": False, "bandwidth_mbps": 100,
     })
     link = next(
         item for item in build_link_specs(_topology(manifest))
         if {item.from_switch, item.to_switch} == {"sw-oficina", "sw-servidores"}
     )
     assert link.trunk is False
-    assert link.bandwidth == 100
+    assert link.bandwidth_mbps == 100
+
+
+# ── Fase 10: parámetros WAN ─────────────────────────────────
+
+
+def _wan_manifest(**wan) -> dict:
+    manifest = _manifest()
+    manifest["fabric"]["links"].append({
+        "from": "sw-oficina", "to": "sw-servidores", **wan,
+    })
+    return manifest
+
+
+def _wan_link(manifest: dict):
+    return next(
+        item for item in build_link_specs(_topology(manifest))
+        if {item.from_switch, item.to_switch} == {"sw-oficina", "sw-servidores"}
+    )
+
+
+def test_link_wan_propaga_los_cuatro_parametros():
+    link = _wan_link(_wan_manifest(
+        latency_ms=50, jitter_ms=5, loss_pct=0.5, bandwidth_mbps=20,
+    ))
+    assert link.latency_ms == 50
+    assert link.jitter_ms == 5
+    assert link.loss_pct == 0.5
+    assert link.bandwidth_mbps == 20
+    assert link.wan_enabled is True
+
+
+def test_link_sin_wan_deja_los_campos_en_none():
+    link = _wan_link(_wan_manifest())
+    assert link.latency_ms is None
+    assert link.jitter_ms is None
+    assert link.loss_pct is None
+    assert link.bandwidth_mbps is None
+    assert link.wan_enabled is False
+
+
+def test_link_uplink_automatico_no_hereda_wan():
+    link = next(
+        item for item in build_link_specs(_topology(_wan_manifest(latency_ms=50)))
+        if item.source == "uplink"
+    )
+    assert link.latency_ms is None
+    assert link.wan_enabled is False
+
+
+def test_link_bandwidth_deprecado_se_resuelve_a_mbps():
+    link = _wan_link(_wan_manifest(bandwidth=100))
+    assert link.bandwidth_mbps == 100.0
+
+
+def test_link_bandwidth_mbps_prevalece_sobre_el_alias():
+    """El alias se resuelve a favor de ``bandwidth_mbps`` (sin validar aquí)."""
+    link = _wan_link(_wan_manifest(bandwidth=100, bandwidth_mbps=100))
+    assert link.bandwidth_mbps == 100.0
+    # El parser rechaza que ambos difieran (ver test_fabric_parser).
+    with pytest.raises(FabricValidationError):
+        _topology(_wan_manifest(bandwidth=100, bandwidth_mbps=20))
+
+
+def test_link_wan_es_determinista():
+    manifest = _wan_manifest(latency_ms=50, jitter_ms=5, loss_pct=1, bandwidth_mbps=20)
+    first = build_link_specs(_topology(manifest))
+    second = build_link_specs(_topology(manifest))
+    assert first == second
 
 
 def test_links_explicitos_duplicados_se_deduplican():

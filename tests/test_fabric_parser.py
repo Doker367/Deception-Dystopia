@@ -281,6 +281,73 @@ def test_link_a_si_mismo():
     assert any("consigo mismo" in e for e in errors)
 
 
+# ── Fase 10: parámetros WAN de los enlaces ──────────────────
+
+
+def _wan_manifest(**wan) -> dict:
+    manifest = _manifest()
+    manifest["fabric"]["links"] = [{"from": "sw-core", "to": "sw-oficina", **wan}]
+    return manifest
+
+
+def test_link_wan_valido_sin_errores():
+    errors = _errors(_wan_manifest(
+        latency_ms=50, jitter_ms=5, loss_pct=0.5, bandwidth_mbps=20,
+    ))
+    assert errors == []
+
+
+@pytest.mark.parametrize(
+    "field, value",
+    [
+        ("latency_ms", -1),
+        ("latency_ms", 5001),
+        ("jitter_ms", -1),
+        ("jitter_ms", 1001),
+        ("loss_pct", -0.5),
+        ("loss_pct", 100.1),
+        ("bandwidth_mbps", 0),
+        ("bandwidth_mbps", 100001),
+    ],
+)
+def test_link_wan_fuera_de_rango_rechazado(field, value):
+    with pytest.raises(ValueError):
+        _errors(_wan_manifest(**{field: value}))
+
+
+def test_link_wan_jitter_sin_latencia_rechazado():
+    errors = _errors(_wan_manifest(jitter_ms=5))
+    assert any("jitter_ms sin latency_ms" in error for error in errors)
+
+
+def test_link_wan_jitter_mayor_que_latencia_rechazado():
+    errors = _errors(_wan_manifest(latency_ms=10, jitter_ms=20))
+    assert any("no puede superar la latencia" in error for error in errors)
+
+
+def test_link_wan_jitter_igual_a_latencia_es_valido():
+    errors = _errors(_wan_manifest(latency_ms=10, jitter_ms=10))
+    assert errors == []
+
+
+def test_link_wan_bandwidth_y_mbps_distintos_rechazado():
+    errors = _errors(_wan_manifest(bandwidth=100, bandwidth_mbps=20))
+    assert any("valores distintos" in error for error in errors)
+
+
+def test_link_wan_bandwidth_y_mbps_iguales_es_valido():
+    errors = _errors(_wan_manifest(bandwidth=100, bandwidth_mbps=100))
+    assert errors == []
+
+
+def test_link_wan_errores_se_acumulan_con_el_resto():
+    manifest = _wan_manifest(latency_ms=10, jitter_ms=20)
+    manifest["fabric"]["links"].append({"from": "sw-core", "to": "sw-nope"})
+    errors = _errors(manifest)
+    assert any("no puede superar la latencia" in error for error in errors)
+    assert any("switch inexistente 'sw-nope'" in error for error in errors)
+
+
 # ── Acumulación de errores ──────────────────────────────────
 
 

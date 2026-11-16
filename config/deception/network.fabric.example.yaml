@@ -110,7 +110,13 @@ fabric:
     - from: sw-core
       to: sw-oficina
       trunk: true
-      bandwidth: null                  # reserved for Phase 2
+      # Emulación WAN opcional (tc netem en ambos extremos del veth).
+      # latency_ms: 0–5000 · jitter_ms: 0–1000 (≤ latency_ms)
+      # loss_pct: 0–100 · bandwidth_mbps: 0.1–100000 (alias deprecado: bandwidth)
+      # latency_ms: 50
+      # jitter_ms: 5
+      # loss_pct: 0.5
+      # bandwidth_mbps: 20
 
   # ── Device extensions (by device id) ─────────────────────────
   # Adds fabric-specific properties to devices already declared

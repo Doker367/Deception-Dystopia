@@ -19,7 +19,12 @@ from pydantic import ValidationError
 
 from app.models.deception import DeceptionNetwork, DeceptionSegment
 from app.services.deception import topology_svc
-from app.services.fabric.models import FabricConfig, FabricSwitch, FabricTopology
+from app.services.fabric.models import (
+    FabricConfig,
+    FabricLink,
+    FabricSwitch,
+    FabricTopology,
+)
 
 
 class FabricValidationError(ValueError):
@@ -100,6 +105,45 @@ def _normalized_mac(mac: str) -> str:
     return mac.strip().lower()
 
 
+def _wan_link_errors(link: FabricLink) -> list[str]:
+    """Errores de coherencia de los parámetros WAN de un enlace (Fase 10).
+
+    Los rangos numéricos ya los impone el modelo (``ge``/``le``/``gt``) y
+    fallan como error de esquema; aquí solo se comprueban las relaciones
+    entre campos, que pydantic no puede expresar por campo:
+
+    - ``jitter_ms`` necesita ``latency_ms`` (netem no admite jitter sin
+      delay) y no puede superarlo: un jitter mayor que la latencia da
+      retardos negativos.
+    - ``bandwidth`` (alias deprecado) y ``bandwidth_mbps`` no pueden
+      contradecirse: si ambos están declarados deben coincidir.
+    """
+    errors: list[str] = []
+    where = f"El enlace '{link.from_}' → '{link.to}'"
+    if link.jitter_ms is not None:
+        if link.latency_ms is None:
+            errors.append(
+                f"{where} declara jitter_ms sin latency_ms; netem necesita una "
+                "latencia base para aplicar el jitter"
+            )
+        elif link.jitter_ms > link.latency_ms:
+            errors.append(
+                f"{where} declara jitter_ms={link.jitter_ms:g} mayor que "
+                f"latency_ms={link.latency_ms:g}; el jitter no puede superar la latencia"
+            )
+    if (
+        link.bandwidth is not None
+        and link.bandwidth_mbps is not None
+        and float(link.bandwidth) != float(link.bandwidth_mbps)
+    ):
+        errors.append(
+            f"{where} declara bandwidth={link.bandwidth} y "
+            f"bandwidth_mbps={link.bandwidth_mbps:g} con valores distintos; "
+            "bandwidth está deprecado, usa solo bandwidth_mbps"
+        )
+    return errors
+
+
 def validate_fabric(network: DeceptionNetwork) -> list[str]:
     """Errores de integridad referencial del manifiesto completo.
 
@@ -144,6 +188,7 @@ def validate_fabric(network: DeceptionNetwork) -> list[str]:
                 f"El enlace '{link.from_}' → '{link.to}' no puede conectar un "
                 "switch consigo mismo"
             )
+        errors.extend(_wan_link_errors(link))
 
     segments: dict[str, DeceptionSegment] = {s.id: s for s in network.segments}
     devices = {d.id for d in network.devices}
