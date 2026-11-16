@@ -1,9 +1,8 @@
-"""NetPulse — Fabric: Deployment Engine sobre OVS (Fase 3).
+"""NetPulse — Fabric: Deployment Engine sobre OVS (Fases 3 y 4).
 
-Ejecuta el ``FabricPlan`` del Topology Manager sobre Open vSwitch:
-bridges, enlaces troncales con veth pairs y puertos de acceso. Los
-contenedores de dispositivo llegan en la Fase 4, así que sus puertos se
-dejan sin crear y se reportan como warning.
+Ejecuta el ``FabricPlan`` del Topology Manager sobre Open vSwitch y
+Docker: bridges, enlaces troncales con veth pairs y contenedores de
+dispositivo conectados por el ``DeviceRuntime`` (§4.2).
 
 Decisión de diseño: OVS directo en vez de Mininet
 -------------------------------------------------
@@ -18,23 +17,33 @@ la ejecución por otra implementación.
 
 Invariante de aislamiento (§9.1)
 --------------------------------
-Ningún bridge recibe puertos externos: solo se añaden los extremos de
-``LinkSpec`` (troncales entre switches del fabric). Los puertos de
-dispositivo no se crean en esta fase. ``_ensure_trunk_port`` rechaza
-cualquier puerto que no pertenezca a un enlace interno.
+Ningún bridge recibe puertos externos: el engine solo añade los extremos
+de ``LinkSpec`` (troncales entre switches) y el ``DeviceRuntime`` añade
+los puertos de dispositivo con ``tag=<vlan>`` al switch declarado. Sin
+uplinks del host.
+
+Orden de despliegue (§8.1/§8.2)
+-------------------------------
+Deploy: switches → enlaces → dispositivos. Destroy: dispositivos en
+orden inverso → enlaces → bridges. Un dispositivo que falla no aborta el
+deploy: el resto continúa y el resultado lo reporta en
+``containers_failed``; solo se lanza ``FabricDeployError`` si no queda
+ningún dispositivo desplegado (un fabric sin dispositivos no es un
+despliegue válido).
 
 Idempotencia
 ------------
 Antes de crear se comprueba la existencia (``ovs-vsctl br-exists``,
-``ovs-vsctl port-to-br``, ``ip link show``). ``destroy`` tolera recursos
-ya ausentes y no falla por ellos.
+``ovs-vsctl port-to-br``, ``ip link show``); el ``DeviceRuntime`` recrea
+contenedores de forma determinista. ``destroy`` tolera recursos ya
+ausentes y no falla por ellos.
 """
 
 import logging
 import os
 import re
 import subprocess
-from typing import Callable, Optional, Protocol
+from typing import TYPE_CHECKING, Callable, Optional, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -47,6 +56,9 @@ from app.services.fabric.topology import (
     build_device_specs,
     build_link_specs,
 )
+
+if TYPE_CHECKING:  # pragma: no cover - solo para tipos
+    from app.services.fabric.runtime import DeviceRuntime
 
 logger = logging.getLogger(__name__)
 
@@ -166,7 +178,10 @@ class DeployResult(BaseModel):
     bridges_existing: list[str] = Field(default_factory=list)
     links_created: list[str] = Field(default_factory=list)
     links_existing: list[str] = Field(default_factory=list)
-    device_ports_skipped: list[str] = Field(default_factory=list)
+    containers_created: list[str] = Field(default_factory=list)
+    containers_failed: list[dict] = Field(default_factory=list)
+    device_ports_created: list[str] = Field(default_factory=list)
+    devices: list[dict] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
 
@@ -176,6 +191,8 @@ class DestroyResult(BaseModel):
 
     bridges_removed: list[str] = Field(default_factory=list)
     links_removed: list[str] = Field(default_factory=list)
+    containers_removed: list[str] = Field(default_factory=list)
+    devices: list[dict] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
 
@@ -225,13 +242,25 @@ class OvsFabricEngine:
     """
 
     kind = "ovs"  # selector de ``DYSTOPIA_FABRIC_ENGINE``
+
     def __init__(
         self,
         runner: Optional[CommandRunner] = None,
         privilege_check: Optional[Callable[[], bool]] = None,
+        device_runtime: Optional["DeviceRuntime"] = None,
     ):
         self._runner: CommandRunner = runner or SubprocessRunner()
         self._privilege_check = privilege_check or _has_net_admin
+        if device_runtime is not None:
+            self._device_runtime = device_runtime
+        else:
+            # Import perezoso: runtime importa deploy (CommandRunner), así
+            # que no puede ser un import de módulo sin ciclo.
+            from app.services.fabric.runtime import DeviceRuntime, DockerCliRuntime
+
+            self._device_runtime = DeviceRuntime(
+                DockerCliRuntime(runner=self._runner), runner=self._runner
+            )
         self.last_result: Optional[DeployResult] = None
         self.last_destroy_result: Optional[DestroyResult] = None
 
@@ -239,6 +268,11 @@ class OvsFabricEngine:
     def runner(self) -> CommandRunner:
         """Runner inyectado (lo reutiliza el Lifecycle Manager)."""
         return self._runner
+
+    @property
+    def device_runtime(self) -> "DeviceRuntime":
+        """Runtime de dispositivos (lo usa el health del controller)."""
+        return self._device_runtime
 
     def check_environment(self) -> list[str]:
         """Errores de entorno (privilegios/herramientas); vacío si todo ok.
@@ -284,23 +318,48 @@ class OvsFabricEngine:
             else:
                 result.links_existing.append(link.id)
 
-        for bridge in plan.bridges:
-            for port in bridge.ports:
-                if port.kind != "device":
-                    continue
-                result.device_ports_skipped.append(port.name)
-                result.warnings.append(
-                    f"Puerto de dispositivo '{port.name}' ({port.peer}) no creado: "
-                    "los contenedores llegan en la Fase 4"
+        # §8.1: switches → enlaces → dispositivos. Un fallo de dispositivo
+        # no aborta el deploy; solo si no queda ninguno desplegado.
+        for device in plan.devices:
+            outcome = self._device_runtime.deploy_device(device)
+            detail = {
+                "device_id": device.device_id,
+                "container_id": outcome.container_id,
+                "pid": outcome.pid,
+                "success": outcome.success,
+                "step": outcome.error_step or "",
+                "error": "; ".join(outcome.errors),
+            }
+            result.devices.append(detail)
+            if outcome.success:
+                result.containers_created.append(device.device_id)
+                result.device_ports_created.extend(
+                    iface.host_veth for iface in device.interfaces
                 )
+            else:
+                result.containers_failed.append({
+                    "device_id": device.device_id,
+                    "step": detail["step"],
+                    "error": detail["error"] or "fallo desconocido",
+                })
+                result.warnings.append(
+                    f"Dispositivo '{device.device_id}' falló "
+                    f"({detail['step'] or 'sin paso'}): {detail['error']}"
+                )
+
+        if plan.devices and not result.containers_created:
+            raise FabricDeployError([
+                *result.warnings,
+                "Ningún dispositivo del fabric se pudo desplegar",
+            ])
 
         self.last_result = result
         logger.info(
             "[fabric] deploy OVS: %d bridges (%d nuevos), %d enlaces (%d nuevos), "
-            "%d puertos de dispositivo pendientes",
+            "%d contenedores (%d fallidos)",
             len(plan.bridges), len(result.bridges_created),
             len(plan.links), len(result.links_created),
-            len(result.device_ports_skipped),
+            len(result.containers_created), len(result.containers_failed),
         )
 
     def destroy(self, topology: FabricTopology) -> None:
@@ -315,6 +374,27 @@ class OvsFabricEngine:
         self._preflight()
 
         result = DestroyResult()
+
+        # §8.2: dispositivos en orden inverso → enlaces → bridges.
+        for device in reversed(plan.devices):
+            outcome = self._device_runtime.destroy_device(device)
+            detail = {
+                "device_id": device.device_id,
+                "container_removed": outcome.container_removed,
+                "success": outcome.success,
+                "step": outcome.error_step or "",
+                "error": "; ".join(outcome.errors),
+            }
+            result.devices.append(detail)
+            result.warnings.extend(outcome.warnings)
+            if outcome.success:
+                if outcome.container_removed:
+                    result.containers_removed.append(device.device_id)
+            else:
+                result.warnings.append(
+                    f"destroy de '{device.device_id}' falló "
+                    f"({detail['step'] or 'sin paso'}): {detail['error']}"
+                )
 
         for link in reversed(plan.links):
             removed = False
@@ -348,8 +428,9 @@ class OvsFabricEngine:
 
         self.last_destroy_result = result
         logger.info(
-            "[fabric] destroy OVS: %d bridges, %d enlaces eliminados",
+            "[fabric] destroy OVS: %d bridges, %d enlaces, %d contenedores eliminados",
             len(result.bridges_removed), len(result.links_removed),
+            len(result.containers_removed),
         )
 
     # ── Preflight y validación ──────────────────────────────
