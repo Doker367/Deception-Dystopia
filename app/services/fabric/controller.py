@@ -1103,7 +1103,13 @@ class FabricController:
                     "kind": "trunk",
                     "label": "trunk",
                     "trunk": link.trunk,
-                    "bandwidth": link.bandwidth,
+                    "bandwidth_mbps": link.bandwidth_mbps,
+                    "wan": {
+                        "latency_ms": link.latency_ms,
+                        "jitter_ms": link.jitter_ms,
+                        "loss_pct": link.loss_pct,
+                        "bandwidth_mbps": link.bandwidth_mbps,
+                    } if link.wan_enabled else None,
                     "state": edge_state,
                 })
             for spec in devices:

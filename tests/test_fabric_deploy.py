@@ -83,14 +83,18 @@ class FakeCommandRunner:
         fail_if=None,
         ovs_available: bool = True,
         ip_available: bool = True,
+        tc_available: bool = True,
     ):
         self.bridges = set(bridges or [])
         self.links = set(links or [])
         self.ports = dict(ports or {})
+        # qdisc root por puerto (Fase 10): args netem tal cual se aplicaron.
+        self.qdiscs: dict[str, list[str]] = {}
         self.calls: list[list[str]] = []
         self.fail_if = fail_if
         self.ovs_available = ovs_available
         self.ip_available = ip_available
+        self.tc_available = tc_available
 
     def run(self, args: list[str], check: bool = True) -> CommandResult:
         self.calls.append(list(args))
@@ -110,6 +114,10 @@ class FakeCommandRunner:
             return (0, "ovs-vsctl 3.1", "") if self.ovs_available else (1, "", "not found")
         if args[:2] == ["ip", "-V"]:
             return (0, "ip utility", "") if self.ip_available else (1, "", "not found")
+        if args[:2] == ["tc", "-V"]:
+            return (0, "tc utility", "") if self.tc_available else (1, "", "not found")
+        if args[:2] == ["tc", "qdisc"]:
+            return self._dispatch_tc(args)
         if args[:2] == ["ovs-vsctl", "br-exists"]:
             return (0, "", "") if args[2] in self.bridges else (2, "", "")
         if args[:2] == ["ovs-vsctl", "add-br"]:
@@ -144,6 +152,29 @@ class FakeCommandRunner:
             if args[2] == "del":
                 self.links.discard(args[3])
                 return (0, "", "")
+        return (1, "", f"comando no soportado: {args}")
+
+    def _dispatch_tc(self, args: list[str]) -> tuple[int, str, str]:
+        """Emula ``tc qdisc show|replace|del dev <port> root netem ...``."""
+        if len(args) < 5 or args[3] != "dev":
+            return (1, "", f"comando no soportado: {args}")
+        port = args[4]
+        if port not in self.links:
+            return (1, "", f"Cannot find device \"{port}\"")
+        action = args[2]
+        if action == "show":
+            if port in self.qdiscs:
+                return (0, f"qdisc netem 8001: root refcnt 2 {' '.join(self.qdiscs[port])}", "")
+            return (0, "qdisc noqueue 0: root refcnt 2", "")
+        if action == "replace":
+            # args: tc qdisc replace dev <port> root netem <cláusulas...>
+            self.qdiscs[port] = list(args[7:])
+            return (0, "", "")
+        if action == "del":
+            if port not in self.qdiscs:
+                return (2, "", "RTNETLINK answers: No such file or directory")
+            del self.qdiscs[port]
+            return (0, "", "")
         return (1, "", f"comando no soportado: {args}")
 
 
@@ -659,6 +690,220 @@ def test_destroy_registra_dispositivos_en_resultado():
         "step": "",
         "error": "",
     }]
+
+
+# ── Fase 10: emulación WAN con tc netem ─────────────────────
+
+
+def _wan_manifest(**wan) -> dict:
+    """Manifiesto con un enlace explícito sw-a ↔ sw-b con parámetros WAN."""
+    manifest = _manifest()
+    manifest["fabric"]["links"] = [{"from": "sw-a", "to": "sw-b", **wan}]
+    return manifest
+
+
+def _wan_topology_and_plan(**wan):
+    topology = parse_manifest(_wan_manifest(**wan))
+    plan = FabricPlan(
+        bridges=build_bridge_specs(topology),
+        links=build_link_specs(topology),
+        devices=build_device_specs(topology),
+    )
+    return topology, plan
+
+
+def _tc_calls(runner: FakeCommandRunner) -> list[list[str]]:
+    return [call for call in runner.calls if call[:2] == ["tc", "qdisc"]]
+
+
+def test_wan_aplica_netem_completo_en_ambos_extremos():
+    runner = FakeCommandRunner()
+    engine = _engine(runner)
+    topology, plan = _wan_topology_and_plan(
+        latency_ms=50, jitter_ms=5, loss_pct=0.5, bandwidth_mbps=20,
+    )
+    link = plan.links[0]
+    engine.deploy(plan, topology)
+
+    expected = [
+        "tc", "qdisc", "replace", "dev", link.port_from, "root", "netem",
+        "delay", "50ms", "5ms", "loss", "0.5%", "rate", "20mbit",
+    ]
+    calls = _tc_calls(runner)
+    assert calls == [
+        expected,
+        ["tc", "qdisc", "replace", "dev", link.port_to, "root", "netem",
+         "delay", "50ms", "5ms", "loss", "0.5%", "rate", "20mbit"],
+    ]
+    assert runner.qdiscs[link.port_from] == [
+        "delay", "50ms", "5ms", "loss", "0.5%", "rate", "20mbit",
+    ]
+    assert runner.qdiscs[link.port_to] == runner.qdiscs[link.port_from]
+
+
+def test_wan_omite_clausulas_no_configuradas():
+    runner = FakeCommandRunner()
+    engine = _engine(runner)
+    topology, plan = _wan_topology_and_plan(latency_ms=30)
+    link = plan.links[0]
+    engine.deploy(plan, topology)
+    assert _tc_calls(runner) == [
+        ["tc", "qdisc", "replace", "dev", link.port_from, "root", "netem",
+         "delay", "30ms"],
+        ["tc", "qdisc", "replace", "dev", link.port_to, "root", "netem",
+         "delay", "30ms"],
+    ]
+
+
+def test_wan_solo_ancho_de_banda():
+    runner = FakeCommandRunner()
+    engine = _engine(runner)
+    topology, plan = _wan_topology_and_plan(bandwidth_mbps=10)
+    link = plan.links[0]
+    engine.deploy(plan, topology)
+    assert runner.qdiscs[link.port_from] == ["rate", "10mbit"]
+    assert runner.qdiscs[link.port_to] == ["rate", "10mbit"]
+
+
+def test_wan_sin_parametros_no_invoca_tc():
+    runner = FakeCommandRunner()
+    engine = _engine(runner)
+    topology, plan = _topology_and_plan()
+    engine.deploy(plan, topology)
+    assert _tc_calls(runner) == []
+    assert engine.last_result is not None
+    assert engine.last_result.wan_links == []
+
+
+def test_wan_resultado_estructurado():
+    runner = FakeCommandRunner()
+    engine = _engine(runner)
+    topology, plan = _wan_topology_and_plan(
+        latency_ms=50, jitter_ms=5, loss_pct=1, bandwidth_mbps=20,
+    )
+    link = plan.links[0]
+    engine.deploy(plan, topology)
+    assert engine.last_result is not None
+    assert engine.last_result.wan_links == [{
+        "id": link.id,
+        "from": "sw-a",
+        "to": "sw-b",
+        "latency_ms": 50,
+        "jitter_ms": 5,
+        "loss_pct": 1,
+        "bandwidth_mbps": 20,
+        "ports": [link.port_from, link.port_to],
+    }]
+
+
+def test_wan_es_idempotente_con_replace():
+    """Re-desplegar usa ``replace`` (no ``add``) y actualiza el qdisc."""
+    runner = FakeCommandRunner()
+    engine = _engine(runner)
+    topology, plan = _wan_topology_and_plan(latency_ms=50)
+    link = plan.links[0]
+    engine.deploy(plan, topology)
+
+    topology2, plan2 = _wan_topology_and_plan(latency_ms=80)
+    engine.deploy(plan2, topology2)
+    actions = [call[2] for call in _tc_calls(runner)]
+    assert set(actions) == {"replace"}
+    assert runner.qdiscs[link.port_from] == ["delay", "80ms"]
+
+
+def test_wan_fallo_de_tc_es_warning_y_no_tumba_el_deploy():
+    runner = FakeCommandRunner(fail_if=lambda args: args[:2] == ["tc", "qdisc"])
+    engine = _engine(runner)
+    topology, plan = _wan_topology_and_plan(latency_ms=50)
+    engine.deploy(plan, topology)
+    assert engine.last_result is not None
+    assert len(engine.last_result.warnings) == 2
+    assert all("Emulación WAN" in w for w in engine.last_result.warnings)
+    assert engine.last_result.containers_created == ["pc-01"]
+
+
+def test_destroy_limpia_qdisc_netem():
+    runner = FakeCommandRunner()
+    engine = _engine(runner)
+    topology, plan = _wan_topology_and_plan(latency_ms=50, bandwidth_mbps=10)
+    link = plan.links[0]
+    engine.deploy(plan, topology)
+    assert link.port_from in runner.qdiscs
+
+    engine.destroy(topology)
+    assert runner.qdiscs == {}
+    assert engine.last_destroy_result is not None
+    assert set(engine.last_destroy_result.wan_cleared) == {
+        link.port_from, link.port_to,
+    }
+    assert any(
+        call == ["tc", "qdisc", "del", "dev", link.port_from, "root"]
+        for call in runner.calls
+    )
+
+
+def test_destroy_sin_qdisc_no_falla_ni_avisa():
+    runner = FakeCommandRunner()
+    engine = _engine(runner)
+    topology, plan = _wan_topology_and_plan(latency_ms=50)
+    engine.deploy(plan, topology)
+    # Simula un qdisc ya perdido (p. ej. el veth se recreó a mano).
+    runner.qdiscs.clear()
+    engine.destroy(topology)
+    assert engine.last_destroy_result is not None
+    assert engine.last_destroy_result.wan_cleared == []
+    assert not any("tc qdisc del" in warning
+                   for warning in engine.last_destroy_result.warnings)
+
+
+def test_destroy_wan_idempotente():
+    runner = FakeCommandRunner()
+    engine = _engine(runner)
+    topology, plan = _wan_topology_and_plan(latency_ms=50)
+    engine.deploy(plan, topology)
+    engine.destroy(topology)
+    engine.destroy(topology)
+    assert engine.last_destroy_result is not None
+    assert engine.last_destroy_result.wan_cleared == []
+
+
+def test_preflight_sin_tc_con_wan_falla_accionable():
+    runner = FakeCommandRunner(tc_available=False)
+    engine = _engine(runner)
+    topology, plan = _wan_topology_and_plan(latency_ms=50)
+    with pytest.raises(FabricDeployError) as excinfo:
+        engine.deploy(plan, topology)
+    errors = str(excinfo.value)
+    assert "tc" in errors
+    assert "sch_netem" in errors
+    # Nada se ha mutado en el host.
+    assert runner.bridges == set()
+    assert runner.links == set()
+
+
+def test_preflight_sin_tc_sin_wan_no_falla():
+    runner = FakeCommandRunner(tc_available=False)
+    engine = _engine(runner)
+    topology, plan = _topology_and_plan()
+    engine.deploy(plan, topology)
+    assert engine.last_result is not None
+    assert engine.last_result.containers_created == ["pc-01"]
+
+
+def test_check_environment_exige_tc_por_defecto():
+    runner = FakeCommandRunner(tc_available=False)
+    engine = _engine(runner)
+    errors = engine.check_environment()
+    assert any("tc" in error for error in errors)
+
+
+def test_wan_uplink_automatico_no_aplica_netem():
+    runner = FakeCommandRunner()
+    engine = _engine(runner)
+    topology, plan = _topology_and_plan()
+    engine.deploy(plan, topology)
+    assert all(not link.wan_enabled for link in plan.links)
+    assert _tc_calls(runner) == []
 
 
 def test_destroy_agrega_credenciales_borradas():

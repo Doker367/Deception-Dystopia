@@ -121,6 +121,8 @@ class FakeRunner:
             return (1, "", "not found")
         if args[:2] == ["ip", "-V"]:
             return (0, "ip utility", "")
+        if args[:2] == ["tc", "-V"]:
+            return (0, "tc utility, iproute2-6.1.0", "")
         if args[:2] == ["ovs-vsctl", "--version"]:
             return (0, "ovs-vsctl 3.1", "")
         if args[:2] == ["ovs-vsctl", "list-br"]:

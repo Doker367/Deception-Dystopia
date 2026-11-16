@@ -183,6 +183,8 @@ class DeployResult(BaseModel):
     containers_failed: list[dict] = Field(default_factory=list)
     device_ports_created: list[str] = Field(default_factory=list)
     devices: list[dict] = Field(default_factory=list)
+    # Emulación WAN aplicada por enlace (Fase 10): parámetros efectivos.
+    wan_links: list[dict] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
 
@@ -195,6 +197,8 @@ class DestroyResult(BaseModel):
     containers_removed: list[str] = Field(default_factory=list)
     # Dispositivos cuyas credenciales cifradas (``.enc``) se eliminaron.
     credentials_removed: list[str] = Field(default_factory=list)
+    # Puertos cuyo qdisc netem se eliminó explícitamente (Fase 10).
+    wan_cleared: list[str] = Field(default_factory=list)
     devices: list[dict] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
@@ -359,7 +363,7 @@ class OvsFabricEngine:
         """Crea bridges, enlaces y puertos troncales del plan."""
         self.last_result = None
         self._validate_plan(plan)
-        self._preflight()
+        self._preflight(plan)
 
         result = DeployResult()
         bridges = {bridge.id: bridge for bridge in plan.bridges}
@@ -384,6 +388,9 @@ class OvsFabricEngine:
                 result.links_created.append(link.id)
             else:
                 result.links_existing.append(link.id)
+            # Fase 10: la emulación WAN va después de que ambos extremos
+            # estén en sus bridges (el qdisc sobrevive al add-port).
+            self._apply_wan(link, result)
 
         # §8.1: switches → enlaces → dispositivos. Un fallo de dispositivo
         # no aborta el deploy; solo si no queda ninguno desplegado.
@@ -427,9 +434,10 @@ class OvsFabricEngine:
         self.last_result = result
         logger.info(
             "[fabric] deploy OVS: %d bridges (%d nuevos), %d enlaces (%d nuevos), "
-            "%d contenedores (%d fallidos)",
+            "%d con emulación WAN, %d contenedores (%d fallidos)",
             len(plan.bridges), len(result.bridges_created),
             len(plan.links), len(result.links_created),
+            len(result.wan_links),
             len(result.containers_created), len(result.containers_failed),
         )
 
@@ -466,7 +474,7 @@ class OvsFabricEngine:
             devices=build_device_specs(topology),
         )
         self._validate_plan(plan)
-        self._preflight()
+        self._preflight(plan)
 
         result = DestroyResult()
 
@@ -495,6 +503,11 @@ class OvsFabricEngine:
 
         for link in reversed(plan.links):
             removed = False
+            # Fase 10: el qdisc se va con el veth, pero se borra explícito
+            # para dejar constancia y por si el veth sobrevive al destroy.
+            for port in (link.port_from, link.port_to):
+                if self._clear_wan(port, result):
+                    removed = True
             for bridge_id, port in (
                 (link.from_switch, link.port_from),
                 (link.to_switch, link.port_to),
@@ -526,9 +539,10 @@ class OvsFabricEngine:
         self.last_destroy_result = result
         logger.info(
             "[fabric] destroy OVS: %d bridges, %d enlaces, %d contenedores eliminados, "
-            "%d credenciales cifradas borradas",
+            "%d credenciales cifradas borradas, %d qdisc netem limpiados",
             len(result.bridges_removed), len(result.links_removed),
             len(result.containers_removed), len(result.credentials_removed),
+            len(result.wan_cleared),
         )
 
     # ── Preflight y validación ──────────────────────────────
@@ -551,8 +565,13 @@ class OvsFabricEngine:
         if errors:
             raise FabricDeployError(errors)
 
-    def _preflight(self) -> None:
-        """Comprueba privilegios y herramientas antes de mutar el host."""
+    def _preflight(self, plan: Optional[FabricPlan] = None) -> None:
+        """Comprueba privilegios y herramientas antes de mutar el host.
+
+        ``tc`` solo se exige si el plan pide emulación WAN (Fase 10): sin
+        ``plan`` (p. ej. ``check_environment``) se exige siempre, porque
+        no se puede descartar que el siguiente deploy la necesite.
+        """
         if not self._privilege_check():
             raise FabricDeployError([
                 "Se requieren permisos root o CAP_NET_ADMIN para crear bridges y "
@@ -572,6 +591,17 @@ class OvsFabricEngine:
                 f"El comando 'ip' no está disponible o no responde ({detail}); "
                 "instala iproute2"
             ])
+        wan = plan is None or any(link.wan_enabled for link in plan.links)
+        if wan:
+            tc = self._runner.run(["tc", "-V"], check=False)
+            if tc.returncode != 0:
+                detail = tc.stderr.strip() or tc.stdout.strip() or "sin salida"
+                raise FabricDeployError([
+                    f"El manifiesto declara emulación WAN (latency_ms/jitter_ms/"
+                    f"loss_pct/bandwidth_mbps) pero 'tc' no está disponible o no "
+                    f"responde ({detail}); instala iproute2 y el módulo sch_netem "
+                    "(paquete linux-image, incluido por defecto)"
+                ])
 
     # ── Operaciones OVS ─────────────────────────────────────
 
@@ -617,6 +647,91 @@ class OvsFabricEngine:
             link.to_switch, link.port_to, bridges[link.to_switch].vlans, allowed
         )
         return created
+
+    # ── Emulación WAN (Fase 10) ─────────────────────────────
+
+    @staticmethod
+    def _netem_args(link: LinkSpec) -> list[str]:
+        """Argumentos ``netem`` del enlace, omitiendo las cláusulas vacías.
+
+        ``tc qdisc add dev <port> root netem delay 50ms 5ms loss 0.5% rate 20mbit``
+        (solo las cláusulas declaradas). ``delay`` exige jitter ≤ latencia:
+        el parser lo garantiza antes de llegar aquí.
+        """
+        args: list[str] = []
+        if link.latency_ms is not None:
+            args += ["delay", f"{link.latency_ms:g}ms"]
+            if link.jitter_ms is not None:
+                args.append(f"{link.jitter_ms:g}ms")
+        if link.loss_pct is not None:
+            args += ["loss", f"{link.loss_pct:g}%"]
+        if link.bandwidth_mbps is not None:
+            args += ["rate", f"{link.bandwidth_mbps:g}mbit"]
+        return args
+
+    def _wan_ports(self, link: LinkSpec) -> tuple[str, str]:
+        """Extremos del enlace donde se aplica el qdisc (simetría)."""
+        return link.port_from, link.port_to
+
+    def _apply_wan(self, link: LinkSpec, result: "DeployResult") -> None:
+        """Aplica ``tc netem`` en ambos extremos del enlace (idempotente).
+
+        Se usa ``tc qdisc replace``: sustituye el ``root`` existente sin
+        fallar si ya hay uno, así que re-desplegar con otros parámetros
+        recalcula el qdisc y re-desplegar con los mismos no cambia nada.
+        Un fallo de ``tc`` se registra como warning: la conectividad del
+        enlace ya está garantizada y no justifica tumbar todo el deploy.
+        """
+        if not link.wan_enabled:
+            return
+        netem = self._netem_args(link)
+        applied = {
+            "id": link.id,
+            "from": link.from_switch,
+            "to": link.to_switch,
+            "latency_ms": link.latency_ms,
+            "jitter_ms": link.jitter_ms,
+            "loss_pct": link.loss_pct,
+            "bandwidth_mbps": link.bandwidth_mbps,
+            "ports": list(self._wan_ports(link)),
+        }
+        for port in self._wan_ports(link):
+            outcome = self._run(
+                ["tc", "qdisc", "replace", "dev", port, "root", "netem", *netem],
+                check=False,
+            )
+            if outcome.returncode != 0:
+                result.warnings.append(
+                    f"Emulación WAN de '{link.id}' no aplicada en '{port}' "
+                    f"({self._failure('tc qdisc replace', outcome)})"
+                )
+        result.wan_links.append(applied)
+        logger.info(
+            "[fabric] WAN en '%s': %s", link.id, " ".join(netem) or "sin parámetros",
+        )
+
+    def _clear_wan(self, port: str, result: "DestroyResult") -> bool:
+        """Borra el qdisc ``root`` del puerto; tolerante a su ausencia.
+
+        Devuelve True si había un qdisc (y se borró). Un puerto sin qdisc
+        o inexistente no es error: el destroy debe ser idempotente.
+        """
+        shown = self._run(["tc", "qdisc", "show", "dev", port], check=False)
+        # ``tc qdisc show`` sobre un puerto sin qdisc sale con rc=1 y
+        # "Cannot find device" / "No such file"; sobre un puerto sin
+        # qdisc root netem sale con rc=0 y solo ``noqueue``/``pfifo_fast``.
+        if shown.returncode != 0:
+            return False
+        if "netem" not in shown.stdout:
+            return False
+        outcome = self._run(
+            ["tc", "qdisc", "del", "dev", port, "root"], check=False
+        )
+        if outcome.returncode != 0:
+            result.warnings.append(self._failure("tc qdisc del", outcome))
+            return False
+        result.wan_cleared.append(port)
+        return True
 
     def _ensure_trunk_port(
         self,
