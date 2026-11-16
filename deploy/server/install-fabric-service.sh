@@ -129,7 +129,9 @@ install -d -m 0700 -o root -g root "$CREDENTIALS_DIR"
 # Certificado autofirmado con SANs para el gateway de docker0 y
 # host.docker.internal. El control lo usa como CA (DYSTOPIA_FABRIC_REMOTE_CA).
 # Se conserva si ya existe: rotarlo es una decisión explícita del operador.
-install -d -m 0700 -o root -g root "$TLS_DIR"
+# 0755: el control (uid 2000) monta el directorio y debe poder leer el
+# certificado público; la clave privada queda 0600 root y no es accesible.
+install -d -m 0755 -o root -g root "$TLS_DIR"
 if [[ -s "$TLS_CERT" && -s "$TLS_KEY" ]]; then
     log "certificado TLS existente conservado en $TLS_DIR"
 else
