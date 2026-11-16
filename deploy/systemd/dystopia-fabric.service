@@ -37,10 +37,12 @@ UMask=0077
 #             contenedores corren como 2000). Sin ella, el kernel aplica el
 #             chequeo ptrace y `ip link set ... netns <pid>` falla con
 #             "Invalid netns value".
+# CHOWN:      entregar device.json y el directorio de logs al uid 2000 del
+#             contenedor (el agente corre sin privilegios).
 # No se necesitan más: no se monta nada ni se crean namespaces propios.
 NoNewPrivileges=yes
-CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_ADMIN CAP_SYS_PTRACE
-AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_ADMIN CAP_SYS_PTRACE
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_ADMIN CAP_SYS_PTRACE CAP_CHOWN
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_ADMIN CAP_SYS_PTRACE CAP_CHOWN
 
 # ── Aislamiento del sistema de archivos ─────────────────────
 ProtectSystem=strict
