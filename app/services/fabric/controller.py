@@ -199,13 +199,21 @@ def _default_engine() -> tuple[FabricEngine, str]:
 
     ``stub`` (default) mantiene el comportamiento actual y funciona en
     macOS; ``ovs`` importa perezosamente ``OvsFabricEngine`` para no
-    romper entornos sin OVS ni los tests existentes.
+    romper entornos sin OVS ni los tests existentes; ``remote`` habla con
+    el servicio del host (``DYSTOPIA_FABRIC_REMOTE_URL``/``_TOKEN``) y
+    falla accionablemente al construirse si falta la configuración.
     """
     choice = os.getenv(FABRIC_ENGINE_ENV, "stub").strip().lower()
     if choice == "ovs":
         from app.services.fabric.deploy import OvsFabricEngine  # import perezoso
 
         return OvsFabricEngine(), "ovs"
+    if choice == "remote":
+        from app.services.fabric.remote_engine import (  # import perezoso
+            RemoteFabricEngine,
+        )
+
+        return RemoteFabricEngine(), "remote"
     if choice not in {"stub", ""}:
         logger.warning(
             "[fabric] %s=%r no reconocido; se usa el engine stub",
