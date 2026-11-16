@@ -424,17 +424,22 @@ class DeviceRuntime:
                 json.dumps(agent_config, ensure_ascii=False, sort_keys=True),
                 encoding="utf-8",
             )
-            os.chmod(config_path, 0o600)
+            os.chmod(config_path, 0o640)
             # El agente (uid 2000) escribe aquí; el forwarder del host service
             # corre como root pero SIN CAP_DAC_OVERRIDE, así que necesita
             # permiso de grupo para leer. 0750 root:2000 → dueño escribe,
             # grupo root lee, nadie más accede.
             os.chmod(logs_dir, 0o750)
             if hasattr(os, "geteuid") and os.geteuid() == 0:
-                # El contenedor corre como uid 2000: debe poder leer la
-                # config y escribir los logs/keys.
-                os.chown(config_path, 2000, 2000)
-                os.chown(config_dir, 2000, 2000)
+                # device.json lo escribe el host service (root) y lo lee el
+                # contenedor (uid 2000) a través del bind mount: dueño root,
+                # grupo 2000, 0640. El directorio queda root:root 0700 porque
+                # el contenedor monta el fichero, no el directorio.
+                os.chown(config_path, 0, 2000)
+                os.chown(config_dir, 0, 0)
+                os.chmod(config_dir, 0o700)
+                # Los logs los escribe el agente (2000) y los lee el forwarder
+                # (root, grupo root).
                 os.chown(logs_dir, 2000, 0)
         except OSError as exc:
             if hasattr(os, "geteuid") and os.geteuid() == 0:
