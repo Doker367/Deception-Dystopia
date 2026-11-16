@@ -411,6 +411,22 @@ class FabricController:
 
         if initial:
             target = FabricState.READY if enabled else FabricState.DISABLED
+            if enabled:
+                # El runtime sobrevive al reinicio del control: si el último
+                # despliegue fue con este mismo manifiesto, se restaura
+                # ``deployed`` en lugar de mentir con ``ready``. La salud real
+                # la reporta /health consultando el runtime.
+                last = self._last_persisted()
+                if (
+                    last is not None
+                    and last.get("state") == FabricState.DEPLOYED.value
+                    and last.get("manifest_hash") == report_hash
+                ):
+                    target = FabricState.DEPLOYED
+                    self._deployed_at = last.get("deployed_at")
+                    logger.info(
+                        "[fabric] estado 'deployed' restaurado desde fabric_state"
+                    )
             self._state = target
             self._adopt(topology, enabled, warnings, report_hash)
             self._persist()
@@ -984,8 +1000,29 @@ class FabricController:
             # registra y la operación sigue (patrón de audit_svc).
             logger.exception("[fabric] no se pudo persistir fabric_state")
 
-    # ── Estado por dispositivo (fabric_device_state, §7) ────
+    def _last_persisted(self) -> Optional[dict]:
+        """Última fila de ``fabric_state`` (o ``None`` si no hay histórico).
 
+        Se usa al arrancar para saber si el fabric quedó desplegado antes de
+        un reinicio: el runtime (OVS/Docker) sobrevive al reinicio del
+        control, pero su estado vive en memoria.
+        """
+        try:
+            with _write_lock:
+                self._ensure_db()
+                with sqlite3.connect(str(self._db_path), timeout=10) as conn:
+                    row = conn.execute(
+                        """SELECT state, manifest_hash, deployed_at
+                           FROM fabric_state ORDER BY id DESC LIMIT 1"""
+                    ).fetchone()
+        except sqlite3.Error:
+            logger.exception("[fabric] no se pudo leer fabric_state")
+            return None
+        if row is None:
+            return None
+        return {"state": row[0], "manifest_hash": row[1], "deployed_at": row[2]}
+
+    # ── Estado por dispositivo (fabric_device_state, §7) ────
     def _device_rows(
         self,
         plan: FabricPlan,

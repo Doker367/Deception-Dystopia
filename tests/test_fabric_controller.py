@@ -1182,3 +1182,38 @@ def test_modos_previos_no_cambian(tmp_path, monkeypatch):
         db_path=tmp_path / "modo-ovs.db", manifest_loader=lambda: _manifest(),
     )
     assert ovs.get_status()["engine"] == "ovs"
+
+
+# ── Restauración de estado tras reinicio (runtime persistente) ──
+
+
+def test_arranque_restaura_deployed_si_el_manifiesto_coincide(tmp_path):
+    """El runtime sobrevive al reinicio: no debe reportarse 'ready' si sigue desplegado."""
+    first = _make(tmp_path, name="restore.db")
+    first.deploy()
+    assert first.get_status()["state"] == "deployed"
+
+    second = _make(tmp_path, name="restore.db")
+    status = second.get_status()
+    assert status["state"] == "deployed"
+    assert status["deployed_at"] is not None
+
+
+def test_arranque_no_restaura_deployed_si_el_manifiesto_cambio(tmp_path):
+    """Un manifiesto distinto exige un deploy nuevo: se queda en 'ready'."""
+    first = _make(tmp_path, name="restore-cambio.db")
+    first.deploy()
+
+    changed = _manifest()
+    changed["fabric"]["name"] = "otro-fabric"
+    second = _make(tmp_path, manifest=changed, name="restore-cambio.db")
+    assert second.get_status()["state"] == "ready"
+
+
+def test_arranque_tras_destroy_no_restaura_deployed(tmp_path):
+    first = _make(tmp_path, name="restore-destroy.db")
+    first.deploy()
+    first.destroy()
+
+    second = _make(tmp_path, name="restore-destroy.db")
+    assert second.get_status()["state"] == "ready"
