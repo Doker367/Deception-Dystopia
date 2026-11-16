@@ -31,7 +31,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.middleware.auth import JWTBearer
-from app.middleware.rbac import requires_role
+from app.middleware.rbac import get_current_user, requires_role
 from app.models.deception import DeceptionEventType
 from app.services.deception import telemetry_svc
 from app.services.fabric.controller import (
@@ -50,7 +50,9 @@ ADMIN = [Depends(JWTBearer()), Depends(requires_role("admin"))]
 _FORBIDDEN_KEYS = frozenset({"credentials", "password"})
 
 # ── Ingesta de eventos del fabric (§7) ──────────────────────
-SERVICE_TOKEN_ENV = "DYSTOPIA_FABRIC_REMOTE_TOKEN"
+SERVICE_TOKEN_ENV = "DYSTOPIA_FABRIC_EVENTS_TOKEN"
+# Fallback deprecado: antes la ingesta reutilizaba el token del engine remote.
+LEGACY_SERVICE_TOKEN_ENV = "DYSTOPIA_FABRIC_REMOTE_TOKEN"
 MIN_SERVICE_TOKEN = 32
 MAX_EVENTS = 200
 MAX_BODY_BYTES = 256 * 1024
@@ -93,7 +95,7 @@ def _without_credentials(value: Any) -> Any:
     return value
 
 
-def _lifecycle(action: str) -> dict:
+def _lifecycle(action: str, username: str = "system") -> dict:
     """Ejecuta deploy/destroy/rebuild y traduce el resultado a HTTP.
 
     - Transición inválida de la state machine → 409.
@@ -102,7 +104,7 @@ def _lifecycle(action: str) -> dict:
     """
     controller = get_controller()
     try:
-        result = getattr(controller, action)()
+        result = getattr(controller, action)(username=username)
     except FabricStateError as exc:
         raise HTTPException(409, "; ".join(exc.errors)) from exc
 
@@ -153,7 +155,10 @@ def get_topology_graph():
 
 
 @router.post("/validate", dependencies=ADMIN)
-def validate_manifest(manifest: Optional[dict] = Body(default=None)):
+def validate_manifest(
+    manifest: Optional[dict] = Body(default=None),
+    user: dict = Depends(get_current_user),
+):
     """Valida un manifiesto completo sin desplegar.
 
     Sin cuerpo valida el ``network.yaml`` actual. Responde 200 con
@@ -161,27 +166,29 @@ def validate_manifest(manifest: Optional[dict] = Body(default=None)):
     inválido.
     """
     try:
-        return _without_credentials(get_controller().validate(manifest))
+        return _without_credentials(get_controller().validate(
+            manifest, username=user.get("sub", "system"),
+        ))
     except FabricStateError as exc:
         raise HTTPException(409, "; ".join(exc.errors)) from exc
 
 
 @router.post("/deploy", dependencies=ADMIN)
-def deploy():
+def deploy(user: dict = Depends(get_current_user)):
     """Construye y arranca el fabric (idempotente: destruye primero)."""
-    return _lifecycle("deploy")
+    return _lifecycle("deploy", user.get("sub", "system"))
 
 
 @router.post("/destroy", dependencies=ADMIN)
-def destroy():
+def destroy(user: dict = Depends(get_current_user)):
     """Destruye el fabric desplegado y vuelve a ``ready``."""
-    return _lifecycle("destroy")
+    return _lifecycle("destroy", user.get("sub", "system"))
 
 
 @router.post("/rebuild", dependencies=ADMIN)
-def rebuild():
+def rebuild(user: dict = Depends(get_current_user)):
     """Alias destroy+deploy del ciclo de vida."""
-    return _lifecycle("rebuild")
+    return _lifecycle("rebuild", user.get("sub", "system"))
 
 
 # ── Dispositivos y switches ─────────────────────────────────
@@ -251,14 +258,35 @@ def get_health():
 # ── Ingesta de eventos del fabric (control ← host service) ──
 
 
+_legacy_token_warned = False
+
+
+def _events_token() -> tuple[str, bool]:
+    """Token de ingesta y si viene del env legacy (deprecado)."""
+    token = os.getenv(SERVICE_TOKEN_ENV, "").strip()
+    if len(token) >= MIN_SERVICE_TOKEN:
+        return token, False
+    legacy = os.getenv(LEGACY_SERVICE_TOKEN_ENV, "").strip()
+    if len(legacy) >= MIN_SERVICE_TOKEN:
+        return legacy, True
+    return "", False
+
+
 async def _require_service_token(request: Request) -> None:
     """Token de servicio en ``X-Fabric-Token``; 503 si no está configurado."""
-    token = os.getenv(SERVICE_TOKEN_ENV, "")
-    if len(token) < MIN_SERVICE_TOKEN:
+    global _legacy_token_warned
+    token, legacy = _events_token()
+    if not token:
         raise HTTPException(
             503,
             "Ingesta de eventos deshabilitada: "
             f"{SERVICE_TOKEN_ENV} no está configurado (fail-closed)",
+        )
+    if legacy and not _legacy_token_warned:
+        _legacy_token_warned = True
+        logger.warning(
+            "[fabric] %s no configurado; usando %s (deprecado: separa los tokens)",
+            SERVICE_TOKEN_ENV, LEGACY_SERVICE_TOKEN_ENV,
         )
     header = request.headers.get("x-fabric-token", "")
     if not header or not secrets.compare_digest(

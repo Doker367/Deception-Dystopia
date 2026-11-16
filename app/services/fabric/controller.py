@@ -44,6 +44,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.settings import DECEPTION_DB
 from app.models.deception import DeceptionNetwork
+from app.services import audit_svc
 from app.services.deception import topology_svc
 from app.services.fabric.models import FabricTopology
 from app.services.fabric.parser import FabricValidationError, parse_manifest
@@ -187,6 +188,26 @@ class NullFabricEngine:
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _audit_fabric(
+    action: str, *, username: str, success: bool, details: dict
+) -> None:
+    """Registra una operación del fabric en la auditoría (§9.1).
+
+    Nunca incluye credenciales ni tokens (solo estado, engine, hash y
+    conteos). Un fallo de auditoría no tumba la operación.
+    """
+    try:
+        audit_svc.log_event(
+            action=action,
+            device_id=None,
+            username=username or "system",
+            details=json.dumps(details, ensure_ascii=False, default=str),
+            success=success,
+        )
+    except Exception:  # noqa: BLE001 - la operación sigue (patrón del repo)
+        logger.exception("[fabric] no se pudo auditar '%s'", action)
 
 
 def _gate_open() -> bool:
@@ -347,7 +368,9 @@ class FabricController:
             self._evaluate(raw, initial=True, adopt=True)
             self._loaded = True
 
-    def validate(self, manifest: Optional[dict] = None) -> dict:
+    def validate(
+        self, manifest: Optional[dict] = None, username: str = "system"
+    ) -> dict:
         """Valida un manifiesto sin desplegar y devuelve errores/warnings.
 
         ``manifest`` ausente usa el ``network.yaml`` actual. En ``ready``,
@@ -361,6 +384,7 @@ class FabricController:
                 raw = manifest if manifest is not None else self._manifest_loader()
                 report = self._evaluate(raw, initial=True, adopt=True)
                 self._loaded = True
+                self._audit_validate(report, username)
                 return report
 
             state = self._state
@@ -371,7 +395,51 @@ class FabricController:
                     state.value,
                 )
             raw = manifest if manifest is not None else self._manifest_loader()
-            return self._evaluate(raw, initial=False, adopt=state != FabricState.DEPLOYED)
+            report = self._evaluate(raw, initial=False, adopt=state != FabricState.DEPLOYED)
+            self._audit_validate(report, username)
+            return report
+
+    def _audit_validate(self, report: dict, username: str) -> None:
+        _audit_fabric(
+            "fabric_validate",
+            username=username,
+            success=bool(report.get("valid")),
+            details={
+                "state": report.get("state"),
+                "engine": self._engine_kind,
+                "manifest_hash": report.get("manifest_hash"),
+                "valid": bool(report.get("valid")),
+                "errors": len(report.get("errors") or []),
+                "warnings": len(report.get("warnings") or []),
+            },
+        )
+
+    def _audit_result(self, action: str, result: dict, username: str) -> None:
+        details: dict = {
+            "state": result.get("state"),
+            "engine": self._engine_kind,
+            "manifest_hash": self._manifest_hash,
+            "success": bool(result.get("success")),
+        }
+        for key in (
+            "bridges_created", "bridges_removed", "links_created", "links_removed",
+            "containers_created", "containers_removed", "containers_failed",
+        ):
+            value = result.get(key)
+            if isinstance(value, list):
+                details[key] = len(value)
+        # El stub no devuelve planes: conteos del manifiesto como respaldo.
+        for key in ("switches", "links", "devices"):
+            value = result.get(key)
+            if isinstance(value, int):
+                details[key] = value
+        errors = result.get("errors")
+        if isinstance(errors, list) and errors:
+            details["errors"] = errors[:5]
+        _audit_fabric(
+            action, username=username,
+            success=bool(result.get("success")), details=details,
+        )
 
     def _evaluate(self, raw: dict, *, initial: bool, adopt: bool) -> dict:
         """Valida, aplica el estado resultante (si procede) y persiste."""
@@ -491,7 +559,7 @@ class FabricController:
 
     # ── Operaciones de ciclo de vida ────────────────────────
 
-    def deploy(self) -> dict:
+    def deploy(self, username: str = "system") -> dict:
         """Construye y arranca el fabric (idempotente: destruye primero).
 
         Devuelve ``{"success", "state", "errors", ...}``. El gate de
@@ -504,15 +572,19 @@ class FabricController:
             state = self._state
 
             if state == FabricState.DISABLED:
-                return self._reject(
+                result = self._reject(
                     "El fabric está deshabilitado en el manifiesto "
                     "(fabric.enabled=false); no hay nada que desplegar"
                 )
+                self._audit_result("fabric_deploy", result, username)
+                return result
             if not _gate_open():
-                return self._reject(
+                result = self._reject(
                     "Activación bloqueada: la variable de entorno "
                     f"{FABRIC_ENABLE_ENV} debe ser 'true' (doble gate §9.1)"
                 )
+                self._audit_result("fabric_deploy", result, username)
+                return result
             if state == FabricState.ERROR:
                 raise FabricStateError(
                     ["No se puede desplegar en estado 'error'; corrija el "
@@ -525,13 +597,13 @@ class FabricController:
                     state.value,
                 )
             if state == FabricState.DEPLOYED:
-                result = self._destroy_locked()
+                result = self._destroy_locked(username)
                 if not result["success"]:
                     return result
 
-            return self._deploy_locked()
+            return self._deploy_locked(username)
 
-    def destroy(self) -> dict:
+    def destroy(self, username: str = "system") -> dict:
         """Deshace el despliegue. Solo es válido desde ``deployed``."""
         with self._lock:
             self._ensure_loaded()
@@ -541,9 +613,9 @@ class FabricController:
                      "destroy solo aplica desde 'deployed'"],
                     self._state.value,
                 )
-            return self._destroy_locked()
+            return self._destroy_locked(username)
 
-    def rebuild(self) -> dict:
+    def rebuild(self, username: str = "system") -> dict:
         """Alias destroy+deploy (desde ``deployed``) o deploy (desde ``ready``)."""
         with self._lock:
             self._ensure_loaded()
@@ -553,9 +625,11 @@ class FabricController:
                      f"(actual '{self._state.value}')"],
                     self._state.value,
                 )
-            return self.deploy()
+            result = self.deploy(username)
+            self._audit_result("fabric_rebuild", result, username)
+            return result
 
-    def _deploy_locked(self) -> dict:
+    def _deploy_locked(self, username: str = "system") -> dict:
         if self._topology is None:
             raise FabricStateError(
                 ["No hay topología validada para desplegar"], self._state.value
@@ -579,12 +653,14 @@ class FabricController:
                     plan, f"deploy falló: {exc}"
                 ))
             logger.exception("[fabric] deploy falló")
-            return {
+            result = {
                 "success": False,
                 "state": self._state.value,
                 "errors": [self._error],
                 "manifest_hash": self._manifest_hash,
             }
+            self._audit_result("fabric_deploy", result, username)
+            return result
 
         self._deployed_at = _utc_now()
         self._destroyed_at = None
@@ -594,7 +670,7 @@ class FabricController:
             self._persist_device_state(self._deploy_device_rows(plan, summary))
         self._last_operation = {"action": "deploy", "at": self._deployed_at, **summary}
         logger.info("[fabric] desplegado (%d dispositivos)", len(plan.devices))
-        return {
+        result = {
             "success": True,
             "state": self._state.value,
             "errors": [],
@@ -605,8 +681,10 @@ class FabricController:
             "deployed_at": self._deployed_at,
             **summary,
         }
+        self._audit_result("fabric_deploy", result, username)
+        return result
 
-    def _destroy_locked(self) -> dict:
+    def _destroy_locked(self, username: str = "system") -> dict:
         if self._topology is None:
             raise FabricStateError(
                 ["No hay topología validada que destruir"], self._state.value
@@ -629,12 +707,14 @@ class FabricController:
                     _build_plan(self._topology), f"destroy falló: {exc}"
                 ))
             logger.exception("[fabric] destroy falló")
-            return {
+            result = {
                 "success": False,
                 "state": self._state.value,
                 "errors": [self._error],
                 "manifest_hash": self._manifest_hash,
             }
+            self._audit_result("fabric_destroy", result, username)
+            return result
 
         self._destroyed_at = _utc_now()
         self._deployed_at = None
@@ -646,7 +726,7 @@ class FabricController:
             ))
         self._last_operation = {"action": "destroy", "at": self._destroyed_at, **summary}
         logger.info("[fabric] destruido; estado ready")
-        return {
+        result = {
             "success": True,
             "state": self._state.value,
             "errors": [],
@@ -654,6 +734,8 @@ class FabricController:
             "destroyed_at": self._destroyed_at,
             **summary,
         }
+        self._audit_result("fabric_destroy", result, username)
+        return result
 
     def _transition(self, target: FabricState) -> None:
         """Aplica una flecha del grafo o lanza ``FabricStateError``."""

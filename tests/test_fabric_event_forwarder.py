@@ -7,6 +7,7 @@ para /status y modo deshabilitado.
 """
 
 import json
+import logging
 import sys
 from pathlib import Path
 
@@ -281,3 +282,23 @@ def test_forwarder_desde_entorno(tmp_path, monkeypatch):
     assert forwarder._interval == 2
     assert forwarder._devices_dir == tmp_path / "logs"
     assert forwarder._state_path == tmp_path / "forwarder-state.json"
+
+
+def test_forwarder_usa_token_de_eventos(tmp_path, monkeypatch):
+    monkeypatch.setenv("DYSTOPIA_FABRIC_EVENTS_ENABLED", "true")
+    monkeypatch.setenv("DYSTOPIA_FABRIC_EVENTS_TOKEN", "e" * 40)
+    monkeypatch.setenv("DYSTOPIA_FABRIC_DEVICES_DIR", str(tmp_path / "logs"))
+    forwarder = forwarder_from_env("o" * 40)
+    assert forwarder is not None
+    assert forwarder._token == "e" * 40
+
+
+def test_forwarder_fallback_al_token_de_operacion(tmp_path, monkeypatch, caplog):
+    monkeypatch.setenv("DYSTOPIA_FABRIC_EVENTS_ENABLED", "true")
+    monkeypatch.delenv("DYSTOPIA_FABRIC_EVENTS_TOKEN", raising=False)
+    monkeypatch.setenv("DYSTOPIA_FABRIC_DEVICES_DIR", str(tmp_path / "logs"))
+    caplog.set_level(logging.WARNING)
+    forwarder = forwarder_from_env("o" * 40)
+    assert forwarder is not None
+    assert forwarder._token == "o" * 40
+    assert "deprecado" in caplog.text

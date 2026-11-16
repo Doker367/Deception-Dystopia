@@ -18,6 +18,8 @@ UNIT_DST="/etc/systemd/system/${SERVICE}.service"
 ENV_DIR="/etc/dystopia"
 ENV_FILE="${ENV_DIR}/fabric.env"
 STATE_DIR="/var/lib/dystopia/fabric"
+KEY_FILE="/etc/dystopia/fabric.key"
+CREDENTIALS_DIR="/var/lib/dystopia/fabric/credentials"
 PYTHON="/opt/dystopia/venv/bin/python"
 MANIFEST_DEFAULT="/opt/dystopia/current/config/deception/network.yaml"
 
@@ -73,6 +75,18 @@ else
     fi
     log "token nuevo generado en $ENV_FILE"
 fi
+if grep -qE '^DYSTOPIA_FABRIC_EVENTS_TOKEN=.{32,}$' "$ENV_FILE"; then
+    log "token de eventos existente conservado en $ENV_FILE"
+else
+    events_token="$(generate_token)"
+    [[ ${#events_token} -ge 32 ]] || fail "no se pudo generar el token de eventos"
+    if grep -q '^DYSTOPIA_FABRIC_EVENTS_TOKEN=' "$ENV_FILE"; then
+        sed -i "s|^DYSTOPIA_FABRIC_EVENTS_TOKEN=.*|DYSTOPIA_FABRIC_EVENTS_TOKEN=${events_token}|" "$ENV_FILE"
+    else
+        printf 'DYSTOPIA_FABRIC_EVENTS_TOKEN=%s\n' "$events_token" >> "$ENV_FILE"
+    fi
+    log "token de eventos nuevo generado en $ENV_FILE"
+fi
 grep -q '^DYSTOPIA_FABRIC_MANIFEST=' "$ENV_FILE" \
     || printf 'DYSTOPIA_FABRIC_MANIFEST=%s\n' "$MANIFEST_DEFAULT" >> "$ENV_FILE"
 grep -q '^DYSTOPIA_FABRIC_BIND=' "$ENV_FILE" \
@@ -88,6 +102,18 @@ grep -q '^DYSTOPIA_FABRIC_EVENTS_ENABLED=' "$ENV_FILE" \
     || printf 'DYSTOPIA_FABRIC_EVENTS_ENABLED=true\n' >> "$ENV_FILE"
 chown root:root "$ENV_FILE"
 chmod 0600 "$ENV_FILE"
+
+# ── Clave Fernet del fabric (credenciales cifradas en reposo) ──
+if [[ -s "$KEY_FILE" ]]; then
+    log "clave del fabric existente conservada en $KEY_FILE"
+else
+    "$PYTHON" -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())' \
+        > "$KEY_FILE" || fail "no se pudo generar la clave Fernet (¿cryptography en el venv?)"
+    log "clave Fernet nueva generada en $KEY_FILE"
+fi
+chown root:root "$KEY_FILE"
+chmod 0600 "$KEY_FILE"
+install -d -m 0700 -o root -g root "$CREDENTIALS_DIR"
 
 # ── Unit + arranque ─────────────────────────────────────────
 install -m 0644 "$UNIT_SRC" "$UNIT_DST"

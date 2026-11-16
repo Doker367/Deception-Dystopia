@@ -6,6 +6,7 @@ no tumban el lote y llamada correcta a ``telemetry_svc.emit_sync``.
 """
 
 import json
+import logging
 import sys
 from pathlib import Path
 
@@ -364,3 +365,44 @@ def test_fallo_de_alertas_no_tumba_la_ingesta(client, emitted, monkeypatch):
     assert response.status_code == 200
     assert response.json()["accepted"] == 1
     assert len(emitted) == 1
+
+
+# ── Fase 8: separación de tokens ───────────────────────────
+
+
+def test_token_de_operacion_no_sirve_para_ingesta(client, monkeypatch):
+    monkeypatch.setenv("DYSTOPIA_FABRIC_EVENTS_TOKEN", "e" * 40)
+    monkeypatch.setenv("DYSTOPIA_FABRIC_REMOTE_TOKEN", "r" * 40)
+    body = {"events": [_event()]}
+    assert client.post(
+        "/api/fabric/events", headers={"X-Fabric-Token": "r" * 40}, json=body,
+    ).status_code == 401
+    assert client.post(
+        "/api/fabric/events", headers={"X-Fabric-Token": "e" * 40}, json=body,
+    ).status_code == 200
+
+
+def test_solo_token_de_eventos(client, monkeypatch):
+    monkeypatch.setenv("DYSTOPIA_FABRIC_EVENTS_TOKEN", "e" * 40)
+    monkeypatch.delenv("DYSTOPIA_FABRIC_REMOTE_TOKEN", raising=False)
+    response = client.post(
+        "/api/fabric/events", headers={"X-Fabric-Token": "e" * 40},
+        json={"events": [_event()]},
+    )
+    assert response.status_code == 200
+
+
+def test_fallback_token_deprecado(client, monkeypatch, caplog):
+    import app.routers.fabric as fabric_router
+
+    monkeypatch.delenv("DYSTOPIA_FABRIC_EVENTS_TOKEN", raising=False)
+    monkeypatch.setenv("DYSTOPIA_FABRIC_REMOTE_TOKEN", "r" * 40)
+    monkeypatch.setattr(fabric_router, "_legacy_token_warned", False)
+    caplog.set_level(logging.WARNING)
+    response = client.post(
+        "/api/fabric/events", headers={"X-Fabric-Token": "r" * 40},
+        json={"events": [_event()]},
+    )
+    assert response.status_code == 200
+    assert "deprecado" in caplog.text
+    assert "DYSTOPIA_FABRIC_EVENTS_TOKEN" in caplog.text

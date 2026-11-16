@@ -1281,3 +1281,91 @@ def test_status_forwarder_null_si_host_no_responde(tmp_path):
         manifest_loader=lambda: _manifest(),
     )
     assert controller.get_status()["forwarder"] is None
+
+
+# ── Fase 8: auditoría de operaciones ───────────────────────
+
+
+@pytest.fixture()
+def audit_calls(monkeypatch):
+    calls: list[dict] = []
+
+    def fake_log_event(action, device_id=None, username="anonymous",
+                       details=None, success=True, **kwargs):
+        calls.append({
+            "action": action, "device_id": device_id, "username": username,
+            "details": json.loads(details or "{}"), "success": success,
+        })
+        return {"id": len(calls)}
+
+    monkeypatch.setattr(controller_mod.audit_svc, "log_event", fake_log_event)
+    return calls
+
+
+def test_auditoria_deploy_destroy_rebuild_validate(tmp_path, audit_calls):
+    controller = _make(tmp_path)
+    controller.validate(_manifest())
+    controller.deploy()
+    controller.destroy()
+    controller.deploy()
+    controller.rebuild()
+
+    actions = [call["action"] for call in audit_calls]
+    assert "fabric_validate" in actions
+    assert actions.count("fabric_deploy") >= 2
+    assert "fabric_destroy" in actions
+    assert "fabric_rebuild" in actions
+
+    deploy = next(call for call in audit_calls if call["action"] == "fabric_deploy")
+    assert deploy["device_id"] is None
+    assert deploy["username"] == "system"
+    assert deploy["success"] is True
+    assert deploy["details"]["engine"] == "custom"
+    assert len(deploy["details"]["manifest_hash"]) == 64
+    assert deploy["details"]["switches"] == 3
+    assert deploy["details"]["devices"] == 2
+
+    validate = next(call for call in audit_calls if call["action"] == "fabric_validate")
+    assert validate["success"] is True
+    assert validate["details"]["valid"] is True
+    assert validate["details"]["errors"] == 0
+
+
+def test_auditoria_username_del_operador(tmp_path, audit_calls):
+    controller = _make(tmp_path)
+    controller.deploy(username="alice")
+    deploy = next(call for call in audit_calls if call["action"] == "fabric_deploy")
+    assert deploy["username"] == "alice"
+
+
+def test_auditoria_sin_credenciales_ni_token(tmp_path, audit_calls):
+    manifest = _manifest()  # incluye credenciales señuelo
+    controller = _make(tmp_path, manifest=manifest)
+    controller.validate(manifest)
+    controller.deploy()
+    serialized = json.dumps(audit_calls)
+    for secret in SECRETS:
+        assert secret not in serialized
+    assert "password" not in serialized
+    assert "credentials" not in serialized
+
+
+def test_fallo_de_auditoria_no_rompe_la_operacion(tmp_path, monkeypatch):
+    def failing_log_event(*args, **kwargs):
+        raise RuntimeError("audit caída")
+
+    monkeypatch.setattr(controller_mod.audit_svc, "log_event", failing_log_event)
+    controller = _make(tmp_path)
+    result = controller.deploy()
+    assert result["success"] is True
+    assert controller.get_status()["state"] == "deployed"
+
+
+def test_auditoria_de_rechazo_por_gate(tmp_path, audit_calls, monkeypatch):
+    controller = _make(tmp_path)
+    controller.get_status()  # carga inicial (sin auditoría de operación)
+    monkeypatch.delenv(FABRIC_ENABLE_ENV, raising=False)
+    result = controller.deploy()
+    assert result["success"] is False
+    reject = next(call for call in audit_calls if call["action"] == "fabric_deploy")
+    assert reject["success"] is False

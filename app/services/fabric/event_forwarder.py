@@ -39,6 +39,7 @@ logger = logging.getLogger(__name__)
 EVENTS_URL_ENV = "DYSTOPIA_FABRIC_EVENTS_URL"
 EVENTS_INTERVAL_ENV = "DYSTOPIA_FABRIC_EVENTS_INTERVAL"
 EVENTS_ENABLED_ENV = "DYSTOPIA_FABRIC_EVENTS_ENABLED"
+EVENTS_TOKEN_ENV = "DYSTOPIA_FABRIC_EVENTS_TOKEN"
 DEVICES_DIR_ENV = "DYSTOPIA_FABRIC_DEVICES_DIR"
 
 DEFAULT_DEVICES_DIR = "/var/lib/dystopia/fabric/logs"
@@ -324,6 +325,13 @@ def forwarder_from_env(
     enabled = os.getenv(EVENTS_ENABLED_ENV, "true").strip().lower() != "false"
     if not enabled:
         return None
+    token = os.getenv(EVENTS_TOKEN_ENV, "").strip()
+    if len(token) < 32:
+        logger.warning(
+            "[fabric-forwarder] %s no configurado; usando el token de operación "
+            "(deprecado: separa los tokens)", EVENTS_TOKEN_ENV,
+        )
+        token = settings_token
     devices = Path(devices_dir or os.getenv(DEVICES_DIR_ENV, DEFAULT_DEVICES_DIR))
     url = os.getenv(EVENTS_URL_ENV, DEFAULT_EVENTS_URL).strip() or DEFAULT_EVENTS_URL
     raw_interval = os.getenv(EVENTS_INTERVAL_ENV, str(DEFAULT_INTERVAL)).strip()
@@ -335,6 +343,6 @@ def forwarder_from_env(
         devices_dir=devices,
         state_path=state_path,
         url=url,
-        token=settings_token,
+        token=token,
         interval=interval,
     )
