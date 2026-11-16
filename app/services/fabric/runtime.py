@@ -420,24 +420,27 @@ class DeviceRuntime:
         try:
             config_dir.mkdir(parents=True, exist_ok=True)
             logs_dir.mkdir(parents=True, exist_ok=True)
+            if hasattr(os, "geteuid") and os.geteuid() == 0:
+                # El directorio de config debe ser de root ANTES de escribir:
+                # el servicio corre sin CAP_DAC_OVERRIDE y un dir 0700 de uid
+                # 2000 le impediría crear device.json.
+                os.chown(config_dir, 0, 0)
+                os.chmod(config_dir, 0o700)
             config_path.write_text(
                 json.dumps(agent_config, ensure_ascii=False, sort_keys=True),
                 encoding="utf-8",
             )
             os.chmod(config_path, 0o640)
-            # El agente (uid 2000) escribe aquí; el forwarder del host service
-            # corre como root pero SIN CAP_DAC_OVERRIDE, así que necesita
-            # permiso de grupo para leer. 0750 root:2000 → dueño escribe,
-            # grupo root lee, nadie más accede.
+            # El agente (uid 2000) escribe en logs; el forwarder del host
+            # service corre como root pero SIN CAP_DAC_OVERRIDE, así que
+            # necesita permiso de grupo para leer. 0750 root:2000 → dueño
+            # escribe, grupo root lee, nadie más accede.
             os.chmod(logs_dir, 0o750)
             if hasattr(os, "geteuid") and os.geteuid() == 0:
                 # device.json lo escribe el host service (root) y lo lee el
                 # contenedor (uid 2000) a través del bind mount: dueño root,
-                # grupo 2000, 0640. El directorio queda root:root 0700 porque
-                # el contenedor monta el fichero, no el directorio.
+                # grupo 2000, 0640.
                 os.chown(config_path, 0, 2000)
-                os.chown(config_dir, 0, 0)
-                os.chmod(config_dir, 0o700)
                 # Los logs los escribe el agente (2000) y los lee el forwarder
                 # (root, grupo root).
                 os.chown(logs_dir, 2000, 0)
