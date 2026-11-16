@@ -305,6 +305,8 @@ class EventForwarder:
                 "failed": self._failed,
                 "last_error": self._last_error,
                 "offsets": dict(self._offsets),
+                "dir": str(self._devices_dir),
+                "dir_exists": self._devices_dir.exists(),
                 "files": [str(path) for path in self._files()],
             }
 
