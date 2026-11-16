@@ -439,6 +439,10 @@ class DeviceRuntime:
             # service corre como root pero SIN CAP_DAC_OVERRIDE, así que
             # necesita permiso de grupo para leer. 0750 root:2000 → dueño
             # escribe, grupo root lee, nadie más accede.
+            # chmod exige ser dueño o CAP_FOWNER (no la tenemos): se hace
+            # chown a root, chmod y luego chown final al uid del agente.
+            if hasattr(os, "geteuid") and os.geteuid() == 0:
+                os.chown(logs_dir, 0, 0)
             os.chmod(logs_dir, 0o750)
             if hasattr(os, "geteuid") and os.geteuid() == 0:
                 # device.json lo escribe el host service (root) y lo lee el
