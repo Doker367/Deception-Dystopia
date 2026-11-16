@@ -38,6 +38,56 @@ interface FabricStatus {
   switches: number;
   links: number;
   devices: number;
+  forwarder: ForwarderStatus | null;
+  health_summary: HealthSummary | null;
+}
+
+interface ForwarderStatus {
+  enabled: boolean;
+  pending: number;
+  sent: number;
+  failed: number;
+  last_error: string | null;
+}
+
+interface HealthSummary {
+  healthy: boolean;
+  runtime_available: boolean;
+}
+
+interface HealthCheck {
+  name: string;
+  ok: boolean;
+  detail: string;
+}
+
+interface DeviceHealth {
+  device_id: string;
+  healthy: boolean;
+  runtime_available: boolean;
+  container: { exists: boolean; running: boolean; pid: number; state: string };
+  interfaces: Array<{
+    name: string;
+    host_veth?: string;
+    switch: string;
+    vlan_tag: number | null;
+    port_present: boolean;
+  }>;
+  neighbors: Array<{ ip: string; reachable: boolean }>;
+  checks: HealthCheck[];
+}
+
+interface FabricHealth {
+  healthy: boolean;
+  state: FabricState;
+  runtime_available: boolean;
+  checks: HealthCheck[];
+  devices_health: DeviceHealth[];
+  runtime?: {
+    bridges?: { expected: string[]; present: string[]; missing: string[] };
+    links?: { expected: string[]; present: string[]; missing: string[] };
+    extra_ports?: string[];
+  } | null;
 }
 
 interface FabricValidateReport {
@@ -169,6 +219,47 @@ interface FabricDeviceSpec {
   routes: FabricRouteSpec[];
   neighbors: FabricNeighborSpec[];
   arp_entries: Array<{ ip: string; mac: string }>;
+  runtime?: DeviceRuntimeDetail;
+}
+
+interface DeviceRuntimeDetail {
+  state: string;
+  container_id: string;
+  last_health: string | null;
+  error: string | null;
+  healthy?: boolean;
+  pid?: number;
+  container_state?: string;
+  interfaces?: Array<{
+    name: string;
+    host_veth?: string;
+    switch: string;
+    vlan_tag: number | null;
+    port_present: boolean;
+  }>;
+  neighbors?: Array<{ ip: string; reachable: boolean }>;
+  checks?: HealthCheck[];
+}
+
+interface FabricDeviceDetail extends FabricDeviceSpec {
+  runtime: DeviceRuntimeDetail;
+  role?: string | null;
+  services?: FabricService[];
+}
+
+interface FabricEvent {
+  id: number;
+  timestamp: string;
+  device_id: string;
+  src_ip: string;
+  src_port: number | null;
+  dst_ip?: string | null;
+  dst_port?: number | null;
+  proto: string;
+  type: string;
+  username: string | null;
+  success: boolean;
+  detail: Record<string, unknown>;
 }
 
 interface DeviceRow {
@@ -189,6 +280,13 @@ const STATE_META: Record<FabricState, { label: string; color: string; hint: stri
   deployed: { label: "Desplegado", color: ACCENTS.green, hint: "Topología activa" },
   destroying: { label: "Destruyendo", color: ACCENTS.amber, hint: "Operación en curso" },
   error: { label: "Error", color: ACCENTS.red, hint: "Revisa el informe de validación" },
+};
+
+const RUNTIME_META: Record<string, { label: string; color: string }> = {
+  running: { label: "running", color: ACCENTS.green },
+  stopped: { label: "stopped", color: ACCENTS.slate },
+  error: { label: "error", color: ACCENTS.red },
+  pending: { label: "pending", color: ACCENTS.amber },
 };
 
 const GROUP_COLORS = [
@@ -238,7 +336,11 @@ function StatePill({ state }: { state: FabricState }) {
   );
 }
 
-function buildGraphOption(graph: FabricGraph): EChartsOption {
+function buildGraphOption(
+  graph: FabricGraph,
+  runtimeByDevice: Map<string, string>,
+  deployed: boolean,
+): EChartsOption {
   const groupIndex = new Map(graph.groups.map((group, index) => [group.id, index + 1]));
   const categories = [
     { name: "Switches", itemStyle: { color: ACCENTS.slate } },
@@ -266,10 +368,12 @@ function buildGraphOption(graph: FabricGraph): EChartsOption {
           const vlans = (node.vlans ?? []).join(", ") || "—";
           return `Switch ${node.label}\nVLANs troncales: ${vlans}\nSTP: ${node.stp ? "on" : "off"}`;
         }
+        const runtime = node.device_id ? runtimeByDevice.get(node.device_id) : undefined;
         return [
           `Dispositivo ${node.label}`,
           `IP ${node.ip ?? "—"} · VLAN ${node.vlan_tag ?? "sin etiqueta"}`,
           `Switch ${node.switch ?? "—"} · Segmento ${node.segment ?? "—"}`,
+          `Runtime: ${runtime ?? "sin datos"}`,
         ].join("\n");
       },
     },
@@ -292,25 +396,34 @@ function buildGraphOption(graph: FabricGraph): EChartsOption {
       right: 18,
       force: { repulsion: 280, edgeLength: [85, 160], gravity: 0.08 },
       categories,
-      data: graph.nodes.map((node) => ({
-        id: node.id,
-        name: node.label,
-        value: node.kind === "device" ? node.ip ?? "" : node.switch_id ?? "",
-        category: node.kind === "switch" ? 0 : groupIndex.get(node.group) ?? 1,
-        symbol: node.kind === "switch" ? "roundRect" : "circle",
-        symbolSize: node.kind === "switch" ? 46 : 32,
-        itemStyle: node.kind === "switch"
-          ? { color: ACCENTS.slate, borderColor: withAlpha(ACCENTS.slate, 0.7), borderWidth: 1 }
-          : { borderColor: withAlpha(ink, 0.35), borderWidth: 1 },
-        label: {
-          show: true,
-          position: node.kind === "switch" ? "inside" : "right",
-          color: node.kind === "switch" ? "#f2f0ec" : ink,
-          fontSize: 10.5,
-          overflow: "truncate",
-          width: 110,
-        },
-      })),
+      data: graph.nodes.map((node) => {
+        const runtime = node.device_id ? runtimeByDevice.get(node.device_id) : undefined;
+        const running = deployed && runtime === "running";
+        return {
+          id: node.id,
+          name: node.label,
+          value: node.kind === "device" ? node.ip ?? "" : node.switch_id ?? "",
+          category: node.kind === "switch" ? 0 : groupIndex.get(node.group) ?? 1,
+          symbol: node.kind === "switch" ? "roundRect" : "circle",
+          symbolSize: node.kind === "switch" ? 46 : 32,
+          itemStyle: node.kind === "switch"
+            ? { color: ACCENTS.slate, borderColor: withAlpha(ACCENTS.slate, 0.7), borderWidth: 1 }
+            : {
+                borderColor: running ? ACCENTS.green : withAlpha(ink, 0.35),
+                borderWidth: running ? 2.5 : 1,
+                shadowBlur: running ? 10 : 0,
+                shadowColor: running ? withAlpha(ACCENTS.green, 0.6) : "transparent",
+              },
+          label: {
+            show: true,
+            position: node.kind === "switch" ? "inside" : "right",
+            color: node.kind === "switch" ? "#f2f0ec" : ink,
+            fontSize: 10.5,
+            overflow: "truncate",
+            width: 110,
+          },
+        };
+      }),
       links: graph.edges.map((edge) => ({
         source: edge.source,
         target: edge.target,
@@ -333,8 +446,43 @@ function buildGraphOption(graph: FabricGraph): EChartsOption {
 
 function FabricDeviceDrawer({ row, onClose }: { row: DeviceRow; onClose: () => void }) {
   const { spec, manifest, iface, segmentId } = row;
-  const services = manifest?.services ?? [];
+  const [detail, setDetail] = useState<FabricDeviceDetail | null>(null);
+  const [events, setEvents] = useState<FabricEvent[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const deviceId = spec.device_id;
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    Promise.all([
+      apiGet<FabricDeviceDetail>(`/api/fabric/devices/${encodeURIComponent(deviceId)}`),
+      apiGet<FabricEvent[]>(`/api/fabric/events?device_id=${encodeURIComponent(deviceId)}&limit=10`),
+    ])
+      .then(([nextDetail, nextEvents]) => {
+        if (cancelled) return;
+        setDetail(nextDetail);
+        setEvents(nextEvents);
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : "No se pudo cargar el dispositivo");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [deviceId]);
+
+  const runtime = detail?.runtime ?? null;
+  const services = detail?.services ?? manifest?.services ?? [];
   const vlan = iface?.vlan_tag;
+  const runtimeMeta = RUNTIME_META[runtime?.state ?? "pending"] ?? RUNTIME_META.pending;
+
   return (
     <div className="drawer-backdrop" onClick={onClose}>
       <aside className="event-drawer config-drawer" onClick={(event) => event.stopPropagation()}>
@@ -348,10 +496,27 @@ function FabricDeviceDrawer({ row, onClose }: { row: DeviceRow; onClose: () => v
         </div>
 
         <div className="drawer-badges">
-          <span className="proto-chip">{manifest?.role ?? "device"}</span>
+          <span className="proto-chip">{detail?.role ?? manifest?.role ?? "device"}</span>
           <span className="sensor-chip">{segmentId || "sin segmento"}</span>
           <span className="health-pill"><i />{vlan === null || vlan === undefined ? "sin etiqueta" : `VLAN ${vlan}`}</span>
+          <span className="health-pill" style={{ color: runtimeMeta.color, background: withAlpha(runtimeMeta.color, 0.12) }}>
+            <i />{runtimeMeta.label}
+          </span>
         </div>
+
+        {loading && (
+          <div className="empty-state small">
+            <RefreshCw size={18} />
+            <strong>Cargando dispositivo</strong>
+            <span>Leyendo runtime y últimos eventos.</span>
+          </div>
+        )}
+        {error && (
+          <div className="segment-note">
+            <AlertTriangle size={15} />
+            <p>{error}</p>
+          </div>
+        )}
 
         <div className="honeypot-config-grid">
           <div><span>IP</span><strong className="mono">{iface?.ip ?? "—"}</strong></div>
@@ -362,7 +527,18 @@ function FabricDeviceDrawer({ row, onClose }: { row: DeviceRow; onClose: () => v
           <div><span>Gateway</span><strong className="mono">{iface?.gateway ?? "—"}</strong></div>
           <div><span>Contenedor</span><strong className="mono">{spec.container_name}</strong></div>
           <div><span>Recursos</span><strong>{spec.cpus} CPU · {spec.mem_limit}</strong></div>
+          <div><span>Estado runtime</span><strong>{runtimeMeta.label}</strong></div>
+          <div><span>PID</span><strong className="mono">{runtime?.pid ?? "—"}</strong></div>
+          <div><span>Estado contenedor</span><strong>{runtime?.container_state ?? "—"}</strong></div>
+          <div><span>Salud</span><strong>{runtime?.healthy === undefined ? "—" : runtime.healthy ? "sano" : "con errores"}</strong></div>
         </div>
+
+        {runtime?.error && (
+          <div className="segment-note">
+            <AlertTriangle size={15} />
+            <p>{runtime.error}</p>
+          </div>
+        )}
 
         <section className="config-block">
           <span className="eyebrow">Servicios declarados</span>
@@ -374,6 +550,79 @@ function FabricDeviceDrawer({ row, onClose }: { row: DeviceRow; onClose: () => v
               </span>
             ))}
           </div>
+        </section>
+
+        {runtime?.interfaces && runtime.interfaces.length > 0 && (
+          <section className="config-block">
+            <span className="eyebrow">Interfaces (runtime)</span>
+            <div className="service-chip-list">
+              {runtime.interfaces.map((item) => (
+                <span
+                  className="proto-chip"
+                  key={item.name}
+                  style={{
+                    color: item.port_present ? ACCENTS.green : ACCENTS.red,
+                    borderColor: withAlpha(item.port_present ? ACCENTS.green : ACCENTS.red, 0.45),
+                  }}
+                >
+                  {item.name} · {item.switch} · VLAN {item.vlan_tag ?? "—"} · {item.port_present ? "puerto OK" : "puerto ausente"}
+                </span>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {runtime?.neighbors && runtime.neighbors.length > 0 && (
+          <section className="config-block">
+            <span className="eyebrow">Conectividad (ping)</span>
+            <div className="service-chip-list">
+              {runtime.neighbors.map((neighbor) => (
+                <span
+                  className="proto-chip"
+                  key={neighbor.ip}
+                  style={{
+                    color: neighbor.reachable ? ACCENTS.green : ACCENTS.red,
+                    borderColor: withAlpha(neighbor.reachable ? ACCENTS.green : ACCENTS.red, 0.45),
+                  }}
+                >
+                  {neighbor.ip} · {neighbor.reachable ? "reachable" : "sin respuesta"}
+                </span>
+              ))}
+            </div>
+          </section>
+        )}
+
+        <section className="config-block">
+          <span className="eyebrow">Últimos eventos</span>
+          {events.length === 0 ? (
+            <div className="empty-state small">
+              <AlertTriangle size={18} />
+              <strong>Sin eventos</strong>
+              <span>El agente aún no ha registrado interacciones.</span>
+            </div>
+          ) : (
+            <div className="service-chip-list" style={{ flexDirection: "column", alignItems: "stretch" }}>
+              {events.map((event) => (
+                <div
+                  key={event.id}
+                  style={{
+                    display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center",
+                    justifyContent: "space-between", padding: "6px 8px",
+                    border: "1px solid var(--line)", borderRadius: 3,
+                  }}
+                >
+                  <span className="mono" style={{ fontSize: 11 }}>{formatDateTime(event.timestamp)}</span>
+                  <span className="proto-chip">{event.type}</span>
+                  <span className="mono" style={{ fontSize: 11 }}>
+                    {event.src_ip}{event.src_port ? `:${event.src_port}` : ""}
+                  </span>
+                  <span className="muted" style={{ fontSize: 11 }}>
+                    {event.proto}{event.username ? ` · ${event.username}` : ""}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
         </section>
 
         {spec.routes.length > 0 && (
@@ -415,6 +664,7 @@ export function FabricPage() {
   const [topology, setTopology] = useState<FabricTopology>({});
   const [graph, setGraph] = useState<FabricGraph>({ nodes: [], edges: [], groups: [], state: "disabled" });
   const [specs, setSpecs] = useState<FabricDeviceSpec[]>([]);
+  const [health, setHealth] = useState<FabricHealth | null>(null);
   const [selectedDevice, setSelectedDevice] = useState<string | null>(null);
   const [report, setReport] = useState<FabricValidateReport | null>(null);
   const [validating, setValidating] = useState(false);
@@ -425,16 +675,18 @@ export function FabricPage() {
     setLoading(true);
     setError(null);
     try {
-      const [nextStatus, nextTopology, nextGraph, nextSpecs] = await Promise.all([
+      const [nextStatus, nextTopology, nextGraph, nextSpecs, nextHealth] = await Promise.all([
         apiGet<FabricStatus>("/api/fabric/status"),
         apiGet<FabricTopology>("/api/fabric/topology"),
         apiGet<FabricGraph>("/api/fabric/topology/graph"),
         apiGet<FabricDeviceSpec[]>("/api/fabric/devices"),
+        apiGet<FabricHealth>("/api/fabric/health"),
       ]);
       setStatus(nextStatus);
       setTopology(nextTopology ?? {});
       setGraph(nextGraph);
       setSpecs(nextSpecs ?? []);
+      setHealth(nextHealth);
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo cargar el fabric");
     } finally {
@@ -470,7 +722,11 @@ export function FabricPage() {
   const selectedRow = rows.find((row) => row.spec.device_id === selectedDevice) ?? null;
   const state = status?.state ?? "disabled";
   const meta = STATE_META[state];
-  const graphOption = buildGraphOption(graph);
+  const runtimeByDevice = useMemo(
+    () => new Map(specs.map((spec) => [spec.device_id, spec.runtime?.state ?? "pending"])),
+    [specs],
+  );
+  const graphOption = buildGraphOption(graph, runtimeByDevice, state === "deployed");
 
   function handleGraphClick(params: ECElementEvent) {
     if (params.dataType !== "node") return;
@@ -663,6 +919,77 @@ export function FabricPage() {
             </Panel>
           </div>
 
+          <Panel
+            className="span-12"
+            eyebrow="Salud"
+            title="Runtime y forwarder"
+            description="Chequeos del host (bridges, enlaces y dispositivos) y estado del forwarder de eventos."
+            actions={
+              <span
+                className="health-pill"
+                style={{
+                  color: health?.healthy ? ACCENTS.green : ACCENTS.red,
+                  background: withAlpha(health?.healthy ? ACCENTS.green : ACCENTS.red, 0.12),
+                }}
+              >
+                <i />{health ? (health.healthy ? "sano" : "con errores") : "sin datos"}
+              </span>
+            }
+          >
+            {!health ? (
+              <div className="empty-state small">
+                <AlertTriangle size={18} />
+                <strong>Sin datos de salud</strong>
+                <span>El control no pudo consultar el runtime del fabric.</span>
+              </div>
+            ) : (
+              <>
+                <div className="honeypot-config-grid">
+                  <div><span>Runtime</span><strong>{health.runtime_available ? "disponible" : "no disponible"}</strong></div>
+                  <div><span>Checks</span><strong>{health.checks.filter((check) => check.ok).length}/{health.checks.length} OK</strong></div>
+                  <div><span>Bridges</span><strong>{health.runtime?.bridges ? `${health.runtime.bridges.present.length}/${health.runtime.bridges.expected.length}` : "—"}</strong></div>
+                  <div><span>Enlaces</span><strong>{health.runtime?.links ? `${health.runtime.links.present.length}/${health.runtime.links.expected.length}` : "—"}</strong></div>
+                  <div><span>Forwarder</span><strong>{status?.forwarder ? (status.forwarder.enabled ? "activo" : "desactivado") : "sin datos"}</strong></div>
+                  <div><span>Eventos enviados</span><strong>{status?.forwarder?.sent ?? "—"}</strong></div>
+                  <div><span>Pendientes</span><strong>{status?.forwarder?.pending ?? "—"}</strong></div>
+                  <div><span>Fallidos</span><strong>{status?.forwarder?.failed ?? "—"}</strong></div>
+                </div>
+
+                <div className="config-block">
+                  <span className="eyebrow">Checks</span>
+                  <div className="service-chip-list">
+                    {health.checks.map((check) => (
+                      <span
+                        key={check.name}
+                        className="proto-chip"
+                        title={check.detail}
+                        style={{
+                          color: check.ok ? ACCENTS.green : ACCENTS.red,
+                          borderColor: withAlpha(check.ok ? ACCENTS.green : ACCENTS.red, 0.45),
+                        }}
+                      >
+                        {check.name}: {check.ok ? "ok" : "falla"}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+
+                {status?.forwarder?.last_error && (
+                  <div className="segment-note">
+                    <AlertTriangle size={15} />
+                    <p>Forwarder: {status.forwarder.last_error}</p>
+                  </div>
+                )}
+                {status?.forwarder && !status.forwarder.enabled && (
+                  <div className="segment-note">
+                    <AlertTriangle size={15} />
+                    <p>Forwarder desactivado: exporta <code>DYSTOPIA_FABRIC_EVENTS_ENABLED=true</code> en el host.</p>
+                  </div>
+                )}
+              </>
+            )}
+          </Panel>
+
           {report && (
             <Panel
               className="span-12"
@@ -716,6 +1043,8 @@ export function FabricPage() {
                       <th>MAC</th>
                       <th>Switch</th>
                       <th>VLAN</th>
+                      <th>Contenedor</th>
+                      <th>Conectividad</th>
                       <th>Servicios</th>
                     </tr>
                   </thead>
@@ -742,6 +1071,35 @@ export function FabricPage() {
                             {row.iface?.vlan_tag ?? "sin etiqueta"}
                             <br />
                             <span className="muted">{row.segmentId || "—"}</span>
+                          </td>
+                          <td>
+                            {(() => {
+                              const runtime = row.spec.runtime?.state ?? "pending";
+                              const runtimeMeta = RUNTIME_META[runtime] ?? RUNTIME_META.pending;
+                              return (
+                                <span className="health-pill" style={{ color: runtimeMeta.color, background: withAlpha(runtimeMeta.color, 0.12) }}>
+                                  <i />{runtimeMeta.label}
+                                </span>
+                              );
+                            })()}
+                          </td>
+                          <td>
+                            {(() => {
+                              const deviceHealth = health?.devices_health.find(
+                                (item) => item.device_id === row.spec.device_id,
+                              );
+                              if (!deviceHealth) return <span className="muted">—</span>;
+                              const neighbors = deviceHealth.neighbors ?? [];
+                              if (neighbors.length === 0) return <span className="muted">sin vecinos</span>;
+                              const reachable = neighbors.filter((neighbor) => neighbor.reachable).length;
+                              const allOk = reachable === neighbors.length;
+                              const color = allOk ? ACCENTS.green : (reachable === 0 ? ACCENTS.red : ACCENTS.amber);
+                              return (
+                                <span className="health-pill" style={{ color, background: withAlpha(color, 0.12) }}>
+                                  <i />{reachable}/{neighbors.length} vecinos
+                                </span>
+                              );
+                            })()}
                           </td>
                           <td>
                             {services.length === 0 ? (
