@@ -44,7 +44,7 @@ import os
 import re
 import subprocess
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Optional, Protocol
+from typing import TYPE_CHECKING, Any, Callable, Optional, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -237,16 +237,14 @@ def _validate_ifname(name: str, role: str, errors: list[str]) -> None:
 def _agent_config(topology: FabricTopology, device_id: str) -> dict:
     """Config del agente (device.json) para un dispositivo del manifiesto.
 
-    Incluye credenciales señuelo: el archivo se monta read-only con modo
-    0600 y nunca sale por la API (AC13).
+    **Sin credenciales**: el agente no las necesita (los listeners usan
+    personas) y ``device.json`` se monta en el contenedor. Las credenciales
+    señuelo se guardan cifradas aparte (``credential_store``) para un futuro
+    binding de honeypots reales.
     """
     device = next((item for item in topology.devices if item.id == device_id), None)
     if device is None:
         return {}
-    override = next(
-        (item for item in topology.config.device_overrides if item.id == device_id),
-        None,
-    )
     return {
         "device_id": device.id,
         "role": device.role.value,
@@ -264,16 +262,20 @@ def _agent_config(topology: FabricTopology, device_id: str) -> dict:
             }
             for service in device.services
         ],
-        "credentials": [
-            {
-                "username": credential.username,
-                "password": credential.password,
-                "service": credential.service,
-                "purpose": credential.purpose,
-            }
-            for credential in (override.credentials if override is not None else [])
-        ],
     }
+
+
+def _credentials_for(topology: FabricTopology, device_id: str) -> list[dict]:
+    """Credenciales señuelo del override (nunca van a device.json)."""
+    from app.services.fabric import credential_store
+
+    override = next(
+        (item for item in topology.config.device_overrides if item.id == device_id),
+        None,
+    )
+    if override is None:
+        return []
+    return credential_store.credentials_for(device_id, override.credentials)
 
 
 class OvsFabricEngine:
@@ -291,9 +293,15 @@ class OvsFabricEngine:
         runner: Optional[CommandRunner] = None,
         privilege_check: Optional[Callable[[], bool]] = None,
         device_runtime: Optional["DeviceRuntime"] = None,
+        credential_store: Optional[Any] = None,
     ):
         self._runner: CommandRunner = runner or SubprocessRunner()
         self._privilege_check = privilege_check or _has_net_admin
+        if credential_store is None:
+            from app.services.fabric import credential_store as store_module
+
+            credential_store = store_module
+        self._credential_store = credential_store
         if device_runtime is not None:
             self._device_runtime = device_runtime
         else:
@@ -373,6 +381,7 @@ class OvsFabricEngine:
         # §8.1: switches → enlaces → dispositivos. Un fallo de dispositivo
         # no aborta el deploy; solo si no queda ninguno desplegado.
         for device in plan.devices:
+            self._store_credentials(topology, device.device_id, result)
             agent_config = _agent_config(topology, device.device_id)
             outcome = self._device_runtime.deploy_device(
                 device, agent_config=agent_config
@@ -416,6 +425,30 @@ class OvsFabricEngine:
             len(plan.links), len(result.links_created),
             len(result.containers_created), len(result.containers_failed),
         )
+
+    def _store_credentials(
+        self, topology: FabricTopology, device_id: str, result: "DeployResult"
+    ) -> None:
+        """Cifra las credenciales del dispositivo (si hay clave del fabric).
+
+        Sin clave se avisa y se continúa: ``device.json`` no las contiene,
+        así que no hay degradación a texto plano.
+        """
+        credentials = _credentials_for(topology, device_id)
+        if not credentials:
+            return
+        try:
+            if not self._credential_store.is_configured():
+                result.warnings.append(
+                    f"Credenciales de '{device_id}' no cifradas: no hay clave "
+                    "del fabric (DYSTOPIA_FABRIC_KEY o /etc/dystopia/fabric.key)"
+                )
+                return
+            self._credential_store.store_for_device(device_id, credentials)
+        except Exception as exc:  # noqa: BLE001 - no tumba el deploy
+            result.warnings.append(
+                f"No se pudieron cifrar las credenciales de '{device_id}': {exc}"
+            )
 
     def destroy(self, topology: FabricTopology) -> None:
         """Elimina puertos, veths y bridges en orden inverso (idempotente)."""

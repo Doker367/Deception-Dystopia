@@ -739,3 +739,76 @@ def test_subprocess_runner_timeout():
     with pytest.raises(CommandError) as excinfo:
         SubprocessRunner(timeout=0.1).run(args)
     assert "excedió 0.1s" in str(excinfo.value)
+
+
+# ── Fase 8: credenciales fuera de device.json y cifradas aparte ──
+
+
+def _manifest_con_credenciales() -> dict:
+    manifest = _manifest()
+    manifest["fabric"]["device_overrides"][0]["credentials"] = [
+        {"username": "admin", "password": "admin123", "service": "ssh"},
+    ]
+    return manifest
+
+
+class FakeCredentialStore:
+    """Store falso: registra lo que el engine cifraría."""
+
+    def __init__(self, configured: bool = True):
+        self.configured = configured
+        self.stored: list[tuple[str, list[dict]]] = []
+
+    def is_configured(self) -> bool:
+        return self.configured
+
+    def store_for_device(self, device_id, credentials) -> None:
+        self.stored.append((device_id, credentials))
+
+
+def test_agent_config_sin_credenciales():
+    from app.services.fabric.deploy import _agent_config
+
+    topology = parse_manifest(_manifest_con_credenciales())
+    config = _agent_config(topology, "pc-01")
+    assert "credentials" not in config
+    assert "admin123" not in json.dumps(config)
+
+
+def test_engine_cifra_credenciales_aparte():
+    topology = parse_manifest(_manifest_con_credenciales())
+    plan = FabricPlan(
+        bridges=build_bridge_specs(topology),
+        links=build_link_specs(topology),
+        devices=build_device_specs(topology),
+    )
+    store = FakeCredentialStore()
+    engine = OvsFabricEngine(
+        runner=FakeCommandRunner(), privilege_check=lambda: True,
+        device_runtime=StubDeviceRuntime(), credential_store=store,
+    )
+    engine.deploy(plan, topology)
+    assert store.stored == [("pc-01", [{
+        "username": "admin", "password": "admin123",
+        "service": "ssh", "purpose": "",
+    }])]
+    assert engine.last_result is not None
+    assert not any("no cifradas" in warning for warning in engine.last_result.warnings)
+
+
+def test_engine_sin_clave_avisa_pero_despliega():
+    topology = parse_manifest(_manifest_con_credenciales())
+    plan = FabricPlan(
+        bridges=build_bridge_specs(topology),
+        links=build_link_specs(topology),
+        devices=build_device_specs(topology),
+    )
+    store = FakeCredentialStore(configured=False)
+    engine = OvsFabricEngine(
+        runner=FakeCommandRunner(), privilege_check=lambda: True,
+        device_runtime=StubDeviceRuntime(), credential_store=store,
+    )
+    engine.deploy(plan, topology)
+    assert store.stored == []
+    assert engine.last_result is not None
+    assert any("no cifradas" in warning for warning in engine.last_result.warnings)
