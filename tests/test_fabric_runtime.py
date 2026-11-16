@@ -399,6 +399,81 @@ def test_destroy_tolera_ausencias():
     assert any("ausente" in warning for warning in result.warnings)
 
 
+# ── Destroy: credenciales cifradas (Fase 9) ─────────────────
+
+
+def test_destroy_borra_credenciales_cifradas(tmp_path):
+    runner = FakeRunner()
+    credentials_dir = tmp_path / "credentials"
+    credentials_dir.mkdir()
+    enc = credentials_dir / "pc-01.enc"
+    enc.write_text("token-fernet\n", encoding="ascii")
+    logs = tmp_path / "logs" / "pc-01"
+    logs.mkdir(parents=True)
+    events = logs / "events.jsonl"
+    events.write_text('{"n": 1}\n', encoding="utf-8")
+
+    runtime = DeviceRuntime(
+        DockerCliRuntime(runner=runner), runner=runner,
+        credentials_dir=credentials_dir,
+    )
+    assert runtime.deploy_device(_device()).success is True
+    result = runtime.destroy_device(_device())
+
+    assert result.success is True
+    assert result.credentials_removed == ["pc-01"]
+    assert not enc.exists()
+    # Los JSONL son evidencia: no se tocan.
+    assert events.exists()
+    assert any(step.name == "credentials_remove" for step in result.steps)
+
+
+def test_destroy_sin_credenciales_no_falla(tmp_path):
+    runner = FakeRunner()
+    credentials_dir = tmp_path / "credentials"
+    credentials_dir.mkdir()
+    runtime = DeviceRuntime(
+        DockerCliRuntime(runner=runner), runner=runner,
+        credentials_dir=credentials_dir,
+    )
+    result = runtime.destroy_device(_device())
+    assert result.success is True
+    assert result.credentials_removed == []
+    assert not any("credenciales" in warning for warning in result.warnings)
+
+
+def test_destroy_sin_credentials_dir_no_toca_nada(tmp_path):
+    """Sin ``credentials_dir`` (tests/embedding) el destroy no borra nada."""
+    runner = FakeRunner()
+    stray = tmp_path / "pc-01.enc"
+    stray.write_text("x", encoding="ascii")
+    result = _runtime(runner).destroy_device(_device())
+    assert result.success is True
+    assert result.credentials_removed == []
+    assert stray.exists()
+
+
+def test_destroy_fallo_al_borrar_credenciales_es_warning(tmp_path, monkeypatch):
+    runner = FakeRunner()
+    credentials_dir = tmp_path / "credentials"
+    credentials_dir.mkdir()
+    (credentials_dir / "pc-01.enc").write_text("x", encoding="ascii")
+
+    def _boom(self, missing_ok=False):
+        raise PermissionError("simulado")
+
+    monkeypatch.setattr(Path, "unlink", _boom)
+    runtime = DeviceRuntime(
+        DockerCliRuntime(runner=runner), runner=runner,
+        credentials_dir=credentials_dir,
+    )
+    result = runtime.destroy_device(_device())
+    assert result.success is True
+    assert result.credentials_removed == []
+    assert any("No se pudieron borrar las credenciales" in w
+               for w in result.warnings)
+
+
 # ── Health ──────────────────────────────────────────────────
 
 

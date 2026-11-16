@@ -650,13 +650,39 @@ def test_destroy_registra_dispositivos_en_resultado():
     result = engine.last_destroy_result
     assert result is not None
     assert result.containers_removed == ["pc-01"]
+    assert result.credentials_removed == []
     assert result.devices == [{
         "device_id": "pc-01",
         "container_removed": True,
+        "credentials_removed": [],
         "success": True,
         "step": "",
         "error": "",
     }]
+
+
+def test_destroy_agrega_credenciales_borradas():
+    """El engine propaga al DestroyResult los ``.enc`` que borró el runtime."""
+
+    class CredentialDestroyRuntime(StubDeviceRuntime):
+        def destroy_device(self, spec) -> DeviceDestroyResult:
+            outcome = super().destroy_device(spec)
+            outcome.credentials_removed = [spec.device_id]
+            return outcome
+
+    runner = FakeCommandRunner()
+    engine = OvsFabricEngine(
+        runner=runner,
+        privilege_check=lambda: True,
+        device_runtime=CredentialDestroyRuntime(),
+    )
+    topology, plan = _topology_and_plan()
+    engine.deploy(plan, topology)
+    engine.destroy(topology)
+    result = engine.last_destroy_result
+    assert result is not None
+    assert result.credentials_removed == ["pc-01"]
+    assert result.devices[0]["credentials_removed"] == ["pc-01"]
 
 
 # ── Destroy ─────────────────────────────────────────────────

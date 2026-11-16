@@ -193,6 +193,8 @@ class DestroyResult(BaseModel):
     bridges_removed: list[str] = Field(default_factory=list)
     links_removed: list[str] = Field(default_factory=list)
     containers_removed: list[str] = Field(default_factory=list)
+    # Dispositivos cuyas credenciales cifradas (``.enc``) se eliminaron.
+    credentials_removed: list[str] = Field(default_factory=list)
     devices: list[dict] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
@@ -319,6 +321,11 @@ class OvsFabricEngine:
                 logs_root=Path(os.getenv(
                     "DYSTOPIA_FABRIC_DEVICE_LOG_DIR",
                     "/var/lib/dystopia/fabric/logs",
+                )),
+                # El destroy borra el ``.enc`` del dispositivo (Fase 9).
+                credentials_dir=Path(os.getenv(
+                    "DYSTOPIA_FABRIC_CREDENTIALS_DIR",
+                    "/var/lib/dystopia/fabric/credentials",
                 )),
             )
         self.last_result: Optional[DeployResult] = None
@@ -469,11 +476,13 @@ class OvsFabricEngine:
             detail = {
                 "device_id": device.device_id,
                 "container_removed": outcome.container_removed,
+                "credentials_removed": list(outcome.credentials_removed),
                 "success": outcome.success,
                 "step": outcome.error_step or "",
                 "error": "; ".join(outcome.errors),
             }
             result.devices.append(detail)
+            result.credentials_removed.extend(outcome.credentials_removed)
             result.warnings.extend(outcome.warnings)
             if outcome.success:
                 if outcome.container_removed:
@@ -516,9 +525,10 @@ class OvsFabricEngine:
 
         self.last_destroy_result = result
         logger.info(
-            "[fabric] destroy OVS: %d bridges, %d enlaces, %d contenedores eliminados",
+            "[fabric] destroy OVS: %d bridges, %d enlaces, %d contenedores eliminados, "
+            "%d credenciales cifradas borradas",
             len(result.bridges_removed), len(result.links_removed),
-            len(result.containers_removed),
+            len(result.containers_removed), len(result.credentials_removed),
         )
 
     # ── Preflight y validación ──────────────────────────────

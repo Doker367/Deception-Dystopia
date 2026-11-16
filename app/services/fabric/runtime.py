@@ -264,6 +264,8 @@ class DeviceDestroyResult(BaseModel):
     container_removed: bool = False
     ports_removed: list[str] = Field(default_factory=list)
     veths_removed: list[str] = Field(default_factory=list)
+    # Credenciales cifradas del dispositivo eliminadas en este destroy.
+    credentials_removed: list[str] = Field(default_factory=list)
     steps: list[RuntimeStep] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
@@ -292,6 +294,7 @@ class DeviceRuntime:
         user: str = _DEFAULT_USER,
         config_root: Optional[Path] = None,
         logs_root: Optional[Path] = None,
+        credentials_dir: Optional[Path] = None,
     ):
         self._runtime = runtime
         self._runner: CommandRunner = runner or SubprocessRunner()
@@ -301,6 +304,11 @@ class DeviceRuntime:
         # roots no se monta nada (tests/embedding).
         self._config_root = Path(config_root) if config_root is not None else None
         self._logs_root = Path(logs_root) if logs_root is not None else None
+        # Directorio de credenciales cifradas: se borra el ``.enc`` del
+        # dispositivo al destruirlo. Sin él no se toca nada (tests/embedding).
+        self._credentials_dir = (
+            Path(credentials_dir) if credentials_dir is not None else None
+        )
 
     # ── Deploy ──────────────────────────────────────────────
 
@@ -577,7 +585,15 @@ class DeviceRuntime:
     # ── Destroy ─────────────────────────────────────────────
 
     def destroy_device(self, spec: DeviceSpec) -> DeviceDestroyResult:
-        """Detiene/elimina el contenedor y limpia puertos OVS y veths."""
+        """Detiene/elimina el contenedor y limpia puertos OVS y veths.
+
+        También elimina las credenciales cifradas del dispositivo
+        (``<credentials_dir>/<device_id>.enc``): al desaparecer el
+        dispositivo señuelo, su secreto no debe sobrevivir en el host. Los
+        logs JSONL **no** se tocan: son evidencia de los ataques recibidos.
+        La ausencia del ``.enc`` es normal (dispositivo sin credenciales o
+        destroy repetido) y no se considera error.
+        """
         result = DeviceDestroyResult(
             device_id=spec.device_id, container_name=spec.container_name
         )
@@ -611,8 +627,42 @@ class DeviceRuntime:
                 ):
                     result.veths_removed.append(iface.host_veth)
 
+        self._remove_credentials(spec, result)
+
         result.success = not result.errors
         return result
+
+    def _remove_credentials(
+        self, spec: DeviceSpec, result: DeviceDestroyResult
+    ) -> None:
+        """Borra ``<credentials_dir>/<device_id>.enc`` (tolerante a ausencias).
+
+        Un fallo al borrar se registra como warning y no tumba el destroy:
+        el contenedor y la red ya no existen y dejar el ``.enc`` huérfano no
+        justifica un estado ``error`` (el operador lo ve en el resultado).
+        """
+        if self._credentials_dir is None:
+            return
+        path = self._credentials_dir / f"{spec.device_id}.enc"
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            return
+        except OSError as exc:
+            result.warnings.append(
+                f"No se pudieron borrar las credenciales de "
+                f"'{spec.device_id}' ({path}): {exc}"
+            )
+            logger.warning(
+                "[fabric-runtime] no se pudo borrar %s: %s", path, exc
+            )
+            return
+        result.credentials_removed.append(spec.device_id)
+        result.steps.append(RuntimeStep(name="credentials_remove", ok=True))
+        logger.info(
+            "[fabric-runtime] credenciales cifradas de '%s' eliminadas",
+            spec.device_id,
+        )
 
     # ── Salud ───────────────────────────────────────────────
 

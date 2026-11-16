@@ -277,10 +277,12 @@ def destroy(request: Request) -> dict:
         result = getattr(engine, "last_destroy_result", None)
         payload = result.model_dump() if result is not None else {}
         logger.info(
-            "[fabric-host] destroy completado: %d bridges, %d enlaces, %d contenedores",
+            "[fabric-host] destroy completado: %d bridges, %d enlaces, %d contenedores, "
+            "%d credenciales borradas",
             len(payload.get("bridges_removed", [])),
             len(payload.get("links_removed", [])),
             len(payload.get("containers_removed", [])),
+            len(payload.get("credentials_removed", [])),
         )
         return {
             "success": True,
