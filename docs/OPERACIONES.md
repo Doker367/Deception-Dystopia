@@ -239,3 +239,29 @@ Métricas por dispositivo que faltan (estándar NOC):
   NTP sync/offset.
 - Óptica (fibra): potencia TX/RX dBm, temperatura SFP, bias current.
 - Umbrales típicos óptica: RX < -20 dBm (10G), < -14 dBm (1G).
+
+## Network Fabric — eventos del agente (Fase 5)
+
+El agente de cada contenedor señuelo escribe `events.jsonl` en su volumen
+(`/var/lib/dystopia/fabric/logs/<device_id>/events.jsonl`). El **host
+service** (`dystopia-fabric.service`) corre un forwarder (hilo daemon)
+que reenvía los eventos al control en lotes de ≤100 vía
+`POST /api/fabric/events` con el header `X-Fabric-Token`; los offsets se
+persisten en `/var/lib/dystopia/fabric/forwarder-state.json` (no duplica
+ni pierde eventos; si el log se trunca, se relee desde 0).
+
+Variables (en `/etc/dystopia/fabric.env`, las añade el instalador):
+
+| Variable | Default | Descripción |
+|---|---|---|
+| `DYSTOPIA_FABRIC_EVENTS_ENABLED` | `true` | `false` desactiva el forwarder. |
+| `DYSTOPIA_FABRIC_EVENTS_URL` | `http://127.0.0.1:8082/api/fabric/events` | Endpoint del control. |
+| `DYSTOPIA_FABRIC_EVENTS_INTERVAL` | `5` | Segundos entre ciclos (mín. 0.5). |
+| `DYSTOPIA_FABRIC_DEVICES_DIR` | `/var/lib/dystopia/fabric/logs` | Raíz de los volúmenes de logs. |
+
+En el control, `POST /api/fabric/events` exige `DYSTOPIA_FABRIC_REMOTE_TOKEN`
+(el mismo secreto del engine `remote`; ya se pasa en el compose del lab):
+sin él el endpoint responde **503 fail-closed**, con token erróneo **401**,
+`device_id` ajeno al manifiesto **403** y lotes >200 eventos/256 KB **413**.
+El estado del forwarder se consulta en `GET /status` del host service
+(`forwarder: {enabled, pending, sent, failed, last_error}`).

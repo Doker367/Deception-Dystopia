@@ -79,6 +79,13 @@ grep -q '^DYSTOPIA_FABRIC_BIND=' "$ENV_FILE" \
     || printf 'DYSTOPIA_FABRIC_BIND=127.0.0.1\n' >> "$ENV_FILE"
 grep -q '^DYSTOPIA_FABRIC_PORT=' "$ENV_FILE" \
     || printf 'DYSTOPIA_FABRIC_PORT=8090\n' >> "$ENV_FILE"
+# Forwarder de eventos del agente → control (Fase 5b).
+grep -q '^DYSTOPIA_FABRIC_EVENTS_URL=' "$ENV_FILE" \
+    || printf 'DYSTOPIA_FABRIC_EVENTS_URL=http://127.0.0.1:8082/api/fabric/events\n' >> "$ENV_FILE"
+grep -q '^DYSTOPIA_FABRIC_EVENTS_INTERVAL=' "$ENV_FILE" \
+    || printf 'DYSTOPIA_FABRIC_EVENTS_INTERVAL=5\n' >> "$ENV_FILE"
+grep -q '^DYSTOPIA_FABRIC_EVENTS_ENABLED=' "$ENV_FILE" \
+    || printf 'DYSTOPIA_FABRIC_EVENTS_ENABLED=true\n' >> "$ENV_FILE"
 chown root:root "$ENV_FILE"
 chmod 0600 "$ENV_FILE"
 
