@@ -55,10 +55,17 @@ TOKEN_ENV = "DYSTOPIA_FABRIC_TOKEN"
 MANIFEST_ENV = "DYSTOPIA_FABRIC_MANIFEST"
 BIND_ENV = "DYSTOPIA_FABRIC_BIND"
 PORT_ENV = "DYSTOPIA_FABRIC_PORT"
+EVENTS_URL_ENV = "DYSTOPIA_FABRIC_EVENTS_URL"
+EVENTS_INTERVAL_ENV = "DYSTOPIA_FABRIC_EVENTS_INTERVAL"
+EVENTS_ENABLED_ENV = "DYSTOPIA_FABRIC_EVENTS_ENABLED"
+DEVICES_DIR_ENV = "DYSTOPIA_FABRIC_DEVICES_DIR"
 
 DEFAULT_MANIFEST = "config/deception/network.yaml"
 DEFAULT_BIND = "127.0.0.1"
 DEFAULT_PORT = 8090
+DEFAULT_DEVICES_DIR = "/var/lib/dystopia/fabric/logs"
+DEFAULT_EVENTS_URL = "http://127.0.0.1:8082/api/fabric/events"
+DEFAULT_EVENTS_INTERVAL = 5.0
 MIN_TOKEN_LENGTH = 32
 SERVICE_NAME = "dystopia-fabric"
 
@@ -77,6 +84,11 @@ class HostServiceSettings:
     manifest: Path
     bind: str = DEFAULT_BIND
     port: int = DEFAULT_PORT
+    # Forwarder de eventos del agente → control (Fase 5b).
+    events_url: str = DEFAULT_EVENTS_URL
+    events_interval: float = DEFAULT_EVENTS_INTERVAL
+    events_enabled: bool = True
+    devices_dir: Path = Path(DEFAULT_DEVICES_DIR)
 
 
 def load_settings() -> HostServiceSettings:
@@ -98,7 +110,21 @@ def load_settings() -> HostServiceSettings:
         ) from exc
     if not 1 <= port <= 65535:
         raise HostServiceConfigError(f"{PORT_ENV} fuera de rango: {port}")
-    return HostServiceSettings(token=token, manifest=manifest, bind=bind, port=port)
+    events_url = os.getenv(EVENTS_URL_ENV, DEFAULT_EVENTS_URL).strip() or DEFAULT_EVENTS_URL
+    raw_interval = os.getenv(EVENTS_INTERVAL_ENV, str(DEFAULT_EVENTS_INTERVAL)).strip()
+    try:
+        events_interval = max(0.5, float(raw_interval))
+    except ValueError as exc:
+        raise HostServiceConfigError(
+            f"{EVENTS_INTERVAL_ENV} debe ser un número de segundos ({raw_interval!r})"
+        ) from exc
+    events_enabled = os.getenv(EVENTS_ENABLED_ENV, "true").strip().lower() != "false"
+    devices_dir = Path(os.getenv(DEVICES_DIR_ENV, DEFAULT_DEVICES_DIR))
+    return HostServiceSettings(
+        token=token, manifest=manifest, bind=bind, port=port,
+        events_url=events_url, events_interval=events_interval,
+        events_enabled=events_enabled, devices_dir=devices_dir,
+    )
 
 
 def _client(request: Request) -> str:
@@ -277,6 +303,7 @@ def status(request: Request) -> dict:
     last_deploy = getattr(engine, "last_result", None)
     last_destroy = getattr(engine, "last_destroy_result", None)
     lock: threading.Lock = request.app.state.operation_lock
+    forwarder = getattr(request.app.state, "forwarder", None)
     return {
         "service": SERVICE_NAME,
         "engine": type(engine).__name__,
@@ -285,6 +312,11 @@ def status(request: Request) -> dict:
         "busy": lock.locked(),
         "last_deploy": last_deploy.model_dump() if last_deploy is not None else None,
         "last_destroy": last_destroy.model_dump() if last_destroy is not None else None,
+        "forwarder": (
+            forwarder.status() if forwarder is not None
+            else {"enabled": False, "pending": 0, "sent": 0,
+                  "failed": 0, "last_error": None}
+        ),
     }
 
 
@@ -348,6 +380,7 @@ def health(request: Request) -> dict:
 def create_app(
     settings: Optional[HostServiceSettings] = None,
     engine: Optional[Any] = None,
+    forwarder: Optional[Any] = None,
 ) -> FastAPI:
     """Construye la app; sin token válido lanza ``HostServiceConfigError``."""
     resolved = settings or load_settings()
@@ -365,6 +398,7 @@ def create_app(
     app.state.settings = resolved
     app.state.engine = engine if engine is not None else OvsFabricEngine()
     app.state.operation_lock = threading.Lock()
+    app.state.forwarder = forwarder
     app.include_router(router)
     return app
 
@@ -379,12 +413,27 @@ def main() -> None:
             "[fabric-host] bind %s expone el servicio en todas las interfaces",
             settings.bind,
         )
-    app = create_app(settings)
+    from app.services.fabric.event_forwarder import forwarder_from_env
+
+    forwarder = None
+    if settings.events_enabled:
+        forwarder = forwarder_from_env(
+            settings_token=settings.token,
+            devices_dir=settings.devices_dir,
+            state_path=settings.devices_dir.parent / "forwarder-state.json",
+        )
+        if forwarder is not None:
+            forwarder.start()  # hilo daemon: nunca bloquea deploy/destroy
+    app = create_app(settings, forwarder=forwarder)
     logger.info(
         "[fabric-host] escuchando en %s:%d (manifest=%s)",
         settings.bind, settings.port, settings.manifest,
     )
-    uvicorn.run(app, host=settings.bind, port=settings.port, log_level="info")
+    try:
+        uvicorn.run(app, host=settings.bind, port=settings.port, log_level="info")
+    finally:
+        if forwarder is not None:
+            forwarder.stop()
 
 
 if __name__ == "__main__":  # pragma: no cover - arranque del servicio
