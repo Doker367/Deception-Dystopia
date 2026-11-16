@@ -525,8 +525,17 @@ class DeviceRuntime:
 
     # ── Salud ───────────────────────────────────────────────
 
-    def device_health(self, spec: DeviceSpec) -> dict:
-        """Contenedor running + puerto OVS + ping opcional a vecinos."""
+    def device_health(
+        self, spec: DeviceSpec, known_device_ips: Optional[set[str]] = None
+    ) -> dict:
+        """Contenedor running + puerto OVS + ping a vecinos que son dispositivos.
+
+        ``neighbors`` puede declarar hosts ficticios (gateway, otras estaciones)
+        que no existen en el fabric: hacerles ping daría siempre "sin
+        respuesta" y marcaría el fabric como no sano. Solo se prueban los
+        vecinos cuyo IP pertenece a otro dispositivo real, que el llamante
+        pasa en ``known_device_ips`` (IPs sin máscara).
+        """
         checks: list[dict] = []
         errors: list[str] = []
         warnings: list[str] = []
@@ -579,9 +588,22 @@ class DeviceRuntime:
             })
 
         neighbors: list[dict] = []
+        # Solo los vecinos que son dispositivos reales del fabric son
+        # verificables; el resto (gateway, hosts ficticios) es informativo.
+        probe = [
+            neighbor for neighbor in spec.neighbors
+            if known_device_ips is not None and neighbor.ip in known_device_ips
+        ]
+        for neighbor in spec.neighbors:
+            if neighbor not in probe:
+                neighbors.append({
+                    "ip": neighbor.ip,
+                    "reachable": None,
+                    "note": "vecino declarado sin contenedor propio",
+                })
         if container["running"]:
             pid = int(container["pid"])
-            for neighbor in spec.neighbors:
+            for neighbor in probe:
                 outcome = self._runner.run(
                     ["nsenter", "-t", str(pid), "-n", "--",
                      "ping", "-c", "1", "-W", "1", neighbor.ip],
@@ -594,7 +616,7 @@ class DeviceRuntime:
                     "ok": reachable,
                     "detail": outcome.stderr.strip() or ("ok" if reachable else "sin respuesta"),
                 })
-        elif spec.neighbors:
+        elif probe:
             warnings.append("Sin contenedor running no se pueden probar los vecinos")
 
         return {

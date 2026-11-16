@@ -949,7 +949,7 @@ class _StubDeviceRuntime:
             success=True, container_removed=True,
         )
 
-    def device_health(self, spec) -> dict:
+    def device_health(self, spec, known_device_ips=None) -> dict:
         healthy = spec.device_id not in self.fail_for
         return {
             "device_id": spec.device_id,

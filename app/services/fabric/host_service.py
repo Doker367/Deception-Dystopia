@@ -321,7 +321,16 @@ def health(request: Request) -> dict:
     device_runtime = getattr(engine, "device_runtime", None)
     health_fn = getattr(device_runtime, "device_health", None)
     if health_fn is not None:
-        devices_health = [health_fn(spec) for spec in build_device_specs(topology)]
+        device_specs = build_device_specs(topology)
+        # Solo los IPs de dispositivos reales son verificables con ping.
+        known_ips = {
+            iface.ip.split("/")[0]
+            for spec in device_specs
+            for iface in spec.interfaces
+        }
+        devices_health = [
+            health_fn(spec, known_device_ips=known_ips) for spec in device_specs
+        ]
     healthy = bool(report.get("healthy")) and all(
         bool(device.get("healthy")) for device in devices_health
     )

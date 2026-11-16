@@ -406,13 +406,24 @@ def test_health_ok():
     runner = FakeRunner()
     runtime = _runtime(runner)
     runtime.deploy_device(_device())
-    health = runtime.device_health(_device())
+    health = runtime.device_health(_device(), known_device_ips={"10.10.0.1"})
     assert health["healthy"] is True
     assert health["runtime_available"] is True
     assert health["container"]["running"] is True
     assert health["interfaces"][0]["port_present"] is True
     assert health["neighbors"] == [{"ip": "10.10.0.1", "reachable": True}]
     assert all(check["ok"] for check in health["checks"])
+
+
+def test_health_ignora_vecinos_ficticios():
+    """Los gateways/hosts declarados sin contenedor no cuentan como fallo."""
+    runner = FakeRunner(ping_ok=False)
+    runtime = _runtime(runner)
+    runtime.deploy_device(_device())
+    health = runtime.device_health(_device(), known_device_ips=set())
+    assert health["healthy"] is True
+    assert health["neighbors"][0]["reachable"] is None
+    assert not any(check["name"].startswith("ping:") for check in health["checks"])
 
 
 def test_health_sin_contenedor():
@@ -438,7 +449,7 @@ def test_health_ping_falla():
     runner = FakeRunner(ping_ok=False)
     runtime = _runtime(runner)
     runtime.deploy_device(_device())
-    health = runtime.device_health(_device())
+    health = runtime.device_health(_device(), known_device_ips={"10.10.0.1"})
     assert health["healthy"] is False
     assert health["neighbors"] == [{"ip": "10.10.0.1", "reachable": False}]
 

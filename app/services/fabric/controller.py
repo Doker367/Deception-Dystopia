@@ -785,8 +785,15 @@ class FabricController:
                 device_runtime = getattr(self._engine, "device_runtime", None)
                 health_fn = getattr(device_runtime, "device_health", None)
                 if health_fn is not None:
+                    device_specs = build_device_specs(topology)
+                    known_ips = {
+                        iface.ip.split("/")[0]
+                        for spec in device_specs
+                        for iface in spec.interfaces
+                    }
                     devices_health = [
-                        health_fn(spec) for spec in build_device_specs(topology)
+                        health_fn(spec, known_device_ips=known_ips)
+                        for spec in device_specs
                     ]
             elif getattr(self._engine, "kind", "") == "remote":
                 # El runtime vive en el host: su /health es la fuente de verdad.

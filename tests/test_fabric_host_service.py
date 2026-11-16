@@ -83,7 +83,7 @@ class FakeRunner:
 
 
 class FakeDeviceRuntime:
-    def device_health(self, spec) -> dict:
+    def device_health(self, spec, known_device_ips=None) -> dict:
         return {
             "device_id": spec.device_id,
             "healthy": True,
