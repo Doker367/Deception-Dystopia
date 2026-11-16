@@ -109,6 +109,22 @@ def recent(limit: int = 50) -> list[dict]:
     return audit_svc.get_events(limit=limit, action="deception_alert")
 
 
+def dispatch_external(alerts: list[dict]) -> list[dict]:
+    """Cooldown + dispatch para alertas de módulos externos (p. ej. fabric).
+
+    Reutiliza el mismo patrón que las reglas internas: silencio por
+    ``(device_id, src_ip, rule)`` y los mismos canales (métricas, auditoría,
+    log, notificaciones). Una regla que quiere silenciarse solo por
+    ``(regla, src_ip)`` debe fijar ``device_id=None`` en su alerta.
+    """
+    if not DECEPTION_ALERTS_ENABLED:
+        return []
+    fired = [alert for alert in alerts if _cooldown_ok(alert)]
+    for alert in fired:
+        _dispatch(alert)
+    return fired
+
+
 def recent_suppressed(limit: int = 50) -> list[dict]:
     """Alertas suprimidas por la IA (falsos positivos detectados)."""
     return audit_svc.get_events(limit=limit, action="deception_alert_suppressed")

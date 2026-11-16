@@ -281,6 +281,53 @@ def _fabric_device_ids() -> set[str]:
     }
 
 
+def _normalize_credentials(detail: dict) -> dict:
+    """Mueve las credenciales capturadas a ``detail.credentials`` (§12 Fase 7).
+
+    El agente escribe ``username``/``password`` capturados en la raíz del
+    ``detail``; aquí se agrupan en ``credentials = {"username", "password"}``
+    sin duplicar si ya vienen normalizados y conservando el resto del
+    ``detail``. Solo aplica a credenciales del **atacante**: las del
+    manifiesto nunca llegan por esta vía (las elimina el agente).
+    """
+    normalized = dict(detail or {})
+    existing = normalized.get("credentials")
+    if isinstance(existing, dict) and (
+        "username" in existing or "password" in existing
+    ):
+        return normalized  # ya normalizado: no duplicar
+    username = normalized.pop("username", None)
+    password = normalized.pop("password", None)
+    if username is None and password is None:
+        return normalized
+    credentials = existing if isinstance(existing, dict) else {}
+    if username is not None:
+        credentials.setdefault("username", username)
+    if password is not None:
+        credentials.setdefault("password", password)
+    normalized["credentials"] = credentials
+    return normalized
+
+
+def _credentials_error(detail: dict) -> Optional[str]:
+    """``credentials`` debe ser un objeto de strings acotados (128/256)."""
+    credentials = detail.get("credentials")
+    if credentials is None:
+        return None
+    if not isinstance(credentials, dict):
+        return "credentials debe ser un objeto {clave: valor}"
+    limits = {"username": 128, "password": 256}
+    for key, value in credentials.items():
+        if not isinstance(key, str) or not isinstance(value, str):
+            return "credentials solo admite claves y valores de texto"
+        if len(key) > 64:
+            return "clave de credentials demasiado larga (máx 64)"
+        limit = limits.get(key, 256)
+        if len(value) > limit:
+            return f"valor de '{key}' demasiado largo (máx {limit})"
+    return None
+
+
 def _event_error(event: FabricEventIn) -> Optional[str]:
     """Validación semántica por evento; ``None`` si es válido."""
     if event.proto.strip().lower() not in FABRIC_EVENT_PROTOS:
@@ -344,15 +391,21 @@ async def receive_events(request: Request) -> dict:
     accepted = 0
     rejected = 0
     errors: list[dict] = []
+    records: list[dict] = []
     for index, event in enumerate(parsed):
         problem = _event_error(event)
         if problem is None:
+            normalized_detail = _normalize_credentials(event.detail)
+            problem = _credentials_error(normalized_detail)
+        if problem is None:
             try:
-                telemetry_svc.emit_sync(
+                record = telemetry_svc.emit_sync(
                     event.device_id, event.src_ip, event.proto.strip().lower(),
-                    event.type, detail=event.detail, username=event.username,
+                    event.type, detail=normalized_detail,
+                    username=event.username,
                     success=event.success, src_port=event.src_port, ts=event.ts,
                 )
+                records.append(record)
                 accepted += 1
             except Exception as exc:  # noqa: BLE001 - un fallo no tumba el lote
                 rejected += 1
@@ -361,5 +414,22 @@ async def receive_events(request: Request) -> dict:
         else:
             rejected += 1
             errors.append({"index": index, "error": problem})
+
+    # Alertas específicas del fabric (Fase 7): fallo no tumba la ingesta.
+    if records:
+        try:
+            from app.services.fabric import fabric_alerts
+            from app.services.fabric.parser import (
+                FabricValidationError,
+                load_topology,
+            )
+
+            try:
+                topology = load_topology()
+            except FabricValidationError:
+                topology = None
+            fabric_alerts.evaluate_batch(records, topology)
+        except Exception:  # noqa: BLE001
+            logger.exception("[fabric] evaluación de alertas del fabric falló")
 
     return {"accepted": accepted, "rejected": rejected, "errors": errors}
