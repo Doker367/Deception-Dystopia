@@ -90,7 +90,7 @@ def events(
     request: Request,
     from_time: str | None = Query(default=None, alias="from", max_length=64),
     to_time: str | None = Query(default=None, alias="to", max_length=64),
-    limit: int = Query(default=25, ge=1, le=300),
+    limit: int = Query(default=25, ge=1, le=100),
     offset: int = Query(default=0, ge=0, le=10_000),
     q: str = Query(default="", max_length=200),
     severity: str = Query(default="", max_length=16),
