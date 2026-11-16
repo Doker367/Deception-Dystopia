@@ -24,7 +24,9 @@ Mininet ni subprocess en este módulo.
 Persistencia: la tabla ``fabric_state`` del §7 vive en la misma SQLite que
 la telemetría de deception (``DECEPTION_DB``). Cada transición inserta una
 fila con hash del manifiesto y ``topology_json`` **sin credenciales**
-(AC13). ``fabric_device_state`` se crea vacía; la llenará el runtime.
+(AC13). ``fabric_device_state`` se rellena tras cada deploy/destroy con
+engine real (upsert por ``device_id``); con el engine stub los
+dispositivos permanecen ``pending``.
 """
 
 import hashlib
@@ -545,6 +547,10 @@ class FabricController:
             self._error = f"deploy falló: {exc}"
             self._transition(FabricState.ERROR)
             self._persist()
+            if getattr(self._engine, "kind", "") == "ovs":
+                self._persist_device_state(self._error_device_rows(
+                    plan, f"deploy falló: {exc}"
+                ))
             logger.exception("[fabric] deploy falló")
             return {
                 "success": False,
@@ -557,6 +563,8 @@ class FabricController:
         self._destroyed_at = None
         self._transition(FabricState.DEPLOYED)
         self._persist()
+        if getattr(self._engine, "kind", "") == "ovs":
+            self._persist_device_state(self._deploy_device_rows(plan, summary))
         self._last_operation = {"action": "deploy", "at": self._deployed_at, **summary}
         logger.info("[fabric] desplegado (%d dispositivos)", len(plan.devices))
         return {
@@ -588,6 +596,10 @@ class FabricController:
             self._error = f"destroy falló: {exc}"
             self._transition(FabricState.ERROR)
             self._persist()
+            if getattr(self._engine, "kind", "") == "ovs":
+                self._persist_device_state(self._error_device_rows(
+                    _build_plan(self._topology), f"destroy falló: {exc}"
+                ))
             logger.exception("[fabric] destroy falló")
             return {
                 "success": False,
@@ -600,6 +612,10 @@ class FabricController:
         self._deployed_at = None
         self._transition(FabricState.READY)
         self._persist()
+        if getattr(self._engine, "kind", "") == "ovs":
+            self._persist_device_state(self._destroy_device_rows(
+                _build_plan(self._topology), summary
+            ))
         self._last_operation = {"action": "destroy", "at": self._destroyed_at, **summary}
         logger.info("[fabric] destruido; estado ready")
         return {
@@ -684,14 +700,27 @@ class FabricController:
     def get_devices(self) -> list[dict]:
         """Dispositivos planificados para el fabric.
 
-        El estado de runtime (container/salud) llegará con
-        ``fabric_device_state`` en la Fase 3/4.
+        Con engine real añade ``runtime`` (estado de
+        ``fabric_device_state``: running/stopped/error/pending, container,
+        última salud y error) sin alterar los campos previos de la UI.
         """
         with self._lock:
             self._ensure_loaded()
             if self._topology is None:
                 return []
-            return [spec.model_dump() for spec in build_device_specs(self._topology)]
+            states = self._load_device_state()
+            out: list[dict] = []
+            for spec in build_device_specs(self._topology):
+                dump = spec.model_dump()
+                row = states.get(spec.device_id)
+                dump["runtime"] = {
+                    "state": row["state"] if row else "pending",
+                    "container_id": row["container_id"] if row else "",
+                    "last_health": row["last_health"] if row else None,
+                    "error": row["error"] if row else None,
+                }
+                out.append(dump)
+            return out
 
     def get_health(self) -> dict:
         """Salud del fabric.
@@ -699,7 +728,9 @@ class FabricController:
         Con el engine stub mantiene el informe estructural previo
         (``runtime_available=false``). Con el engine OVS delega en
         ``lifecycle.health`` y agrega el detalle de runtime en ``runtime``
-        (bridges/links/devices/extra_ports) sin quitar campos.
+        (bridges/links/devices/extra_ports) más ``devices_health`` (salud
+        por dispositivo: contenedor, puerto OVS y reachability), sin
+        quitar campos.
         """
         with self._lock:
             self._ensure_loaded()
@@ -719,6 +750,7 @@ class FabricController:
                 },
             ]
             runtime: Optional[dict] = None
+            devices_health: list[dict] = []
             runtime_available = False
             if getattr(self._engine, "kind", "") == "ovs" and topology is not None:
                 from app.services.fabric import lifecycle  # import perezoso anti-ciclo
@@ -726,9 +758,19 @@ class FabricController:
                 runtime = lifecycle.health(engine=self._engine, topology=topology)
                 runtime_available = bool(runtime.get("runtime_available"))
                 checks.extend(runtime.get("checks", []))
+                device_runtime = getattr(self._engine, "device_runtime", None)
+                health_fn = getattr(device_runtime, "device_health", None)
+                if health_fn is not None:
+                    devices_health = [
+                        health_fn(spec) for spec in build_device_specs(topology)
+                    ]
             healthy = manifest_ok and state_ok
             if runtime is not None:
                 healthy = healthy and bool(runtime.get("healthy"))
+            if devices_health:
+                healthy = healthy and all(
+                    bool(device.get("healthy")) for device in devices_health
+                )
             return {
                 "healthy": healthy,
                 "state": self._state.value,
@@ -739,6 +781,7 @@ class FabricController:
                 "links": len(topology.config.links) if topology else 0,
                 "devices": len(build_device_specs(topology)) if topology else 0,
                 "runtime_available": runtime_available,
+                "devices_health": devices_health,
                 "runtime": runtime,
             }
 
@@ -919,6 +962,106 @@ class FabricController:
             # El runtime no debe caerse porque falle el histórico; se
             # registra y la operación sigue (patrón de audit_svc).
             logger.exception("[fabric] no se pudo persistir fabric_state")
+
+    # ── Estado por dispositivo (fabric_device_state, §7) ────
+
+    def _device_rows(
+        self,
+        plan: FabricPlan,
+        summary: dict,
+        *,
+        running_state: str,
+    ) -> list[dict]:
+        """Filas de ``fabric_device_state`` desde el detalle del engine."""
+        detail_by_device = {
+            device.get("device_id"): device for device in summary.get("devices", [])
+        }
+        now = _utc_now()
+        rows: list[dict] = []
+        for spec in plan.devices:
+            detail = detail_by_device.get(spec.device_id, {})
+            ok = bool(detail.get("success"))
+            iface = spec.interfaces[0] if spec.interfaces else None
+            rows.append({
+                "device_id": spec.device_id,
+                "container_id": str(detail.get("container_id") or ""),
+                "container_name": spec.container_name,
+                "state": running_state if ok else "error",
+                "ip": iface.ip if iface else "",
+                "mac": iface.mac if iface else "",
+                "switch_id": iface.switch if iface else "",
+                "vlan_tag": iface.vlan_tag if iface else None,
+                "last_health": now if ok else None,
+                "error": detail.get("error") or None,
+            })
+        return rows
+
+    def _deploy_device_rows(self, plan: FabricPlan, summary: dict) -> list[dict]:
+        return self._device_rows(plan, summary, running_state="running")
+
+    def _destroy_device_rows(self, plan: FabricPlan, summary: dict) -> list[dict]:
+        return self._device_rows(plan, summary, running_state="stopped")
+
+    def _error_device_rows(self, plan: FabricPlan, message: str) -> list[dict]:
+        """Tras un fallo global, todos los dispositivos planificados en error."""
+        return [{
+            "device_id": spec.device_id,
+            "container_id": "",
+            "container_name": spec.container_name,
+            "state": "error",
+            "ip": spec.interfaces[0].ip if spec.interfaces else "",
+            "mac": spec.interfaces[0].mac if spec.interfaces else "",
+            "switch_id": spec.interfaces[0].switch if spec.interfaces else "",
+            "vlan_tag": spec.interfaces[0].vlan_tag if spec.interfaces else None,
+            "last_health": None,
+            "error": message,
+        } for spec in plan.devices]
+
+    def _persist_device_state(self, rows: list[dict]) -> None:
+        """Upsert de ``fabric_device_state`` por ``device_id`` (§7)."""
+        if not rows:
+            return
+        try:
+            with _write_lock:
+                self._ensure_db()
+                with sqlite3.connect(str(self._db_path), timeout=10) as conn:
+                    conn.executemany(
+                        """INSERT INTO fabric_device_state
+                           (device_id, container_id, container_name, state, ip,
+                            mac, switch_id, vlan_tag, last_health, error)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                           ON CONFLICT(device_id) DO UPDATE SET
+                             container_id=excluded.container_id,
+                             container_name=excluded.container_name,
+                             state=excluded.state,
+                             ip=excluded.ip,
+                             mac=excluded.mac,
+                             switch_id=excluded.switch_id,
+                             vlan_tag=excluded.vlan_tag,
+                             last_health=excluded.last_health,
+                             error=excluded.error""",
+                        [(
+                            row["device_id"], row["container_id"],
+                            row["container_name"], row["state"], row["ip"],
+                            row["mac"], row["switch_id"], row["vlan_tag"],
+                            row["last_health"], row["error"],
+                        ) for row in rows],
+                    )
+        except sqlite3.Error:
+            logger.exception("[fabric] no se pudo persistir fabric_device_state")
+
+    def _load_device_state(self) -> dict[str, dict]:
+        """Estado runtime por device_id; ``{}`` si no hay tabla/datos."""
+        if not self._db_path.exists():
+            return {}
+        try:
+            with sqlite3.connect(str(self._db_path), timeout=10) as conn:
+                conn.row_factory = sqlite3.Row
+                rows = conn.execute("SELECT * FROM fabric_device_state").fetchall()
+                return {row["device_id"]: dict(row) for row in rows}
+        except sqlite3.Error:
+            logger.exception("[fabric] no se pudo leer fabric_device_state")
+            return {}
 
 
 # ── Singleton de módulo ────────────────────────────────────
