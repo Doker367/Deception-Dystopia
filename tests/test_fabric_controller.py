@@ -1088,3 +1088,57 @@ def test_fallo_global_de_devices_persiste_error_y_estado(tmp_path):
     rows = _device_rows(tmp_path / "devices.db")
     assert len(rows) == 2
     assert all(row["state"] == "error" for row in rows)
+
+
+# ── Modo remote (Fase 4d) ──────────────────────────────────
+
+
+def test_engine_remote_por_env(tmp_path, monkeypatch):
+    from app.services.fabric.remote_engine import RemoteFabricEngine
+
+    monkeypatch.setenv(controller_mod.FABRIC_ENGINE_ENV, "remote")
+    monkeypatch.setenv("DYSTOPIA_FABRIC_REMOTE_URL", "http://host.test:8090")
+    monkeypatch.setenv("DYSTOPIA_FABRIC_REMOTE_TOKEN", "t" * 40)
+    controller = controller_mod.reset_controller(
+        db_path=tmp_path / "engine-remote.db", manifest_loader=lambda: _manifest(),
+    )
+    assert controller.get_status()["engine"] == "remote"
+    assert isinstance(controller._engine, RemoteFabricEngine)
+
+
+def test_engine_remote_sin_url_falla_accionable(tmp_path, monkeypatch):
+    monkeypatch.setenv(controller_mod.FABRIC_ENGINE_ENV, "remote")
+    monkeypatch.delenv("DYSTOPIA_FABRIC_REMOTE_URL", raising=False)
+    monkeypatch.delenv("DYSTOPIA_FABRIC_REMOTE_TOKEN", raising=False)
+    with pytest.raises(RuntimeError) as excinfo:
+        controller_mod.reset_controller(
+            db_path=tmp_path / "engine-remote-sin-url.db",
+            manifest_loader=lambda: _manifest(),
+        )
+    assert "DYSTOPIA_FABRIC_REMOTE_URL" in str(excinfo.value)
+
+
+def test_engine_remote_sin_token_falla_accionable(tmp_path, monkeypatch):
+    monkeypatch.setenv(controller_mod.FABRIC_ENGINE_ENV, "remote")
+    monkeypatch.setenv("DYSTOPIA_FABRIC_REMOTE_URL", "http://host.test:8090")
+    monkeypatch.delenv("DYSTOPIA_FABRIC_REMOTE_TOKEN", raising=False)
+    with pytest.raises(RuntimeError) as excinfo:
+        controller_mod.reset_controller(
+            db_path=tmp_path / "engine-remote-sin-token.db",
+            manifest_loader=lambda: _manifest(),
+        )
+    assert "DYSTOPIA_FABRIC_REMOTE_TOKEN" in str(excinfo.value)
+
+
+def test_modos_previos_no_cambian(tmp_path, monkeypatch):
+    monkeypatch.delenv(controller_mod.FABRIC_ENGINE_ENV, raising=False)
+    stub = controller_mod.reset_controller(
+        db_path=tmp_path / "modo-stub.db", manifest_loader=lambda: _manifest(),
+    )
+    assert stub.get_status()["engine"] == "stub"
+
+    monkeypatch.setenv(controller_mod.FABRIC_ENGINE_ENV, "ovs")
+    ovs = controller_mod.reset_controller(
+        db_path=tmp_path / "modo-ovs.db", manifest_loader=lambda: _manifest(),
+    )
+    assert ovs.get_status()["engine"] == "ovs"
