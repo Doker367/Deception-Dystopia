@@ -236,9 +236,10 @@ services:
       # del engine "remote" vendría de la copia de la imagen y podría
       # divergir del que usa el servicio del host.
       - ../../config/deception/network.yaml:/srv/app/config/deception/network.yaml:ro
-      # TLS opcional (descomentar junto con DYSTOPIA_FABRIC_REMOTE_CA y URL
-      # https). El instalador genera el certificado en /etc/dystopia/fabric-tls.
-      # - /etc/dystopia/fabric-tls/server.crt:/srv/fabric-ca/server.crt:ro
+      # TLS opcional: el instalador genera el certificado en
+      # /etc/dystopia/fabric-tls. Se monta el directorio (si no existe, Docker
+      # crea uno vacío y DYSTOPIA_FABRIC_REMOTE_CA vacío lo ignora).
+      - /etc/dystopia/fabric-tls:/srv/fabric-ca:ro
       # Base GeoLite2 actualizada. Sin este montaje se usa la incluida en el
       # paquete Python; con él, el mapa refleja la base del host.
       - ./geoip:/srv/local-config/geoip:ro
