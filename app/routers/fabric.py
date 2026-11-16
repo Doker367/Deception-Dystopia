@@ -281,28 +281,33 @@ def _fabric_device_ids() -> set[str]:
     }
 
 
-def _normalize_credentials(detail: dict) -> dict:
+def _normalize_credentials(detail: dict, username: Optional[str] = None) -> dict:
     """Mueve las credenciales capturadas a ``detail.credentials`` (§12 Fase 7).
 
     El agente escribe ``username``/``password`` capturados en la raíz del
-    ``detail``; aquí se agrupan en ``credentials = {"username", "password"}``
-    sin duplicar si ya vienen normalizados y conservando el resto del
-    ``detail``. Solo aplica a credenciales del **atacante**: las del
-    manifiesto nunca llegan por esta vía (las elimina el agente).
+    ``detail`` (y el listener SSH pone ``username`` a nivel de evento); aquí
+    se agrupan en ``credentials = {"username", "password"}`` sin duplicar si
+    ya vienen normalizados y conservando el resto del ``detail``. Solo aplica
+    a credenciales del **atacante**: las del manifiesto nunca llegan por esta
+    vía (las elimina el agente).
     """
     normalized = dict(detail or {})
     existing = normalized.get("credentials")
+    if existing is not None and not isinstance(existing, dict):
+        # Valor malformado: se deja tal cual para que la validación lo
+        # rechace (no se "arregla" silenciosamente con el username del evento).
+        return normalized
     if isinstance(existing, dict) and (
         "username" in existing or "password" in existing
     ):
         return normalized  # ya normalizado: no duplicar
-    username = normalized.pop("username", None)
+    captured_user = normalized.pop("username", None) or username
     password = normalized.pop("password", None)
-    if username is None and password is None:
+    if captured_user is None and password is None:
         return normalized
     credentials = existing if isinstance(existing, dict) else {}
-    if username is not None:
-        credentials.setdefault("username", username)
+    if captured_user is not None:
+        credentials.setdefault("username", captured_user)
     if password is not None:
         credentials.setdefault("password", password)
     normalized["credentials"] = credentials
@@ -395,7 +400,9 @@ async def receive_events(request: Request) -> dict:
     for index, event in enumerate(parsed):
         problem = _event_error(event)
         if problem is None:
-            normalized_detail = _normalize_credentials(event.detail)
+            normalized_detail = _normalize_credentials(
+                event.detail, username=event.username
+            )
             problem = _credentials_error(normalized_detail)
         if problem is None:
             try:

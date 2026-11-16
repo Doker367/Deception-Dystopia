@@ -155,7 +155,9 @@ def test_lote_valido_llama_a_emit_sync(client, emitted):
     assert first["src_ip"] == "203.0.113.9"
     assert first["proto"] == "ssh"
     assert first["event_type"] == "login_attempt"
-    assert first["detail"] == {"service": "ssh"}
+    assert first["detail"] == {
+        "service": "ssh", "credentials": {"username": "admin"},
+    }
     assert first["username"] == "admin"
     assert first["success"] is False
     assert first["src_port"] == 4242
