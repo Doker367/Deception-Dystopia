@@ -27,7 +27,7 @@ import secrets
 from datetime import datetime
 from typing import Any, Optional
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.middleware.auth import JWTBearer
@@ -195,11 +195,36 @@ def list_devices():
 
 @router.get("/devices/{device_id}", dependencies=AUTH)
 def get_device(device_id: str):
-    """Detalle de un dispositivo del fabric."""
-    for device in _without_credentials(get_controller().get_devices()):
-        if device.get("device_id") == device_id:
-            return device
-    raise HTTPException(404, "Dispositivo de fabric no encontrado")
+    """Detalle de un dispositivo: plan, runtime (pid/puertos/vecinos) y servicios."""
+    device = get_controller().get_device(device_id)
+    if device is None:
+        raise HTTPException(404, "Dispositivo de fabric no encontrado")
+    return _without_credentials(device)
+
+
+@router.get("/events", dependencies=AUTH)
+def list_events(
+    device_id: Optional[str] = None,
+    limit: int = Query(default=50, ge=1, le=200),
+):
+    """Últimos eventos del fabric (solo device_ids del manifiesto).
+
+    Vista de lectura para el drawer del dispositivo. ``device_id`` ajeno al
+    manifiesto → 403 (no se filtra información de otros dispositivos);
+    ``limit`` acotado a 200.
+    """
+    from app.services.deception import store_svc  # import local: solo lectura
+
+    known = _fabric_device_ids()
+    if device_id is not None and device_id not in known:
+        raise HTTPException(403, "device_id ajeno al manifiesto del fabric")
+    if device_id is not None:
+        return store_svc.get_events(limit=limit, device_id=device_id)
+    events: list[dict] = []
+    for fabric_device in sorted(known):
+        events.extend(store_svc.get_events(limit=limit, device_id=fabric_device))
+    events.sort(key=lambda event: event.get("id", 0), reverse=True)
+    return events[:limit]
 
 
 @router.get("/switches", dependencies=AUTH)

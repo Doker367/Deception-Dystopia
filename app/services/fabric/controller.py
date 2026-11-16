@@ -319,6 +319,7 @@ class FabricController:
         if engine is None:
             self._engine, self._engine_kind = _default_engine()
         self._last_operation: Optional[dict] = None
+        self._last_health: Optional[dict] = None
         self._db_path = Path(db_path) if db_path is not None else DB_PATH
         self._manifest_loader = manifest_loader or self._load_manifest
         self._lock = threading.RLock()
@@ -457,6 +458,7 @@ class FabricController:
         self._manifest_hash = manifest_hash
         self._warnings = list(warnings)
         self._error = None
+        self._last_health = None
 
     def _report(
         self,
@@ -559,6 +561,7 @@ class FabricController:
                 ["No hay topología validada para desplegar"], self._state.value
             )
         plan = _build_plan(self._topology)
+        self._last_health = None
         self._transition(FabricState.DEPLOYING)
         self._error = None
         self._persist()
@@ -608,6 +611,7 @@ class FabricController:
             raise FabricStateError(
                 ["No hay topología validada que destruir"], self._state.value
             )
+        self._last_health = None
         self._transition(FabricState.DESTROYING)
         self._error = None
         self._persist()
@@ -686,6 +690,7 @@ class FabricController:
             self._ensure_loaded()
             topology = self._topology
             devices = build_device_specs(topology) if topology is not None else []
+            forwarder = self._host_forwarder_status()
             return {
                 "state": self._state.value,
                 "enabled": self._enabled,
@@ -701,7 +706,75 @@ class FabricController:
                 "devices": len(devices),
                 "engine": self._engine_kind,
                 "last_operation": dict(self._last_operation) if self._last_operation else None,
+                "forwarder": forwarder,
+                "health_summary": dict(self._last_health) if self._last_health else None,
             }
+
+    def _host_forwarder_status(self) -> Optional[dict]:
+        """Estado del forwarder del host (solo engine remote); None si no hay."""
+        if getattr(self._engine, "kind", "") != "remote":
+            return None
+        status_fn = getattr(self._engine, "status", None)
+        if status_fn is None:
+            return None
+        try:
+            host_status = status_fn()
+        except Exception as exc:  # noqa: BLE001 - el host puede no responder
+            logger.warning("[fabric] estado del host no disponible: %s", exc)
+            return None
+        if isinstance(host_status, dict):
+            forwarder = host_status.get("forwarder")
+            return forwarder if isinstance(forwarder, dict) else None
+        return None
+
+    def get_device(self, device_id: str) -> Optional[dict]:
+        """Detalle de un dispositivo con runtime y salud (pid, puertos, vecinos).
+
+        ``get_devices`` aporta el plan y el estado de ``fabric_device_state``;
+        ``get_health`` añade el detalle live (contenedor, ``port_present``,
+        ``reachable``) cuando el engine real está activo. Con stub se
+        mantiene el runtime ``pending``.
+        """
+        with self._lock:
+            device = next(
+                (item for item in self.get_devices()
+                 if item.get("device_id") == device_id),
+                None,
+            )
+            if device is None:
+                return None
+            health = self.get_health()
+            entry = next(
+                (item for item in health.get("devices_health", [])
+                 if item.get("device_id") == device_id),
+                None,
+            )
+            runtime = dict(device.get("runtime") or {})
+            if entry is not None:
+                container = entry.get("container") or {}
+                runtime.update({
+                    "healthy": entry.get("healthy"),
+                    "pid": container.get("pid", 0),
+                    "container_state": container.get("state"),
+                    "interfaces": entry.get("interfaces", []),
+                    "neighbors": entry.get("neighbors", []),
+                    "checks": entry.get("checks", []),
+                })
+            device["runtime"] = runtime
+            manifest_device = None
+            if self._topology is not None:
+                manifest_device = next(
+                    (item for item in self._topology.devices if item.id == device_id),
+                    None,
+                )
+            device["role"] = (
+                manifest_device.role.value if manifest_device is not None else None
+            )
+            device["services"] = (
+                [service.model_dump(mode="json") for service in manifest_device.services]
+                if manifest_device is not None else []
+            )
+            return device
 
     def get_last_operation(self) -> dict:
         """Resumen estructurado del último deploy/destroy; ``{}`` si no hay.
@@ -815,6 +888,10 @@ class FabricController:
                 healthy = healthy and all(
                     bool(device.get("healthy")) for device in devices_health
                 )
+            self._last_health = {
+                "healthy": healthy,
+                "runtime_available": runtime_available,
+            }
             return {
                 "healthy": healthy,
                 "state": self._state.value,

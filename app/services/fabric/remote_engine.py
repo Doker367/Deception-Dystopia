@@ -160,6 +160,10 @@ class RemoteFabricEngine:
         payload = self._request("GET", "/health", "health")
         return payload
 
+    def status(self) -> dict:
+        """Estado del servicio del host (``GET /status``), incluido el forwarder."""
+        return self._request("GET", "/status", "status")
+
     # ── HTTP ────────────────────────────────────────────────
 
     def _verify_manifest(self, operation: str) -> None:
