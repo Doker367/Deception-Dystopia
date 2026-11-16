@@ -246,6 +246,41 @@ del manifiesto con la clave actual). Ante compromiso, destruye el fabric,
 rota la clave, vuelve a desplegar.
 
 ================================================================
+9b) TLS CONTROL ↔ HOST (OPCIONAL)
+================================================================
+
+El instalador genera un certificado autofirmado en `/etc/dystopia/fabric-tls/`
+(`server.crt` 0644, `server.key` 0600, SANs `172.17.0.1`, `127.0.0.1`,
+`host.docker.internal`, `localhost`, 825 días). Por defecto el servicio
+escucha HTTP; activar TLS es una decisión explícita.
+
+**Host** (`/etc/dystopia/fabric.env`, descomentar):
+
+```bash
+DYSTOPIA_FABRIC_TLS_CERT=/etc/dystopia/fabric-tls/server.crt
+DYSTOPIA_FABRIC_TLS_KEY=/etc/dystopia/fabric-tls/server.key
+sudo systemctl restart dystopia-fabric.service
+sudo journalctl -u dystopia-fabric -n 5 | grep "tls=True"
+```
+
+**Control** (`deploy/local/.env`):
+
+```bash
+DYSTOPIA_FABRIC_REMOTE_URL=https://host.docker.internal:18100
+DYSTOPIA_FABRIC_REMOTE_CA=/srv/fabric-ca/server.crt
+cd deploy/local && sudo docker compose up -d --force-recreate control
+```
+
+El compose ya monta `/etc/dystopia/fabric-tls` en `/srv/fabric-ca:ro`; el
+directorio debe ser **0755** (la clave sigue 0600 y no es legible por el
+contenedor). Verificación: `GET /api/fabric/status` debe devolver
+`"tls": true` y `"healthy": true`.
+
+Rotación del certificado: `rm /etc/dystopia/fabric-tls/server.{crt,key}` y
+re-ejecutar el instalador; el certificado nuevo es autofirmado, así que el
+control lo toma del mismo montaje (no hay CA externa que actualizar).
+
+================================================================
 10) BACKUP / RESTORE
 ================================================================
 
@@ -278,3 +313,5 @@ Restore: detener servicio, restaurar ficheros (permos 0600/0700),
 - [ ] `device.json` sin credenciales; `.enc` 0600; ninguna credencial en respuestas de la API.
 - [ ] Auditoría `fabric_*` visible: `sudo journalctl -u dystopia-fabric | grep ALERTA` y tabla `audit` del control.
 - [ ] Alertas del fabric activas (primer contacto / movimiento lateral) y cooldown operativo.
+- [ ] TLS activado si el control y el host no comparten una red privada de confianza (`tls: true` en `/api/fabric/status`).
+- [ ] logrotate instalado (`/etc/logrotate.d/dystopia-fabric`) y `events.jsonl` rotando.

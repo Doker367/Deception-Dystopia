@@ -205,9 +205,12 @@ Página **Fabric** (sección Operación):
 - **Engines externos**: un servicio con `engine: cowrie/opencanary/...` usa el
   listener **nativo** por protocolo (con warning); el binding real de honeypots
   es trabajo pendiente.
-- **Sin rotación** de `events.jsonl` (crecen hasta limpieza manual).
-- **Sin TLS** entre control y host service: HTTP con token en la red local del
-  host (docker0 ↔ contenedor); TLS/mTLS pendiente.
+- **Rotación** de `events.jsonl`: logrotate diario (7 copias, `copytruncate`),
+  instalado por `install-fabric-service.sh`.
+- **TLS opcional** entre control y host service: el instalador genera un
+  certificado autofirmado y el control puede verificar con
+  `DYSTOPIA_FABRIC_REMOTE_CA` (ver runbook). Por defecto HTTP con token en la
+  red privada del host.
 - **Sin métricas OVS** (contadores de puertos) ni reachability programada: la
   salud se calcula al consultar.
 - **WAN solo en enlaces entre switches**: los dispositivos no declaran
