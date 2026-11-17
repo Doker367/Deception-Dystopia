@@ -168,12 +168,24 @@ def _container_pid(name: str) -> int:
 
 
 def _cleanup(topology) -> None:
-    """Limpieza defensiva: contenedores, veths y bridges del test."""
+    """Limpieza defensiva: contenedores, veths, bridges y estado del test.
+
+    También borra los directorios de estado del host (``device.json``, logs
+    y credenciales) para que el forwarder no siga leyendo eventos de
+    dispositivos que ya no existen en el manifiesto (provocaría rechazos).
+    """
     plan = _plan(topology)
     for spec in plan.devices:
         _run("docker", "rm", "-f", spec.container_name)
         for iface in spec.interfaces:
             _run("ip", "link", "del", iface.host_veth)
+        for directory in (
+            Path("/var/lib/dystopia/fabric/logs") / spec.device_id,
+            Path("/var/lib/dystopia/fabric/devices") / spec.device_id,
+            Path("/var/lib/dystopia/fabric/credentials")
+            / f"{spec.device_id}.enc",
+        ):
+            _run("rm", "-rf", str(directory))
     for link in plan.links:
         _run("ip", "link", "del", link.port_from)
         _run("ip", "link", "del", link.port_to)
