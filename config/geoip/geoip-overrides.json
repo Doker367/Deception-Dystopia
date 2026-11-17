@@ -1,0 +1,24 @@
+{
+  "62.217.157.73": {
+    "country_code": "AZ",
+    "country": "Azerbaijan",
+    "subdivision": "Yevlakh",
+    "subdivision_code": "YEV",
+    "city": null,
+    "lat": 40.6253,
+    "lon": 46.9756,
+    "time_zone": "Asia/Baku",
+    "location_source": "operator-override"
+  },
+  "187.188.32.206": {
+    "country_code": "MX",
+    "country": "Mexico",
+    "subdivision": "Chiapas",
+    "subdivision_code": "CHP",
+    "city": "Tuxtla Gutierrez",
+    "lat": 16.7387,
+    "lon": -93.1414,
+    "time_zone": "America/Merida",
+    "location_source": "operator-override"
+  }
+}

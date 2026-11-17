@@ -648,7 +648,7 @@ class FabricController:
             self._error = f"deploy falló: {exc}"
             self._transition(FabricState.ERROR)
             self._persist()
-            if getattr(self._engine, "kind", "") == "ovs":
+            if getattr(self._engine, "kind", "") in ("ovs", "remote"):
                 self._persist_device_state(self._error_device_rows(
                     plan, f"deploy falló: {exc}"
                 ))
@@ -666,7 +666,7 @@ class FabricController:
         self._destroyed_at = None
         self._transition(FabricState.DEPLOYED)
         self._persist()
-        if getattr(self._engine, "kind", "") == "ovs":
+        if getattr(self._engine, "kind", "") in ("ovs", "remote"):
             self._persist_device_state(self._deploy_device_rows(plan, summary))
         self._last_operation = {"action": "deploy", "at": self._deployed_at, **summary}
         logger.info("[fabric] desplegado (%d dispositivos)", len(plan.devices))
@@ -702,7 +702,7 @@ class FabricController:
             self._error = f"destroy falló: {exc}"
             self._transition(FabricState.ERROR)
             self._persist()
-            if getattr(self._engine, "kind", "") == "ovs":
+            if getattr(self._engine, "kind", "") in ("ovs", "remote"):
                 self._persist_device_state(self._error_device_rows(
                     _build_plan(self._topology), f"destroy falló: {exc}"
                 ))
@@ -720,7 +720,7 @@ class FabricController:
         self._deployed_at = None
         self._transition(FabricState.READY)
         self._persist()
-        if getattr(self._engine, "kind", "") == "ovs":
+        if getattr(self._engine, "kind", "") in ("ovs", "remote"):
             self._persist_device_state(self._destroy_device_rows(
                 _build_plan(self._topology), summary
             ))
@@ -840,14 +840,42 @@ class FabricController:
             runtime = dict(device.get("runtime") or {})
             if entry is not None:
                 container = entry.get("container") or {}
+                container_state = container.get("state")
+                # El estado de la BD solo se escribe al desplegar; si el
+                # contenedor real está en marcha (o parado), el detalle debe
+                # reflejarlo. Sin esto el botón Terminal queda deshabilitado
+                # con el engine remoto hasta un redeploy.
+                if container_state == "running":
+                    runtime["state"] = "running"
+                elif container_state in {"exited", "dead", "created", "paused"}:
+                    runtime["state"] = "stopped"
                 runtime.update({
                     "healthy": entry.get("healthy"),
                     "pid": container.get("pid", 0),
-                    "container_state": container.get("state"),
+                    "container_state": container_state,
                     "interfaces": entry.get("interfaces", []),
                     "neighbors": entry.get("neighbors", []),
                     "checks": entry.get("checks", []),
                 })
+                previous_state = (device.get("runtime") or {}).get("state")
+                if runtime["state"] != previous_state:
+                    iface = (device.get("interfaces") or [{}])[0]
+                    self._persist_device_state([{
+                        "device_id": device_id,
+                        "container_id": str(
+                            container.get("id")
+                            or runtime.get("container_id")
+                            or ""
+                        ),
+                        "container_name": device.get("container_name", ""),
+                        "state": runtime["state"],
+                        "ip": iface.get("ip", ""),
+                        "mac": iface.get("mac", ""),
+                        "switch_id": iface.get("switch", ""),
+                        "vlan_tag": iface.get("vlan_tag"),
+                        "last_health": _utc_now() if runtime["state"] == "running" else None,
+                        "error": entry.get("error") or None,
+                    }])
             device["runtime"] = runtime
             manifest_device = None
             if self._topology is not None:

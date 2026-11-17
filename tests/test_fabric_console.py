@@ -22,9 +22,7 @@ sys.path.insert(0, str(REPO))
 
 from app.services.fabric.console_svc import (  # noqa: E402
     CONSOLE_IDLE_TIMEOUT,
-    CONSOLE_MAX_AGE,
     ConsoleSession,
-    console_enabled,
 )
 
 EXAMPLE = REPO / "config" / "deception" / "network.fabric.example.yaml"
@@ -98,6 +96,153 @@ def test_console_idle_reap():
     service._sessions[session.session_id] = session
     assert service.reap_idle() == 1
     assert "tty-stale" not in service._sessions
+
+
+# ── Transporte remoto (control → servicio del host) ────────
+
+
+def test_remote_target_solo_con_engine_remote(monkeypatch):
+    """Sin engine remote (o sin URL/token) la consola usa docker local."""
+    from app.services.fabric import console_svc
+
+    monkeypatch.delenv("DYSTOPIA_FABRIC_ENGINE", raising=False)
+    monkeypatch.setenv("DYSTOPIA_FABRIC_REMOTE_URL", "https://host:18100")
+    monkeypatch.setenv("DYSTOPIA_FABRIC_REMOTE_TOKEN", "x" * 40)
+    assert console_svc.remote_console_target() is None
+
+    monkeypatch.setenv("DYSTOPIA_FABRIC_ENGINE", "remote")
+    monkeypatch.delenv("DYSTOPIA_FABRIC_REMOTE_TOKEN", raising=False)
+    assert console_svc.remote_console_target() is None
+
+    monkeypatch.setenv("DYSTOPIA_FABRIC_REMOTE_TOKEN", "x" * 40)
+    monkeypatch.setenv("DYSTOPIA_FABRIC_REMOTE_CA", "/tmp/ca.crt")
+    target = console_svc.remote_console_target()
+    assert target is not None
+    base, token, ca = target
+    assert base == "wss://host:18100"
+    assert token == "x" * 40
+    assert ca == "/tmp/ca.crt"
+
+    monkeypatch.setenv("DYSTOPIA_FABRIC_REMOTE_URL", "http://host:8090/")
+    base, _, _ = console_svc.remote_console_target()
+    assert base == "ws://host:8090"
+
+
+# ── Servicio del host: endpoint WS de consola ──────────────
+
+
+def _host_app(tmp_path, monkeypatch, *, enabled: bool = True):
+    from app.services.fabric.host_service import HostServiceSettings, create_app
+
+    manifest = tmp_path / "network.yaml"
+    manifest.write_text(yaml.safe_dump(MANIFEST), encoding="utf-8")
+    if enabled:
+        monkeypatch.setenv("DYSTOPIA_FABRIC_CONSOLE_ENABLED", "true")
+    else:
+        monkeypatch.delenv("DYSTOPIA_FABRIC_CONSOLE_ENABLED", raising=False)
+    return create_app(
+        HostServiceSettings(token="t" * 40, manifest=manifest),
+        engine=object(),
+    )
+
+
+def _host_headers() -> dict:
+    return {"Authorization": "Bearer " + "t" * 40}
+
+
+def test_host_console_ws_rejects_bad_token(tmp_path, monkeypatch):
+    """El servicio del host cierra 4401 sin bearer válido."""
+    client = TestClient(_host_app(tmp_path, monkeypatch))
+    with pytest.raises(Exception):
+        with client.websocket_connect(
+            "/console/ws?device_id=pc-recepcion-01",
+            headers={"Authorization": "Bearer incorrecto"},
+        ) as ws:
+            ws.receive_text()
+
+
+def test_host_console_ws_disabled(tmp_path, monkeypatch):
+    """Sin el gate de entorno el host responde con un frame de error."""
+    client = TestClient(_host_app(tmp_path, monkeypatch, enabled=False))
+    with client.websocket_connect(
+        "/console/ws?device_id=pc-recepcion-01", headers=_host_headers()
+    ) as ws:
+        message = ws.receive_text()
+    assert message.startswith("\x00ERR:")
+    assert "deshabilitada" in message
+
+
+def test_host_console_ws_unknown_device(tmp_path, monkeypatch):
+    """Un device fuera del manifiesto no abre consola (4404)."""
+    client = TestClient(_host_app(tmp_path, monkeypatch))
+    with client.websocket_connect(
+        "/console/ws?device_id=no-existe", headers=_host_headers()
+    ) as ws:
+        message = ws.receive_text()
+    assert message.startswith("\x00ERR:")
+    assert "manifiesto" in message
+
+
+def test_host_console_ws_container_stopped(tmp_path, monkeypatch):
+    """Contenedor parado → error explícito, sin abrir sesión."""
+    from app.services.fabric import host_service
+
+    async def _stopped(_name: str) -> bool:
+        return False
+
+    monkeypatch.setattr(host_service, "_container_running", _stopped)
+    client = TestClient(_host_app(tmp_path, monkeypatch))
+    with client.websocket_connect(
+        "/console/ws?device_id=pc-recepcion-01", headers=_host_headers()
+    ) as ws:
+        message = ws.receive_text()
+    assert message.startswith("\x00ERR:")
+    assert "ejecución" in message
+
+
+def test_host_console_ws_bridges_pty(tmp_path, monkeypatch):
+    """Camino feliz: abre sesión, reenvía la entrada y cierra al EOF."""
+    from app.services.fabric import host_service
+    from app.services.fabric.console_svc import ConsoleSession
+
+    written: list[bytes] = []
+
+    class FakeConsole:
+        async def open_session(self, **kwargs):
+            return ConsoleSession(
+                session_id="tty-fake",
+                device_id=kwargs["device_id"],
+                container_name=kwargs["container_name"],
+                username=kwargs["username"],
+            )
+
+        async def read_chunk(self, session_id, timeout: float = 0.5):
+            # Cede el turno para que pump_in procese la entrada antes del EOF.
+            import asyncio as asyncio_mod
+
+            await asyncio_mod.sleep(0.2)
+            return None
+
+        async def write_session(self, session_id, data):
+            written.append(data)
+            return True
+
+        async def close_session(self, session_id):
+            return None
+
+    async def _running(_name: str) -> bool:
+        return True
+
+    monkeypatch.setattr(host_service, "_container_running", _running)
+    monkeypatch.setattr(host_service, "console_service", FakeConsole())
+    client = TestClient(_host_app(tmp_path, monkeypatch))
+    with pytest.raises(Exception):
+        with client.websocket_connect(
+            "/console/ws?device_id=pc-recepcion-01", headers=_host_headers()
+        ) as ws:
+            ws.send_text("ls\n")
+            ws.receive_text()
+    assert written == [b"ls\n"]
 
 
 # ── API del editor de manifiesto ────────────────────────────

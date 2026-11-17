@@ -64,7 +64,11 @@ from app.middleware.rbac import get_current_user, requires_role
 from app.models.deception import DeceptionEventType
 from app.services.deception import telemetry_svc
 from app.services.fabric import console_service
-from app.services.fabric.console_svc import console_enabled
+from app.services.fabric.console_svc import (
+    ERROR_PREFIX,
+    console_enabled,
+    remote_console_target,
+)
 from app.services.fabric.controller import (
     FabricState,
     FabricStateError,
@@ -633,11 +637,11 @@ async def receive_events(request: Request) -> dict:
 
 @router.post("/devices/{device_id}/console", dependencies=ADMIN)
 async def open_device_console(device_id: str, user: dict = Depends(get_current_user)) -> dict:
-    """Abre una sesión de consola interactiva hacia el contenedor señuelo.
+    """Preflight de la consola interactiva (no abre sesión).
 
-    Fail-closed: exige fabric ``deployed``, el device en el manifiesto y
-    ``DYSTOPIA_FABRIC_CONSOLE_ENABLED=true``. Cuota de sesiones
-    concurrentes (429) e idle timeout por sesión.
+    Valida los mismos gates que el WebSocket —fabric ``deployed``, device en
+    el manifiesto y ``DYSTOPIA_FABRIC_CONSOLE_ENABLED=true``— para que la UI
+    pueda avisar antes de conectar. La sesión real la abre el WS.
     """
     del user  # autenticado vía dependencies=ADMIN
     if not console_enabled():
@@ -667,15 +671,11 @@ async def open_device_console(device_id: str, user: dict = Depends(get_current_u
     )
     if not container_name:
         raise HTTPException(502, "El dispositivo no tiene contenedor asociado")
-    try:
-        session = await console_service.open_session(
-            device_id=device_id,
-            container_name=container_name,
-            username=user.get("sub", "admin"),
-        )
-    except RuntimeError as exc:
-        raise HTTPException(429, str(exc)) from exc
-    return {"session_id": session.session_id, "device_id": device_id}
+    return {
+        "available": True,
+        "device_id": device_id,
+        "transport": "remote" if remote_console_target() else "docker",
+    }
 
 
 @router.websocket("/devices/{device_id}/console/ws")
@@ -683,6 +683,8 @@ async def device_console_ws(
     websocket: WebSocket,
     device_id: str,
     token: str = Query(default=""),
+    cols: int = Query(default=80),
+    rows: int = Query(default=24),
 ):
     """Puente WebSocket↔PTY de una sesión de consola del fabric.
 
@@ -690,18 +692,25 @@ async def device_console_ws(
     fijar headers en el handshake WS). Solo con el fabric ``deployed`` y
     el device en el manifiesto; cierra con códigos WS dedicados (4401 no
     autenticado, 4404 device desconocido, 1011 estado no disponible).
+
+    El transporte real lo elige ``console_service``: ``docker exec`` local o
+    WS contra el servicio del host cuando el motor es ``remote``.
     """
     payload = verify_token(token)
     if payload is None or payload.get("role") != "admin":
         await websocket.close(code=4401)
         return
-    if not console_enabled():
+
+    async def fail(message: str, code: int = 1011) -> None:
         await websocket.accept()
-        await websocket.send_text(json.dumps({
-            "error": "Consola deshabilitada: exporta "
-                     "DYSTOPIA_FABRIC_CONSOLE_ENABLED=true",
-        }))
-        await websocket.close(code=1011)
+        await websocket.send_text(ERROR_PREFIX + message)
+        await websocket.close(code=code)
+
+    if not console_enabled():
+        await fail(
+            "Consola deshabilitada: exporta DYSTOPIA_FABRIC_CONSOLE_ENABLED=true "
+            "(fail-closed)"
+        )
         return
     controller = get_controller()
     try:
@@ -709,11 +718,7 @@ async def device_console_ws(
     except Exception:
         status = {}
     if not isinstance(status, dict) or status.get("state") != FabricState.DEPLOYED.value:
-        await websocket.accept()
-        await websocket.send_text(
-            json.dumps({"error": "El fabric no está desplegado; no hay consola"})
-        )
-        await websocket.close(code=1011)
+        await fail("El fabric no está desplegado; no hay consola disponible")
         return
     topology = controller.get_topology()
     known = {
@@ -721,9 +726,7 @@ async def device_console_ws(
         if isinstance(device, dict) and device.get("id")
     }
     if device_id not in known:
-        await websocket.accept()
-        await websocket.send_text(json.dumps({"error": "Dispositivo desconocido"}))
-        await websocket.close(code=4404)
+        await fail("Dispositivo desconocido", code=4404)
         return
     container_name = next(
         (
@@ -734,15 +737,22 @@ async def device_console_ws(
         "",
     )
     if not container_name:
-        await websocket.close(code=1011)
+        await fail("El dispositivo no tiene contenedor asociado")
+        return
+
+    try:
+        session = await console_service.open_session(
+            device_id=device_id,
+            container_name=container_name,
+            username=payload.get("sub", "admin"),
+            cols=cols,
+            rows=rows,
+        )
+    except RuntimeError as exc:
+        await fail(str(exc))
         return
 
     await websocket.accept()
-    session = await console_service.open_session(
-        device_id=device_id,
-        container_name=container_name,
-        username=payload.get("sub", "admin"),
-    )
 
     async def pump_output() -> None:
         """Reenvía la salida del PTY al cliente mientras haya datos."""
@@ -758,6 +768,9 @@ async def device_console_ws(
     try:
         while True:
             message = await websocket.receive_text()
+            # Mensajes de control del cliente (resize): no van al shell.
+            if message.startswith('{"type":"resize"'):
+                continue
             await console_service.write_session(session.session_id, message.encode("utf-8"))
     except WebSocketDisconnect:
         pass

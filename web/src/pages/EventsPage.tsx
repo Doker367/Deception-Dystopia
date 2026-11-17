@@ -109,6 +109,17 @@ export function EventsPage({ search, range, events, total, mode, onOpenAttacker 
   const firstShown = totalFiltered ? safePage * PAGE_SIZE + 1 : 0;
   const lastShown = Math.min((safePage + 1) * PAGE_SIZE, totalFiltered);
 
+  // Ventana deslizante de números de página: mantiene visible la página actual
+  // en lugar de mostrar siempre 1–5 y dejar inalcanzables el resto.
+  const pageNumbers = useMemo(() => {
+    const size = Math.min(pageCount, 5);
+    const start = Math.min(
+      Math.max(0, safePage - Math.floor(size / 2)),
+      pageCount - size,
+    );
+    return Array.from({ length: size }, (_, index) => start + index);
+  }, [pageCount, safePage]);
+
   useEffect(() => {
     if (!live) return;
     const controller = new AbortController();
@@ -304,20 +315,24 @@ export function EventsPage({ search, range, events, total, mode, onOpenAttacker 
             <div className="discover-toolbar-right">
               {live && serverLoading && <span className="muted">Actualizando…</span>}
               <span className="mono range-pill">{firstShown}–{lastShown} de {formatNumber(totalFiltered)}</span>
-              <button className="icon-button small" onClick={() => setPage(Math.max(0, safePage - 1))} disabled={safePage === 0} aria-label="Página anterior"><ChevronLeft size={15} /></button>
-              <button className="icon-button small" onClick={() => setPage(Math.min(pageCount - 1, safePage + 1))} disabled={safePage >= pageCount - 1} aria-label="Página siguiente"><ChevronRight size={15} /></button>
             </div>
           </div>
           <EventTable events={pageEvents} onOpen={setSelected} visibleColumns={visibleColumns} />
           <div className="discover-pagination">
             <span className="muted">Mostrando {PAGE_SIZE} por página</span>
             <div className="pagination-buttons">
-              <button className="icon-button small" onClick={() => setPage(0)} disabled={safePage === 0}><ChevronLeft size={13} /><ChevronLeft size={13} /></button>
-              {Array.from({ length: Math.min(pageCount, 5) }, (_, index) => {
-                const pageIndex = Math.max(0, Math.min(index, pageCount - 1));
-                return <button key={pageIndex} className={`page-number ${safePage === pageIndex ? "active" : ""}`} onClick={() => setPage(pageIndex)}>{pageIndex + 1}</button>;
-              })}
-              <button className="icon-button small" onClick={() => setPage(pageCount - 1)} disabled={safePage >= pageCount - 1}><ChevronRight size={13} /><ChevronRight size={13} /></button>
+              <button className="icon-button small" onClick={() => setPage(Math.max(0, safePage - 1))} disabled={safePage === 0} aria-label="Página anterior" title="Página anterior"><ChevronLeft size={13} /></button>
+              {pageNumbers.map((pageIndex) => (
+                <button
+                  key={pageIndex}
+                  className={`page-number ${safePage === pageIndex ? "active" : ""}`}
+                  onClick={() => setPage(pageIndex)}
+                  aria-current={safePage === pageIndex ? "page" : undefined}
+                >
+                  {pageIndex + 1}
+                </button>
+              ))}
+              <button className="icon-button small" onClick={() => setPage(Math.min(pageCount - 1, safePage + 1))} disabled={safePage >= pageCount - 1} aria-label="Página siguiente" title="Página siguiente"><ChevronRight size={13} /></button>
             </div>
           </div>
         </section>

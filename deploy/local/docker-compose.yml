@@ -214,6 +214,11 @@ services:
       # DYSTOPIA_FABRIC_EVENTS_TOKEN de /etc/dystopia/fabric.env.
       DYSTOPIA_FABRIC_EVENTS_TOKEN: ${DYSTOPIA_FABRIC_EVENTS_TOKEN:-}
       DYSTOPIA_FABRIC_REMOTE_TIMEOUT: ${DYSTOPIA_FABRIC_REMOTE_TIMEOUT:-120}
+      # Consola interactiva (Fase 11), fail-closed. Con engine "remote" el
+      # control hace de puente WS hacia el servicio del host, que es quien
+      # tiene el socket de Docker (el control no lo monta). El servicio del
+      # host debe tener también DYSTOPIA_FABRIC_CONSOLE_ENABLED=true.
+      DYSTOPIA_FABRIC_CONSOLE_ENABLED: ${DYSTOPIA_FABRIC_CONSOLE_ENABLED:-false}
       # TLS opcional: ruta al certificado del host dentro del contenedor.
       # Activar solo junto con el montaje de abajo y URL https en
       # DYSTOPIA_FABRIC_REMOTE_URL (ver docs/FABRIC-OPERATIONS.md).

@@ -110,6 +110,10 @@ grep -q '^DYSTOPIA_FABRIC_EVENTS_INTERVAL=' "$ENV_FILE" \
     || printf 'DYSTOPIA_FABRIC_EVENTS_INTERVAL=5\n' >> "$ENV_FILE"
 grep -q '^DYSTOPIA_FABRIC_EVENTS_ENABLED=' "$ENV_FILE" \
     || printf 'DYSTOPIA_FABRIC_EVENTS_ENABLED=true\n' >> "$ENV_FILE"
+# Consola interactiva (Fase 11), fail-closed: el operador debe ponerlo a true
+# aquí Y en el control (deploy/local/.env) para habilitar el terminal.
+grep -q '^DYSTOPIA_FABRIC_CONSOLE_ENABLED=' "$ENV_FILE" \
+    || printf 'DYSTOPIA_FABRIC_CONSOLE_ENABLED=false\n' >> "$ENV_FILE"
 chown root:root "$ENV_FILE"
 chmod 0600 "$ENV_FILE"
 

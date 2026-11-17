@@ -179,9 +179,8 @@ Errores: 401/403 auth · 409 transición inválida/ocupado · 413 lote grande ·
 ### 5.1 Consola interactiva (Fase 11)
 
 "Entrar en la máquina": terminal xterm.js en el drawer del dispositivo
-(botón **Terminal**, solo admin y con el contenedor `running`). El
-control hace de puente WebSocket↔`docker exec -i -t` hacia el contenedor
-señuelo. Gates fail-closed:
+(botón **Terminal**, solo admin y con el contenedor `running`). Gates
+fail-closed:
 
 - JWT admin (en el query del WS: los navegadores no pueden fijar headers).
 - Fabric en estado `deployed` y el `device_id` en el manifiesto.
@@ -189,9 +188,26 @@ señuelo. Gates fail-closed:
 - Cuota de sesiones (`DYSTOPIA_FABRIC_CONSOLE_MAX`, default 4), idle
   timeout (`_CONSOLE_IDLE`, 600 s) y edad máxima (`_CONSOLE_MAX_AGE`, 3600 s).
 
-El comando del subprocess está fijado (sin shell del host, sin argumentos
-libres): `docker exec -i -t -e COLUMNS=… -e LINES=… -e TERM=xterm-256color
-<contenedor-del-manifiesto> /bin/sh -i`.
+Transporte: el control **nunca** monta el socket de Docker. Con engine
+`remote` (control en contenedor) el control abre un WebSocket contra el
+servicio del host (`wss://…/console/ws`, bearer token + CA opcional) y
+hace de puente; el servicio del host es quien ejecuta `docker exec`. Con
+engine `ovs`/`stub` sobre el propio host, el control ejecuta `docker exec`
+en local. En ambos casos el comando está fijado (sin shell del host, sin
+argumentos libres): `docker exec -i -t -e COLUMNS=… -e LINES=…
+-e TERM=xterm-256color <contenedor-del-manifiesto> /bin/sh -i`.
+
+Activar en el laboratorio Docker (los dos lados):
+
+```bash
+# deploy/local/.env (control)
+DYSTOPIA_FABRIC_CONSOLE_ENABLED=true
+# /etc/dystopia/fabric.env (servicio del host)
+DYSTOPIA_FABRIC_CONSOLE_ENABLED=true
+```
+
+y recrear el control (`docker compose up -d --force-recreate control`)
+y el servicio (`systemctl restart dystopia-fabric`).
 
 ## 6. Dashboard
 
