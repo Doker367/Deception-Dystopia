@@ -38,10 +38,15 @@ La host key SSH se persiste en ``/var/log/fabric/keys/ssh_host_rsa_key``
 (volumen persistente); ``NETPULSE_DECEPTION_SSH_HOST_KEY`` se fija **antes**
 de importar los listeners para que ``app.core.settings`` la lea.
 
-``engine: native`` y cualquier engine desconocido usan el listener nativo
-por protocolo; los engines externos (Cowrie/OpenCanary/…) se enlazan en
-la Fase 5b. Un protocolo no soportado se omite con warning; si ningún
-listener arranca, el agente sale con error accionable (exit 1).
+``engine: native`` usa el listener nativo por protocolo. Los motores
+reales **Cowrie** y **OpenCanary** (Fase 11) se arrancan con
+``fabric/engines.py`` si están instalados en la imagen: el agente genera
+su configuración, taila su log nativo y normaliza cada registro al mismo
+sink JSONL. Si el motor no está disponible, se avisa y se usa el listener
+nativo (fallback). El resto de engines (dionaea, heralding, redishoneypot,
+endlessh) siguen en el listener nativo. Un protocolo no soportado se omite
+con warning; si ningún listener ni motor arranca, el agente sale con error
+accionable (exit 1).
 """
 
 import asyncio
@@ -203,22 +208,31 @@ class JsonlSink:
         return record
 
 
-def create_listeners(config: DeviceConfig) -> tuple[list[Any], list[str]]:
+def create_listeners(
+    config: DeviceConfig,
+    engine_ports: Optional[set[int]] = None,
+) -> tuple[list[Any], list[str]]:
     """Instancia un listener nativo por servicio (sin arrancarlo).
 
     Devuelve ``(listeners, warnings)``. ``engine: native`` y engines
     desconocidos usan el listener nativo por protocolo; los protocolos no
     soportados se omiten con warning.
+
+    ``engine_ports`` son los puertos ya servidos por un motor real
+    (Cowrie/OpenCanary): no se abre un listener nativo en el mismo puerto.
     """
     from app.services.deception.listeners import build_listener
 
+    claimed = set(engine_ports or ())
     listeners: list[Any] = []
     warnings: list[str] = []
     for service in config.services:
         proto = (service.proto or "").strip().lower()
+        if service.port in claimed:
+            continue
         if service.engine and service.engine.strip().lower() != "native":
             warnings.append(
-                f"engine '{service.engine}' no enlazado en Fase 5a; "
+                f"engine '{service.engine}' no enlazado; "
                 f"se usa el listener nativo para '{proto}'"
             )
         listener = build_listener(
@@ -233,6 +247,28 @@ def create_listeners(config: DeviceConfig) -> tuple[list[Any], list[str]]:
             continue
         listeners.append(listener)
     return listeners, warnings
+
+
+def _build_engines(config: DeviceConfig, sink: JsonlSink):
+    """Registra los motores reales del dispositivo (Fase 11).
+
+    Import perezoso: ``fabric.engines`` arrastra ``runtime.normalize``, que
+    no hace falta cuando todos los servicios son nativos.
+    """
+    try:
+        from fabric.engines import DEFAULT_ENGINES_DIR, ENGINES_DIR_ENV, build_supervisor
+    except Exception:  # noqa: BLE001 - sin motores se sirve todo nativo
+        logger.exception("[fabric-agent] no se pudo cargar el binding de motores")
+        return None, [], []
+    engines_dir = os.getenv(ENGINES_DIR_ENV, DEFAULT_ENGINES_DIR)
+    return build_supervisor(config, engines_dir, emit=sink)
+
+
+def _engine_ports(supervisor) -> set[int]:
+    """Puertos servidos por motores reales (para no abrir listeners nativos)."""
+    if supervisor is None:
+        return set()
+    return {state["port"] for state in supervisor.states}
 
 
 async def run_agent(
@@ -264,7 +300,15 @@ async def run_agent(
         ) from exc
     set_event_sink(sink)
 
-    listeners, warnings = create_listeners(config)
+    # Fase 11: motores reales (Cowrie/OpenCanary) si están instalados.
+    # Se registran antes de los listeners para reservar sus puertos.
+    supervisor, engine_warnings, _fallbacks = _build_engines(config, sink)
+    for warning in engine_warnings:
+        logger.warning("[fabric-agent] %s", warning)
+
+    listeners, warnings = create_listeners(
+        config, engine_ports=_engine_ports(supervisor),
+    )
     for warning in warnings:
         logger.warning("[fabric-agent] %s", warning)
 
@@ -279,15 +323,19 @@ async def run_agent(
                 listener.host, listener.port, listener.proto, exc,
             )
 
-    if not started:
+    if supervisor is not None:
+        supervisor.start()
+
+    if not started and supervisor is None:
         set_event_sink(None)
         raise AgentConfigError(
             "ningún listener pudo arrancar; revisa services/proto/engine en device.json"
         )
 
     logger.info(
-        "[fabric-agent] %s sirviendo %d servicios (log=%s)",
-        config.device_id, len(started), sink.path,
+        "[fabric-agent] %s sirviendo %d listeners y %d motores reales (log=%s)",
+        config.device_id, len(started),
+        supervisor.running() if supervisor is not None else 0, sink.path,
     )
 
     stop = stop_event or asyncio.Event()
@@ -302,6 +350,11 @@ async def run_agent(
     try:
         await stop.wait()
     finally:
+        if supervisor is not None:
+            try:
+                supervisor.stop()
+            except Exception:  # noqa: BLE001
+                logger.exception("[fabric-agent] error al parar los motores")
         for listener in started:
             try:
                 await listener.stop()

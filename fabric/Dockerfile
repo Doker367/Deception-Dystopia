@@ -42,6 +42,10 @@ RUN groupadd --gid 2000 fabric \
 
 COPY app/ /opt/dystopia/app/
 COPY fabric/agent.py /opt/dystopia/fabric/agent.py
+# Fase 11: binding de motores reales. Sin los motores instalados (imagen
+# base) el agente cae al listener nativo; Dockerfile.engines los añade.
+COPY fabric/engines.py /opt/dystopia/fabric/engines.py
+COPY runtime/ /opt/dystopia/runtime/
 
 # Directorios de montaje con owner 2000 (el bind mount conserva el dueño
 # del host; el Device Runtime hace chown 2000:2000).
