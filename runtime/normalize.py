@@ -30,6 +30,7 @@ import json
 import re
 from uuid import UUID, NAMESPACE_URL, uuid5
 
+from runtime import canary
 from runtime.contracts import identifier, validate_event
 from runtime.netfields import (
     canonical_ip as _canonical_ip,
@@ -403,6 +404,9 @@ def _detail(raw: dict, engine: str, etype: str, source_field: str = "") -> dict:
             command = (command + " " + " ".join(str(a) for a in args)) if command else " ".join(str(a) for a in args)
         if command not in (None, ""):
             detail["command"] = str(command)
+            canary_id = canary.match(str(command))
+            if canary_id:
+                detail["canary"] = canary_id
     if etype == "file_download":
         url = _text(raw, "url") or _text(_first_mapping(raw.get("downloads")), "url")
         filename = _text(raw, "filename", "outfile") or _text(_first_mapping(raw.get("downloads")), "filename")
