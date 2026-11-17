@@ -64,16 +64,17 @@ Advertencias del 9B `heretic/abliterated`:
 ### Arranque de los dos servidores
 
 Primero detené el `llama-server` actual de 262k si sigue ocupando 12 GB.
-Dos servidores compiten por la misma VRAM. En esta máquina se escucha en
-`172.25.0.1` (puente del compose) para que el contenedor del control también los alcance;
-si todo corre nativo, `127.0.0.1` es equivalente.
+Dos servidores compiten por la misma VRAM. Los modelos escuchan en `0.0.0.0`
+y un firewall limita `8081`/`8091` a `127.0.0.0/8` y a la subred del control
+(`dystopia-local_default`). El control los alcanza por `host.docker.internal`
+(`host-gateway`); el monitor, en `network_mode: host`, por `127.0.0.1`.
 
 ```bash
 # 1) Modelo generativo del RAG (puerto 8091, ~7-8 GB)
 /home/doker/llama.cpp/build/bin/llama-server \
   --model /home/doker/models/DeepSeek-V4-Pro-Qwen3.5-9B-UNCENSORED-heretic-Q4_K_M.gguf \
   --alias her-9b \
-  --host 172.25.0.1 --port 8091 \
+  --host 0.0.0.0 --port 8091 \
   --ctx-size 65536 --n-gpu-layers 99 --flash-attn on \
   --cache-type-k q8_0 --cache-type-v q8_0 \
   --parallel 1 --threads 8 --jinja --reasoning-format none
@@ -82,7 +83,7 @@ si todo corre nativo, `127.0.0.1` es equivalente.
 /home/doker/llama.cpp/build/bin/llama-server \
   --model /home/doker/models/Qwen3-Embedding-0.6B-Q8_0.gguf \
   --alias qwen3-embedding-0.6b \
-  --host 172.25.0.1 --port 8081 \
+  --host 0.0.0.0 --port 8081 \
   --embeddings --pooling last -c 8192 -b 8192 -ub 8192 \
   --n-gpu-layers 99 --flash-attn on
 ```
@@ -121,11 +122,12 @@ Las fuentes se abren en **solo lectura**. Indexar nunca escribe en
 ```bash
 export NETPULSE_RAG_ENABLED=true
 export NETPULSE_RAG_DB=/var/lib/dystopia/deception/rag.db
-# 172.25.0.1 (puente del compose) permite que el contenedor también alcance los modelos.
-export NETPULSE_RAG_EMBED_URL=http://172.25.0.1:8081/v1/embeddings
+# En el host: 127.0.0.1. Dentro de un contenedor: host.docker.internal
+# (con extra_hosts: "host.docker.internal:host-gateway").
+export NETPULSE_RAG_EMBED_URL=http://127.0.0.1:8081/v1/embeddings
 export NETPULSE_RAG_EMBED_MODEL=qwen3-embedding-0.6b
 export NETPULSE_RAG_EMBED_DIM=1024
-export NETPULSE_RAG_LLM_URL=http://172.25.0.1:8091/v1/chat/completions
+export NETPULSE_RAG_LLM_URL=http://127.0.0.1:8091/v1/chat/completions
 export NETPULSE_RAG_LLM_MODEL=her-9b
 export NETPULSE_RAG_LLM_DISABLE_THINKING=true
 export NETPULSE_RAG_INCLUDE_PAYLOAD=false
@@ -174,6 +176,13 @@ curl -s -X POST http://127.0.0.1:8082/api/ai/rag/triage \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d '{"question":"Clasificá el caso","src_ip":"203.0.113.9","mode":"triage"}'
 ```
+
+Si la pregunta se abre desde una ficha de atacante o de un acceso aceptado, se
+puede enviar `include_movements: true` junto con `src_ip`. El servidor añade
+como evidencia adicional un resumen acotado de las sesiones aceptadas, los
+comandos ejecutados y la salida emulada del señuelo. Ese contexto se genera
+siempre en el servidor desde la evidencia local; el navegador no puede inyectar
+texto libre como si fuera evidencia.
 
 ## 4.1 Sección IA en la interfaz
 
@@ -314,19 +323,21 @@ Protocolo mínimo:
 > **Si el control corre en Docker** (`deploy/local/docker-compose.yml`), el
 > evento DB vive en el volumen `deception_db` y la web va dentro de la imagen.
 > La integración preparada usa `deploy/local/docker-compose.ai.yml`: el
-> control conserva la red puente y alcanza los modelos en `172.25.0.1`; un
+> control conserva la red puente y alcanza los modelos por `host.docker.internal`
+> (`host-gateway`); un
 > contenedor `ai-monitor` con `network_mode: host` comparte el volumen
 > `deception_db` y escribe la misma `rag.db` que lee la interfaz.
 >
-> La subred del compose es `172.25.0.0/16`; UFW debe permitir el puente hacia
-> los dos puertos (solo esa subred, los modelos no escuchan en la LAN):
-> ```bash
-> sudo ufw allow from 172.25.0.0/16 to 172.25.0.1 port 8081 proto tcp
-> sudo ufw allow from 172.25.0.0/16 to 172.25.0.1 port 8091 proto tcp
-> ```
+> `/usr/local/sbin/dystopia-up.sh` incluye este compose, así que el control
+> siempre arranca con las variables RAG.
+>
+> La subred del compose puede cambiar entre recreaciones. Los modelos
+> escuchan en `0.0.0.0`; el firewall solo permite `127.0.0.0/8` y la subred
+> actual del control (`dystopia-local_default`, hoy `172.22.0.0/16`).
+> `dystopia-up.sh` crea esas reglas en cada arranque.
 
 > ```bash
-> # Los modelos deben escuchar en 172.25.0.1 (unidades de usuario ya ajustadas)
+> # Los modelos escuchan en 0.0.0.0 (unidades de usuario ya ajustadas)
 > systemctl --user restart dystopia-ai-embed.service dystopia-ai-llm.service
 >
 > # Reconstruye la imagen (copia web/dist, scripts y docs) y reinicia
@@ -334,10 +345,8 @@ Protocolo mínimo:
 > ```
 >
 > El script valida los modelos, ejecuta los tres compose y muestra el estado.
-> Si el contenedor no alcanzara `172.25.0.1`, la alternativa es
-> `network_mode: host` para `control` (pierde el aislamiento de puertos) o un
-> proxy TCP en el host. El monitor del host queda desactivado para no
-> duplicar memoria.
+> Si el control no alcanzara los modelos, revisa `host.docker.internal` y las
+> reglas INPUT de 8081/8091; no uses una IP fija de subred Docker.
 
 ## 7. Diagnóstico
 
@@ -346,6 +355,8 @@ Protocolo mínimo:
 | 503 `RAG deshabilitado` | `NETPULSE_RAG_ENABLED` falso | Exportar `true` y reiniciar |
 | 503 `no existe el índice` | Falta indexar | `rag_cli.py index --scope all` |
 | 503 `embeddings no disponibles` | Servidor 8081 caído | Revisar `llama-server` y el puerto |
+| Timeout o 503 en `/ask` desde el control | Modelos en otra subred o firewall | Usar `host.docker.internal` y permitir la subred del control en `8081`/`8091` |
+| Panel sin variables RAG | Control arrancado sin `docker-compose.ai.yml` | Arrancar con `dystopia-up.sh` (ya incluye AI) y reiniciar |
 | `grounded=false` | El modelo no citó | Revisar prompt/modelo; no confiar en la respuesta |
 | `el modelo de embeddings cambió` | Índice incompatible | Reindexar con `--force` |
 | Respuestas vacías o solo razonamiento | La plantilla ignoró `enable_thinking` y consumió `max_tokens` | Arrancar con `--reasoning-format none` o subir `NETPULSE_RAG_LLM_MAX_TOKENS` |

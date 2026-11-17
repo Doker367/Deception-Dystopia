@@ -224,6 +224,9 @@ services:
       DYSTOPIA_CONTROL_CONFIG: /srv/local-config
       DYSTOPIA_CONTROL_STATE: /srv/state
       NETPULSE_DECEPTION_DATA_DIR: /srv/deception
+      # Transcripciones TTY de Cowrie en solo lectura: permiten mostrar la
+      # respuesta del señuelo a cada comando en la ficha del atacante.
+      DYSTOPIA_COWRIE_TTY_DIR: /srv/cowrie-var/lib/cowrie/tty
       # NO configurar DYSTOPIA_ANALYTICS_DB: analytics hereda DECEPTION_DB.
     extra_hosts: ["host.docker.internal:host-gateway"]
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8082"]
@@ -232,6 +235,9 @@ services:
       - {type: volume, source: deception_db, target: /srv/deception}
       - {type: volume, source: control_config, target: /srv/local-config}
       - {type: volume, source: control_state, target: /srv/state}
+      # Transcripciones TTY de Cowrie (solo lectura). El control las usa para
+      # mostrar qué respondió el señuelo a los comandos del atacante.
+      - {type: volume, source: cowrie_var, target: /srv/cowrie-var, read_only: true}
       # Manifiesto del host montado read-only: sin esta línea el hash local
       # del engine "remote" vendría de la copia de la imagen y podría
       # divergir del que usa el servicio del host.

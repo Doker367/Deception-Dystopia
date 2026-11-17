@@ -93,6 +93,7 @@ def ask(
     kinds: Optional[Sequence[str]] = None,
     src_ip: Optional[str] = None,
     mode: str = "analysis",
+    extra_context: Optional[str] = None,
 ) -> dict:
     conn = _open(create=False)
     try:
@@ -105,6 +106,7 @@ def ask(
             kinds=kinds,
             src_ip=src_ip,
             mode=mode,
+            extra_context=extra_context,
         )
     finally:
         conn.close()

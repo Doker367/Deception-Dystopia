@@ -34,10 +34,14 @@ import sqlite3
 from typing import Any, Mapping, Optional
 
 from app.core.settings import DECEPTION_DB
-from app.services.deception import geoip_svc
+from app.services.deception import geoip_svc, ttylog_svc
+from runtime.netfields import find_source
 
 MAX_WINDOW = timedelta(days=90)
 DEFAULT_MAX_ROWS = 20_000
+# Una sesión puede encadenar miles de comandos; la ficha acota la lista y
+# conserva la salida del señuelo sin devolver un documento desmedido.
+MAX_MOVEMENT_STEPS = 200
 INTERVALS = {"1m": 60, "5m": 300, "15m": 900, "30m": 1800, "1h": 3600, "3h": 10800, "6h": 21600, "12h": 43200, "1d": 86400, "7d": 604800}
 SEVERITY_ORDER = {"critical": 4, "high": 3, "medium": 2, "low": 1, "info": 0}
 
@@ -191,6 +195,7 @@ class EventRecord:
     severity: str
     message: str
     scope: str = "public"
+    approximate: bool = False
     detail: dict[str, Any] = field(default_factory=dict)
 
 
@@ -310,6 +315,120 @@ class AnalyticsService:
             country = geoip_svc.scope_label(source_scope) if source_scope != "public" else "Sin geolocalizar"
         return source_scope, geo, country
 
+    @staticmethod
+    def _source_or_detail(source: Any, detail: Any) -> str:
+        """Recover an origin from the stored detail when the column is unusable.
+
+        Older rows can carry ``0.0.0.0`` (legacy parser default) or an empty
+        source even though the native message still contains the real socket.
+        Recovery is read-only: the stored value is never rewritten, and the
+        decoy's own address is never accepted because ``find_source`` ignores
+        ``logdata.HOST`` and generic ``host`` fields.
+        """
+        text = str(source or "").strip()
+        if text and geoip_svc.scope(text) not in {"invalid", "unspecified", "multicast"}:
+            return text
+        if isinstance(detail, Mapping):
+            found = find_source(detail)
+            if found is not None:
+                return found.ip
+        return text
+
+    @staticmethod
+    def _movements(rows: list[EventRecord]) -> list[dict[str, Any]]:
+        """Describe qué ocurrió tras cada acceso aceptado.
+
+        Agrupa por sesión nativa del señuelo, localiza el ``login_success`` y
+        resume solo los comandos posteriores. Repetir el mismo comando seguido
+        se colapsa con un contador para que la ficha siga siendo legible.
+        """
+        by_session: dict[str, list[EventRecord]] = defaultdict(list)
+        for row in rows:
+            session = row.detail.get("session")
+            if isinstance(session, str) and session:
+                by_session[session].append(row)
+        movements: list[dict[str, Any]] = []
+        for session, events in by_session.items():
+            events.sort(key=lambda item: (item.timestamp, item.id))
+            login = next((item for item in events if item.kind == "login_success"), None)
+            if login is None:
+                continue
+            command_events = []
+            for item in events:
+                if item is login or item.timestamp < login.timestamp:
+                    continue
+                command = item.detail.get("command")
+                if isinstance(command, str) and command.strip():
+                    command_events.append((item, command.strip()))
+            total_commands = len(command_events)
+            command_events = command_events[:MAX_MOVEMENT_STEPS]
+            tty_ref = next(
+                (ref for item in events
+                 if (ref := ttylog_svc.reference(item.detail.get("ttylog")))
+                 or (ref := ttylog_svc.reference(item.detail.get("message")))),
+                "",
+            )
+            outputs = ttylog_svc.command_outputs(
+                tty_ref, [command for _, command in command_events],
+            )
+            steps: list[dict[str, Any]] = []
+            for index, (item, value) in enumerate(command_events):
+                response = outputs[index] if index < len(outputs) else ""
+                if (steps and steps[-1]["command"] == value
+                        and steps[-1]["response"] == response):
+                    steps[-1]["count"] += 1
+                    steps[-1]["last_at"] = item.timestamp
+                else:
+                    steps.append({"at": item.timestamp, "last_at": item.timestamp,
+                                  "command": value, "count": 1, "response": response})
+            movements.append({
+                "session": session,
+                "login_at": login.timestamp,
+                "username": str(login.detail.get("username") or "") or None,
+                "proto": login.proto,
+                "device": login.device,
+                "sensor": login.sensor,
+                "commands": sum(step["count"] for step in steps),
+                "total_commands": total_commands,
+                "truncated": total_commands > len(command_events),
+                "answered": sum(1 for step in steps if step["response"]),
+                "steps": steps,
+            })
+        movements.sort(key=lambda item: item["login_at"], reverse=True)
+        return movements[:50]
+
+    def _control_movements(self, conn: sqlite3.Connection, source: str,
+                           start: datetime, end: datetime) -> list[dict[str, Any]]:
+        """Read only the sessions that actually had an accepted login."""
+        window = (source, _iso(start), _iso(end))
+        session_expr = "json_extract(CASE WHEN json_valid(detail) THEN detail ELSE '{}' END, '$.session')"
+        try:
+            sessions = [
+                row[0] for row in conn.execute(
+                    f"SELECT DISTINCT {session_expr} FROM deception_events "
+                    "WHERE src_ip=? AND ts>=? AND ts<=? AND event_type='login_success' "
+                    f"AND {session_expr} IS NOT NULL LIMIT 50",
+                    window,
+                )
+            ]
+        except sqlite3.Error:
+            return []
+        if not sessions:
+            return []
+        marks = ",".join("?" for _ in sessions)
+        dst = _dst_select(conn)
+        try:
+            raw = conn.execute(
+                f"SELECT id,ts,device_id,src_ip,src_port,{dst},proto,event_type,username,success,detail "
+                "FROM deception_events WHERE src_ip=? AND ts>=? AND ts<=? "
+                f"AND {session_expr} IN ({marks}) ORDER BY ts ASC, id ASC LIMIT 2000",
+                (*window, *sessions),
+            ).fetchall()
+        except sqlite3.Error:
+            return []
+        rows = [record for row in raw if (record := self._control_record(row)) is not None]
+        return self._movements(rows)
+
     def _connect(self) -> Optional[sqlite3.Connection]:
         path = self.config.resolved_db_path
         if not path.is_file():
@@ -369,9 +488,9 @@ class AnalyticsService:
 
     def _runtime_record(self, row: sqlite3.Row) -> Optional[EventRecord]:
         payload = _json_object(row["payload"])
-        source = str(payload.get("src_ip") or row["source"] or "")
-        kind = str(payload.get("type") or row["kind"] or "other")
         detail = _json_object(payload.get("detail"))
+        source = self._source_or_detail(payload.get("src_ip") or row["source"] or "", detail)
+        kind = str(payload.get("type") or row["kind"] or "other")
         kind = _classify(kind, detail)
         source_scope, geo, country = self._geo_meta(source)
         return EventRecord(
@@ -396,6 +515,7 @@ class AnalyticsService:
             severity=_severity(kind),
             message=str(detail.get("message") or detail.get("eventid") or _action(kind)),
             scope=source_scope,
+            approximate=bool(geo.get("approximate")),
             detail=detail,
         )
 
@@ -405,7 +525,7 @@ class AnalyticsService:
             detail["username"] = str(row["username"])
         if row["success"] is not None:
             detail["success"] = bool(row["success"])
-        source = str(row["src_ip"] or "")
+        source = self._source_or_detail(row["src_ip"] or "", detail)
         kind = str(row["event_type"] or "other")
         kind = _classify(kind, detail)
         source_scope, geo, country = self._geo_meta(source)
@@ -432,6 +552,7 @@ class AnalyticsService:
             severity=_severity(kind),
             message=str(detail.get("message") or detail.get("command") or _action(kind)),
             scope=source_scope,
+            approximate=bool(geo.get("approximate")),
             detail=detail,
         )
 
@@ -493,9 +614,14 @@ class AnalyticsService:
                 continue
             # Un origen es país + subdivisión (estado/provincia) cuando GeoIP la
             # conoce. En EE. UU. esto permite pintar solo el estado afectado en
-            # lugar de teñir todo el país.
-            key = f"{row.countryCode}|{row.regionCode or ''}"
+            # lugar de teñir todo el país. Las ubicaciones aproximadas se
+            # agrupan por IP para que cada origen desconocido tenga su punto.
+            key = (
+                f"ZZ|{row.source}" if row.approximate
+                else f"{row.countryCode}|{row.regionCode or ''}"
+            )
             group = groups[key]
+            group["approximate"] = group.get("approximate", False) or row.approximate
             group["countryCode"] = row.countryCode
             group["region"] = group.get("region") or row.region
             group["regionCode"] = group.get("regionCode") or row.regionCode
@@ -521,6 +647,7 @@ class AnalyticsService:
                 "regionCode": group.get("regionCode") or "",
                 "city": group.get("city") or "",
                 "ip": group.get("ip") or "",
+                "approximate": bool(group.get("approximate")),
                 "lat": group.get("lat"),
                 "lng": group.get("lng"),
                 "scope": "public",
@@ -564,22 +691,50 @@ class AnalyticsService:
         start, end = _window(from_time, to_time)
         rows = self._rows(start, end)
         query = query_text.strip().lower()
-        filtered = []
-        for row in rows:
-            if severity and row.severity != severity:
-                continue
-            if sensor and row.sensor != sensor:
-                continue
-            if protocol and row.proto != protocol:
-                continue
-            if query and query not in " ".join(
-                [row.id, row.source, row.country, row.sensor, row.device, row.kind, row.action, row.proto, row.message]
-            ).lower():
-                continue
-            filtered.append(row)
+
+        def matches_search(row: EventRecord) -> bool:
+            if not query:
+                return True
+            haystack = " ".join(
+                [row.id, row.source, row.country, row.sensor, row.device,
+                 row.kind, row.action, row.proto, row.message]
+            ).lower()
+            return query in haystack
+
+        search_rows = [row for row in rows if matches_search(row)]
+        # Facetas calculadas antes de aplicar su propio filtro: así el panel de
+        # severidad y los desplegables no se vacían al seleccionar una opción.
+        severity_counts = Counter(
+            row.severity for row in search_rows
+            if (not sensor or row.sensor == sensor)
+            and (not protocol or row.proto == protocol)
+        )
+        sensor_counts = Counter(
+            row.sensor for row in search_rows
+            if row.sensor
+            and (not severity or row.severity == severity)
+            and (not protocol or row.proto == protocol)
+        )
+        protocol_counts = Counter(
+            row.proto for row in search_rows
+            if row.proto
+            and (not severity or row.severity == severity)
+            and (not sensor or row.sensor == sensor)
+        )
+        filtered = [
+            row for row in search_rows
+            if (not severity or row.severity == severity)
+            and (not sensor or row.sensor == sensor)
+            and (not protocol or row.proto == protocol)
+        ]
         page = filtered[offset: offset + max(1, min(limit, 100))]
         return {
             "total": len(filtered),
+            "facets": {
+                "severity": {name: severity_counts.get(name, 0) for name in SEVERITY_ORDER},
+                "sensor": dict(sensor_counts),
+                "protocol": dict(protocol_counts),
+            },
             "items": [
                 {
                     "id": row.id,
@@ -593,6 +748,7 @@ class AnalyticsService:
                     "regionCode": row.regionCode,
                     "city": row.city,
                     "scope": row.scope,
+                    "approximate": row.approximate,
                     "kind": row.kind,
                     "proto": row.proto,
                     "port": row.port,
@@ -709,6 +865,7 @@ class AnalyticsService:
                 "country": row.country, "countryCode": row.countryCode,
                 "region": row.region, "regionCode": row.regionCode,
                 "city": row.city, "scope": row.scope,
+                "approximate": row.approximate,
                 "kind": row.kind, "action": row.action,
                 "proto": row.proto, "port": row.port,
                 "dst_ip": row.dst_ip, "dst_port": row.dst_port,
@@ -798,7 +955,7 @@ class AnalyticsService:
         ).fetchone()[0]
         result: dict[str, Any] = {"source": source, "total": total,
                                   "window": {"from": _iso(start), "to": _iso(end)},
-                                  "scanned_limit": cap}
+                                  "scanned_limit": cap, "movements": []}
         if not total:
             return {**result, "items": []}
         # id breaks timestamp ties, preventing duplicates between adjacent pages.
@@ -864,6 +1021,7 @@ class AnalyticsService:
                 "regionCode": str(geo.get("subdivision_code") or ""),
                 "city": str(geo.get("city") or ""), "lat": _lat(geo.get("lat")), "lng": _lon(geo.get("lon")),
                 "scope": source_scope, "fingerprint": fingerprint,
+                "movements": self._control_movements(conn, source, start, end),
                 **counts, "items": [self._evidence_item(row) for row in page]}
 
     def attacker(self, source: str, offset: int = 0, limit: int = 50,
@@ -882,7 +1040,8 @@ class AnalyticsService:
                 conn.close()
         rows = self._source_rows(source, start, end)
         if not rows:
-            return {"source": source, "total": 0, "items": [], "window": {"from": _iso(start), "to": _iso(end)},
+            return {"source": source, "total": 0, "items": [], "movements": [],
+                    "window": {"from": _iso(start), "to": _iso(end)},
                     "scanned_limit": self.config.max_rows}
         protocols = Counter(row.proto for row in rows if row.proto)
         sensors = Counter(row.sensor for row in rows if row.sensor)
@@ -899,6 +1058,7 @@ class AnalyticsService:
             "protocols": dict(protocols), "sensors": dict(sensors), "kinds": dict(kinds),
             "devices": dict(devices), "window": {"from": _iso(start), "to": _iso(end)},
             "scanned_limit": self.config.max_rows,
+            "movements": self._movements(rows),
             "items": [self._evidence_item(row) for row in rows[offset:offset + limit]],
         }
 
@@ -949,3 +1109,50 @@ def reset_service() -> None:
     """Test helper: drop the cached service after changing configuration."""
     global _service
     _service = None
+
+
+_SECRET_ASSIGNMENT = re.compile(
+    r"(?i)\b(password|passwd|pwd|token|secret)\s*[=:]\s*[^\s]+"
+)
+
+
+def _safe_context_text(value: object, limit: int) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    return _SECRET_ASSIGNMENT.sub(r"\1=[REDACTED]", text)[:limit]
+
+
+def movement_context(source: str, *, max_sessions: int = 3, max_steps: int = 20,
+                     max_chars: int = 4000) -> str:
+    """Resumen compacto de lo ocurrido tras el acceso, para el prompt RAG.
+
+    Se genera en el servidor a partir de la misma evidencia que ve el analista,
+    nunca desde texto enviado por el navegador. Las salidas son emuladas por el
+    señuelo y así se etiquetan para que el modelo no las confunda con un host
+    real. Si no hay accesos aceptados devuelve una cadena vacía.
+    """
+    profile = AnalyticsService().attacker(source, limit=1)
+    movements = profile.get("movements") or []
+    if not movements:
+        return ""
+    lines = [
+        f"Movimientos posteriores al acceso en el señuelo para {source}.",
+        "Las respuestas siguientes son salida emulada del señuelo, no de un host real.",
+    ]
+    for movement in movements[:max_sessions]:
+        username = movement.get("username") or "usuario no registrado"
+        proto = movement.get("proto") or "tcp"
+        device = movement.get("device") or "señuelo"
+        lines.append(
+            f"Sesión {movement.get('session')} · usuario {username} · {proto} · {device} "
+            f"· {movement.get('commands', 0)} comandos."
+        )
+        for step in (movement.get("steps") or [])[:max_steps]:
+            command = _safe_context_text(step.get("command"), 300)
+            if not command:
+                continue
+            lines.append(f"$ {command}")
+            response = _safe_context_text(step.get("response"), 240)
+            lines.append(f"  -> {response}" if response else "  -> (sin salida registrada)")
+    return "\n".join(lines)[:max_chars]

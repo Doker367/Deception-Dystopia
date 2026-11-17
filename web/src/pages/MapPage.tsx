@@ -138,7 +138,9 @@ export function MapPage({ search, origins, unlocated = 0, mode, onRefresh, onOpe
   const selected = points.find((origin) => origin.id === selectedId) ?? points[0] ?? null;
   const totalEvents = points.reduce((total, origin) => total + origin.events, 0);
   const maxEvents = Math.max(...points.map((origin) => origin.events), 1);
-  const areaCount = new Set(points.map((origin) => origin.regionCode ? `${origin.countryCode}-${origin.regionCode}` : origin.countryCode)).size;
+  const areaCount = new Set(points.map((origin) => origin.approximate
+    ? `ZZ-${origin.ip}`
+    : origin.regionCode ? `${origin.countryCode}-${origin.regionCode}` : origin.countryCode)).size;
   const countryTotals = useMemo(() => {
     const totals = new Map<string, { country: string; events: number }>();
     for (const origin of points) {
@@ -151,6 +153,7 @@ export function MapPage({ search, origins, unlocated = 0, mode, onRefresh, onOpe
   const topCountry = countryTotals[0];
   const topCountryShare = totalEvents && topCountry ? Math.round((topCountry.events / totalEvents) * 100) : 0;
   const topOrigin = points.reduce<AttackOrigin | null>((best, origin) => !best || origin.events > best.events ? origin : best, null);
+  const approximateCount = origins.filter((origin) => origin.approximate).length;
 
   return (
     <div className="page page-map">
@@ -166,7 +169,7 @@ export function MapPage({ search, origins, unlocated = 0, mode, onRefresh, onOpe
                 features: points.map((origin) => ({
                   type: "Feature",
                   geometry: { type: "Point", coordinates: [origin.lng, origin.lat] },
-                  properties: { country: origin.country, countryCode: origin.countryCode, region: origin.region, regionCode: origin.regionCode, city: origin.city, ip: origin.ip, events: origin.events, severity: origin.severity, protocol: origin.protocol, sensor: origin.sensor },
+                  properties: { country: origin.country, countryCode: origin.countryCode, region: origin.region, regionCode: origin.regionCode, city: origin.city, ip: origin.ip, approximate: Boolean(origin.approximate), events: origin.events, severity: origin.severity, protocol: origin.protocol, sensor: origin.sensor },
                 })),
               };
               downloadJson("dystopia-origins.geojson", geojson);
@@ -253,7 +256,7 @@ export function MapPage({ search, origins, unlocated = 0, mode, onRefresh, onOpe
             <div><span className="eyebrow">Eventos geolocalizados</span><strong>{formatNumber(totalEvents)}</strong></div>
             <div><span className="eyebrow">Países / estados</span><strong>{areaCount}</strong></div>
             <div><span className="eyebrow">Core</span><strong>{DATACENTER.city}</strong></div>
-            <div><span className="eyebrow">Precisión</span><strong>estado / ciudad</strong></div>
+            <div><span className="eyebrow">Precisión</span><strong>{approximateCount ? `${formatNumber(approximateCount)} aprox.` : "estado / ciudad"}</strong></div>
             <div><span className="eyebrow">Fuente</span><strong>SQLite local</strong></div>
           </div>
         </Panel>
@@ -263,13 +266,14 @@ export function MapPage({ search, origins, unlocated = 0, mode, onRefresh, onOpe
             {selected ? (
               <div className="origin-detail">
                 <div className="origin-detail-head">
-                  <span className="origin-code">{selected.countryCode}</span>
+                  <span className="origin-code">{selected.approximate ? "~" : selected.countryCode}</span>
                   <div>
                     <strong className="mono">{selected.ip}</strong>
                     <span>Último evento {selected.lastSeen}</span>
                   </div>
                   <SeverityBadge severity={selected.severity} />
                 </div>
+                {selected.approximate && <p className="muted">Ubicación aproximada: ninguna base GeoIP local trajo datos para esta IP.</p>}
                 <div className="origin-stats">
                   <div><span>Eventos</span><strong>{formatNumber(selected.events)}</strong></div>
                   <div><span>Fuentes</span><strong>{formatNumber(selected.uniqueSources)}</strong></div>
@@ -278,7 +282,7 @@ export function MapPage({ search, origins, unlocated = 0, mode, onRefresh, onOpe
                 </div>
                 <div className="origin-route">
                   <MapPin size={14} />
-                  <span>{selected.city}{selected.region ? ` · ${selected.region}` : ""}</span>
+                  <span>{selected.approximate ? "Ubicación aproximada" : `${selected.city}${selected.region ? ` · ${selected.region}` : ""}`}</span>
                   <span className="route-line" />
                   <ScanLine size={14} />
                   <span>{DATACENTER.city}</span>

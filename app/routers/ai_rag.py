@@ -14,6 +14,7 @@ Ninguna ruta modifica eventos, notas ni firewall. La respuesta es asesoría.
 
 from __future__ import annotations
 
+import logging
 from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -23,6 +24,9 @@ from app.middleware.auth import JWTBearer
 from app.middleware.rbac import get_current_user, requires_role
 from app.services.ai.rag import service
 from app.services.ai.rag.errors import RagDisabled, RagNotIndexed, RagUnavailable
+from app.services.analytics_svc import movement_context
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/api/ai/rag",
@@ -37,6 +41,9 @@ class AskRequest(BaseModel):
     kinds: Optional[list[Literal["event", "note", "knowledge"]]] = None
     src_ip: Optional[str] = Field(default=None, max_length=64)
     mode: Literal["analysis", "triage"] = "analysis"
+    # Añade al prompt los movimientos y respuestas del señuelo de esa IP,
+    # generados en el servidor desde la misma evidencia de la ficha.
+    include_movements: bool = False
 
 
 class IndexRequest(BaseModel):
@@ -54,6 +61,17 @@ class FeedbackRequest(BaseModel):
 
 class ScanRequest(BaseModel):
     notify: bool = True
+
+
+def _extra_context(body: AskRequest) -> Optional[str]:
+    """Contexto local opcional para preguntas abiertas desde una ficha."""
+    if not body.include_movements or not body.src_ip:
+        return None
+    try:
+        return movement_context(body.src_ip) or None
+    except Exception:  # noqa: BLE001 — el contexto es opcional, no bloquea la respuesta
+        logger.warning("rag_movement_context_failed src_ip=%s", body.src_ip)
+        return None
 
 
 @router.get("/status")
@@ -78,7 +96,8 @@ def rag_ask(body: AskRequest) -> dict:
     """Respuesta fundamentada; se abstiene si no hay evidencia."""
     return _guard(
         lambda: service.ask(
-            body.question, k=body.k, kinds=body.kinds, src_ip=body.src_ip, mode=body.mode
+            body.question, k=body.k, kinds=body.kinds, src_ip=body.src_ip,
+            mode=body.mode, extra_context=_extra_context(body),
         )
     )
 
@@ -88,7 +107,8 @@ def rag_triage(body: AskRequest) -> dict:
     """Fuerza el modo estructurado para clasificar un caso."""
     return _guard(
         lambda: service.ask(
-            body.question, k=body.k, kinds=body.kinds, src_ip=body.src_ip, mode="triage"
+            body.question, k=body.k, kinds=body.kinds, src_ip=body.src_ip,
+            mode="triage", extra_context=_extra_context(body),
         )
     )
 

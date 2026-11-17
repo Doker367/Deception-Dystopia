@@ -78,6 +78,8 @@ hueco en lugar de suponer que el backup cubre todo el host:
 - `sensor/spool.db`: telemetría en cola; se drena, no se restaura.
 - `sensor/token`, `sensor/ca.crt`: material secreto/TLS del host.
 - `sensor.env`, `ingest.env`: entorno de los servicios, no estado de control.
+- `fabric.env`: tokens del plano Fabric; se respalda con el procedimiento
+  propio de Fabric, nunca con la exportación del plano de control.
 - `cells/`, `honeypots/`: datos de carga operativa, no del plano de control.
 
 El informe también compara las rutas de las unidades desplegadas con la tabla

@@ -113,6 +113,63 @@ def test_control_schema_overview_timeline_and_origins(tmp_path, geo):
     assert events["items"][0]["source"] == "203.0.113.7"
     assert events["items"][0]["country"] == "United States"
     assert events["items"][0]["countryCode"] == "US"
+    assert events["facets"]["severity"]["high"] == 1
+    assert events["facets"]["severity"]["low"] == 1
+    assert events["facets"]["protocol"]["ssh"] == 2
+
+
+def test_events_filtra_altos_en_servidor_aunque_haya_mas_recientes(tmp_path):
+    """El explorador no debe perder un comando alto por un flujo de conexiones."""
+    path = tmp_path / "events.db"
+    _control_db(path)
+    with sqlite3.connect(path) as conn:
+        conn.executemany(
+            "INSERT INTO deception_events(ts,device_id,src_ip,src_port,proto,event_type,"
+            "username,success,detail) VALUES(?,?,?,?,?,?,?,?,?)",
+            [
+                (
+                    f"2026-11-05T12:{index // 60:02d}:{index % 60:02d}+00:00",
+                    "srv-files-01", "198.51.100.9", 40000 + index, "ssh",
+                    "connect", None, 0, '{"engine":"cowrie"}',
+                )
+                for index in range(150)
+            ],
+        )
+    service = analytics_svc.AnalyticsService(analytics_svc.AnalyticsConfig(db_path=path))
+    window = ("2026-11-05T00:00:00+00:00", "2026-11-06T00:00:00+00:00")
+    filtered = service.events(*window, severity="high", limit=12)
+    assert filtered["total"] == 1
+    assert filtered["items"][0]["kind"] == "command"
+    assert filtered["facets"]["severity"]["high"] == 1
+    assert filtered["facets"]["severity"]["low"] == 151
+
+
+def test_source_is_recovered_from_detail_when_the_column_is_unusable(tmp_path, monkeypatch):
+    path = tmp_path / "events.db"
+    _control_db(path)
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            "INSERT INTO deception_events(ts,device_id,src_ip,src_port,proto,event_type,username,success,detail) "
+            "VALUES(?,?,?,?,?,?,?,?,?)",
+            ("2026-11-05T12:06:00+00:00", "srv-files-01", "0.0.0.0", None,
+             "ssh", "connect", None, None,
+             '{"engine":"cowrie","message":"New connection: 198.51.100.7:44321 (10.0.0.2:2222)"}'),
+        )
+    monkeypatch.setattr(geoip_svc, "lookup", lambda ip: {
+        "country_code": "US", "country": "United States", "lat": 39.0, "lon": -77.0,
+    })
+    service = analytics_svc.AnalyticsService(analytics_svc.AnalyticsConfig(db_path=path))
+    items = service.events(
+        "2026-11-05T11:00:00+00:00", "2026-11-05T13:00:00+00:00", limit=10,
+    )["items"]
+    recovered = next(item for item in items if item["kind"] == "connect")
+    assert recovered["source"] == "198.51.100.7"
+
+    # The stored row is not rewritten by the read-only analytics path.
+    with sqlite3.connect(path) as conn:
+        assert conn.execute(
+            "SELECT src_ip FROM deception_events WHERE event_type='connect'"
+        ).fetchone() == ("0.0.0.0",)
 
 
 def test_origins_split_by_us_state(tmp_path, monkeypatch):
@@ -237,7 +294,7 @@ def test_runtime_schema_is_supported(tmp_path, geo):
     events = service.events(*window, limit=10)
     assert events["total"] == 1
     assert events["items"][0]["sensor"] == "cowrie"
-    assert events["items"][0]["severity"] == "critical"
+    assert events["items"][0]["severity"] == "medium"
     assert events["items"][0]["source"] == "203.0.113.7"
 
 
@@ -312,6 +369,72 @@ def test_attacker_profile_keeps_fingerprint_outside_evidence_page(tmp_path, geo)
     profile = service.attacker("203.0.113.7", limit=5)
     assert profile["fingerprint"] == fingerprint
     assert len(profile["items"]) == 5
+
+
+def test_attacker_profile_reports_post_login_movements(tmp_path, geo):
+    """La ficha debe mostrar qué comandos siguieron a un acceso aceptado."""
+    path = tmp_path / "events.db"
+    _control_db(path)
+    rows = [
+        ("2026-11-05T12:20:00+00:00", "connect", None, 0, {"session": "s1"}),
+        ("2026-11-05T12:21:00+00:00", "login_success", "root", 1, {"session": "s1", "username": "root"}),
+        ("2026-11-05T12:22:00+00:00", "command", None, 0, {"session": "s1", "command": "id"}),
+        ("2026-11-05T12:22:30+00:00", "command", None, 0, {"session": "s1", "command": "id"}),
+        ("2026-11-05T12:23:00+00:00", "command", None, 0, {"session": "s1", "command": "cat /etc/passwd"}),
+        ("2026-11-05T12:24:00+00:00", "login_success", "admin", 1, {"session": "s2", "username": "admin"}),
+    ]
+    with sqlite3.connect(path) as conn:
+        conn.executemany(
+            "INSERT INTO deception_events(ts,device_id,src_ip,src_port,proto,event_type,"
+            "username,success,detail) VALUES(?,?,?,?,?,?,?,?,?)",
+            [(ts, "srv-files-01", "203.0.113.7", 2223, "telnet", kind, user, ok,
+              json.dumps(detail)) for ts, kind, user, ok, detail in rows],
+        )
+    service = analytics_svc.AnalyticsService(analytics_svc.AnalyticsConfig(db_path=path))
+    movements = service.attacker("203.0.113.7", limit=5)["movements"]
+    assert [item["session"] for item in movements] == ["s2", "s1"]
+    first = next(item for item in movements if item["session"] == "s1")
+    assert first["username"] == "root"
+    assert first["commands"] == 3
+    assert [(step["command"], step["count"]) for step in first["steps"]] == [
+        ("id", 2), ("cat /etc/passwd", 1),
+    ]
+    second = next(item for item in movements if item["session"] == "s2")
+    assert second["username"] == "admin"
+    assert second["steps"] == []
+
+
+def test_movement_context_for_ai_is_bounded_and_redacted(monkeypatch):
+    """El contexto del RAG sale del servidor, con comandos y salidas del señuelo."""
+    profile = {"movements": [{
+        "session": "s1", "username": "root", "proto": "telnet",
+        "device": "srv-files-01", "commands": 2,
+        "steps": [
+            {"command": "id", "response": "uid=0(root) gid=0(root)"},
+            {"command": "echo password=hunter2", "response": "password=hunter2"},
+        ],
+    }]}
+
+    class FakeService:
+        def attacker(self, source, limit=1):
+            assert source == "203.0.113.7" and limit == 1
+            return profile
+
+    monkeypatch.setattr(analytics_svc, "AnalyticsService", lambda: FakeService())
+    text = analytics_svc.movement_context("203.0.113.7")
+    assert "Las respuestas siguientes son salida emulada del señuelo" in text
+    assert "Sesión s1 · usuario root · telnet · srv-files-01" in text
+    assert "$ id" in text and "uid=0(root) gid=0(root)" in text
+    assert "hunter2" not in text and "password=[REDACTED]" in text
+
+
+def test_movement_context_is_empty_without_successful_login(monkeypatch):
+    class FakeService:
+        def attacker(self, source, limit=1):
+            return {"movements": []}
+
+    monkeypatch.setattr(analytics_svc, "AnalyticsService", lambda: FakeService())
+    assert analytics_svc.movement_context("203.0.113.7") == ""
 
 
 def test_control_schema_wins_when_both_tables_exist(tmp_path, geo):

@@ -10,6 +10,7 @@ forma directa cerraría un ciclo con ``app.models.deception``, que importa
 ``FabricConfig`` de este paquete al cargarse.
 """
 
+from app.services.fabric.console_svc import console_service
 from app.services.fabric.models import (
     FabricAdminBehavior,
     FabricConfig,
@@ -46,6 +47,7 @@ __all__ = [
     "FabricSwitch",
     "FabricTopology",
     "NullFabricEngine",
+    "console_service",
     "get_controller",
     "reset_controller",
 ]

@@ -250,18 +250,25 @@ Herramientas complementarias para producción (integración futura):
 - **GeoIP offline** (`geoip_svc.py`): país/ciudad/coordenadas con una base
   MaxMind local. Autodetecta `NETPULSE_GEOIP_DB`, `NETPULSE_GEOIP_DIR`,
   `config/geoip/`, `deploy/local/geoip/` y la base incluida en
-  `maxminddb-geolite2` (sin servicios externos). Las IPs privadas,
-  loopback o de documentación se etiquetan como tales en vez de mostrar un
-  país vacío; si una base solo conoce el país, se usa su centroide para no
-  perder el punto del mapa. Los orígenes públicos que no estén en la base se
-  informan como **sin geolocalizar** (`unlocated`) y no se mezclan con
-  ubicaciones de demostración.
-- **Mapa global** en el dashboard: puntos **rojos** = origen de los
-  ataques (geolocalizados, tamaño por nº de eventos), punto **verde** =
-  centro de datos objetivo y **líneas de trayectoria animadas** desde cada
-  atacante al objetivo. **Zoom con rueda / botones y arrastre (pan)**, y
-  tabla de orígenes con **país, estado/región, ciudad**, eventos y acción
-  de bloqueo. Mapa vectorial propio
+  `maxminddb-geolite2` (sin servicios externos). **Consulta todas las bases
+  encontradas**: la montada por el operador es la fuente principal y las demás
+  solo rellenan campos que falten. Además admite correcciones manuales en
+  `geoip-overrides.json` (mismo directorio, o ruta en
+  `NETPULSE_GEOIP_OVERRIDES`) con el mismo formato que devuelve `lookup()`:
+  `country_code`, `country`, `subdivision`, `subdivision_code`, `city`,
+  `lat`, `lon`, `time_zone`. Las IPs privadas, loopback o de documentación se
+  etiquetan como tales en vez de mostrar un país vacío; si una base solo
+  conoce el país, se usa su centroide para no perder el punto del mapa. Si
+  ninguna fuente conoce una IP pública, se pinta un **punto aproximado**
+  (`ZZ`, etiqueta “Sin país (aprox.)”) derivado de la propia IP, en lugar de
+  dejarla como **sin geolocalizar**.
+- **Mapa global** en el dashboard: puntos de color **por país** (tamaño por
+  nº de eventos), punto del centro de datos objetivo y **líneas de
+  trayectoria animadas** desde cada atacante al objetivo. Cada **país usa un
+  color distinto** en puntos y líneas (los orígenes aproximados usan un gris
+  neutro y la etiqueta `Aprox.`). **Zoom con rueda / botones y arrastre
+  (pan)**, y tabla de orígenes con **país, estado/región, ciudad**, eventos y
+  acción de bloqueo. Mapa vectorial propio
   (`app/static/world.geo.json`, Natural Earth, dominio público), sin tiles
   externos. Datos: `GET /api/deception/geo`.
 - **Simulación multi-país**: `POST /api/deception/simulate?country=US`

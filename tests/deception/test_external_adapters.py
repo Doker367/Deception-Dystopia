@@ -117,6 +117,46 @@ def test_unknown_device_and_absent_geoip_are_not_dropped():
     assert no_source["dystopia_restricted"]["payload"]["message"] == "unparseable sensor line"
 
 
+def test_ecs_adapter_recovers_nested_origin_and_never_uses_the_decoy_address():
+    """Native logs can nest the peer; ``logdata.HOST`` is the decoy, not origin."""
+    nested = {
+        "timestamp": "2026-09-24T10:00:00Z",
+        "connection": {
+            "protocol": "smbd", "type": "accept",
+            "remote_ip": "203.0.113.9", "remote_port": 49152,
+            "local_ip": "10.20.0.10", "local_port": 445,
+        },
+    }
+    document = adapters.normalize("dionaea", nested, default_device="srv-files-01")
+    assert document["source"]["ip"] == "203.0.113.9"
+    assert document["source"]["port"] == 49152
+    assert document["destination"]["ip"] == "10.20.0.10"
+    assert document["destination"]["port"] == 445
+
+    # No src_host/source field: the OpenCanary record must not fall back to the
+    # decoy destination stored in logdata.HOST.
+    opencanary = {
+        "dst_host": "10.40.0.11", "dst_port": 80, "logtype": 3000,
+        "logdata": {"HOST": "10.40.0.11", "PATH": "/admin", "METHOD": "GET"},
+        "msg": "GET /admin HTTP/1.1", "utc_time": "2026-09-24 10:00:00",
+    }
+    document = adapters.normalize("opencanary", opencanary, default_device="sw-access-01")
+    assert "source" not in document
+    assert document["destination"]["ip"] == "10.40.0.11"
+
+
+def test_ecs_adapter_keeps_source_port_embedded_in_the_address():
+    document = adapters.normalize(
+        "cowrie",
+        {"eventid": "cowrie.session.connect", "src_ip": "203.0.113.9:41234",
+         "timestamp": "2026-09-24T10:00:00Z"},
+        default_device="srv-files-01",
+    )
+    assert document["source"]["ip"] == "203.0.113.9"
+    assert document["source"]["port"] == 41234
+
+
+
 def test_injected_topology_and_geoip_enrich_without_importing_topology():
     resolver = StaticMetadata(
         devices={

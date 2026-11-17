@@ -72,7 +72,9 @@ def test_attacker_profile_evidence_roles_and_conflicts(client_roles):
     trail = client.get(path + "/history", headers=tokens["viewer"]).json()["items"]
     assert len(trail) == 1
     assert trail[0]["actor"] == "operator" and trail[0]["revision"] == 1
-    assert {change["field"] for change in trail[0]["changes"]} == {"alias", "classification", "tags", "notes"}
+    assert {change["field"] for change in trail[0]["changes"]} == {
+        "alias", "classification", "handling", "handling_target", "tags", "notes",
+    }
     with sqlite3.connect(db) as conn:
         assert conn.execute("SELECT detail FROM deception_events WHERE id=1").fetchone()[0] == '{"engine":"cowrie","command":"id"}'
 
@@ -151,7 +153,7 @@ def test_export_json_limits_sample_and_validation(client_roles, monkeypatch):
     assert data["exported"] == len(data["items"]) == 2 and data["truncated"] is True
     assert set(data["items"][0]) == {
         "id", "timestamp", "sensor", "device", "source", "country",
-        "countryCode", "region", "regionCode", "city", "scope", "kind",
+        "countryCode", "region", "regionCode", "city", "scope", "approximate", "kind",
         "action", "proto", "port", "dst_ip", "dst_port", "severity",
         "message", "detail",
     }

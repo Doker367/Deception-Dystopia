@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Bookmark,
   ChevronLeft,
@@ -16,10 +16,21 @@ import { EventDetailDrawer } from "../components/EventDetailDrawer";
 import { SeverityBadge } from "../components/SeverityBadge";
 import { HONEYPOTS } from "../data/mock";
 import type { EventRow, Severity } from "../types";
-import type { DataMode } from "../data/useAnalytics";
+import {
+  normalizeEvents,
+  windowFor,
+  type ApiEventFacets,
+  type ApiEvents,
+  type DataMode,
+} from "../data/useAnalytics";
+import { apiGet, getToken } from "../lib/api";
 import { formatNumber } from "../lib/format";
 
 const PAGE_SIZE = 12;
+const EXPORT_LIMIT = 5_000;
+const LIVE_REFRESH_MS = 15_000;
+
+const EMPTY_FACETS: ApiEventFacets = { severity: {}, sensor: {}, protocol: {} };
 
 const SEVERITY_OPTIONS: Array<{ value: "all" | Severity; label: string }> = [
   { value: "all", label: "Todas" },
@@ -41,6 +52,7 @@ interface EventsPageProps {
 
 export function EventsPage({ search, range, events, total, mode, onOpenAttacker }: EventsPageProps) {
   const [localQuery, setLocalQuery] = useState("");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
   const [severity, setSeverity] = useState<"all" | Severity>("all");
   const [sensor, setSensor] = useState("all");
   const [protocol, setProtocol] = useState("all");
@@ -50,7 +62,31 @@ export function EventsPage({ search, range, events, total, mode, onOpenAttacker 
   const [columnsOpen, setColumnsOpen] = useState(false);
   const [visibleColumns, setVisibleColumns] = useState<EventColumn[]>(["time", "severity", "event", "source", "sensor", "device", "proto"]);
 
-  const filtered = useMemo(() => {
+  // En vivo el explorador filtra y pagina en el servidor. Antes solo se pedían
+  // 100 eventos y el filtro era local: un flujo de conexiones recientes podía
+  // ocultar comandos de severidad alta que sí seguían almacenados.
+  const [serverEvents, setServerEvents] = useState<EventRow[]>([]);
+  const [serverTotal, setServerTotal] = useState(0);
+  const [facets, setFacets] = useState<ApiEventFacets>(EMPTY_FACETS);
+  const [serverLoading, setServerLoading] = useState(false);
+  const [serverError, setServerError] = useState("");
+  const [refreshing, setRefreshing] = useState(0);
+  const [exporting, setExporting] = useState(false);
+  const live = mode === "live" && Boolean(getToken());
+
+  useEffect(() => {
+    const timer = window.setTimeout(
+      () => setDebouncedQuery(`${search} ${localQuery}`.trim()),
+      300,
+    );
+    return () => window.clearTimeout(timer);
+  }, [search, localQuery]);
+
+  useEffect(() => {
+    setPage(0);
+  }, [search, range]);
+
+  const demoFiltered = useMemo(() => {
     const query = `${search} ${localQuery}`.trim().toLowerCase();
     return events.filter((event) => {
       if (severity !== "all" && event.severity !== severity) return false;
@@ -64,11 +100,76 @@ export function EventsPage({ search, range, events, total, mode, onOpenAttacker 
     });
   }, [events, localQuery, protocol, search, sensor, severity]);
 
-  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const totalFiltered = live ? serverTotal : demoFiltered.length;
+  const pageCount = Math.max(1, Math.ceil(totalFiltered / PAGE_SIZE));
   const safePage = Math.min(page, pageCount - 1);
-  const pageEvents = filtered.slice(safePage * PAGE_SIZE, safePage * PAGE_SIZE + PAGE_SIZE);
+  const pageEvents = live
+    ? serverEvents
+    : demoFiltered.slice(safePage * PAGE_SIZE, safePage * PAGE_SIZE + PAGE_SIZE);
+  const firstShown = totalFiltered ? safePage * PAGE_SIZE + 1 : 0;
+  const lastShown = Math.min((safePage + 1) * PAGE_SIZE, totalFiltered);
 
-  const protocols = useMemo(() => Array.from(new Set(events.map((event) => event.proto))).sort(), [events]);
+  useEffect(() => {
+    if (!live) return;
+    const controller = new AbortController();
+    const { from, to } = windowFor(range);
+    const params = new URLSearchParams({
+      from,
+      to,
+      limit: String(PAGE_SIZE),
+      offset: String(safePage * PAGE_SIZE),
+    });
+    if (debouncedQuery) params.set("q", debouncedQuery);
+    if (severity !== "all") params.set("severity", severity);
+    if (sensor !== "all") params.set("sensor", sensor);
+    if (protocol !== "all") params.set("protocol", protocol);
+    setServerLoading(true);
+    setServerError("");
+    apiGet<ApiEvents>(`/api/analytics/events?${params.toString()}`, controller.signal)
+      .then((payload) => {
+        if (controller.signal.aborted) return;
+        setServerEvents(normalizeEvents(payload));
+        setServerTotal(payload.total);
+        setFacets(payload.facets ?? EMPTY_FACETS);
+      })
+      .catch((cause: unknown) => {
+        if (controller.signal.aborted) return;
+        setServerError(cause instanceof Error ? cause.message : "No se pudieron cargar los eventos");
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setServerLoading(false);
+      });
+    return () => controller.abort();
+  }, [live, range, debouncedQuery, severity, sensor, protocol, safePage, refreshing]);
+
+  useEffect(() => {
+    if (!live) return;
+    const timer = window.setInterval(() => setRefreshing((value) => value + 1), LIVE_REFRESH_MS);
+    return () => window.clearInterval(timer);
+  }, [live]);
+
+  const protocols = useMemo(() => {
+    if (live) return Object.keys(facets.protocol).sort();
+    return Array.from(new Set(events.map((event) => event.proto))).sort();
+  }, [events, facets.protocol, live]);
+
+  const severityCounts = useMemo(() => {
+    if (live) {
+      return {
+        total: Object.values(facets.severity).reduce((sum, count) => sum + count, 0),
+        counts: facets.severity,
+      };
+    }
+    const counts: Record<string, number> = {};
+    let totalCount = 0;
+    for (const option of SEVERITY_OPTIONS) {
+      if (option.value === "all") continue;
+      const count = demoFiltered.filter((event) => event.severity === option.value).length;
+      counts[option.value] = count;
+      totalCount += count;
+    }
+    return { total: totalCount, counts };
+  }, [demoFiltered, facets.severity, live]);
 
   function resetFilters() {
     setSeverity("all");
@@ -78,17 +179,52 @@ export function EventsPage({ search, range, events, total, mode, onOpenAttacker 
     setPage(0);
   }
 
-  function exportCsv() {
-    const headers = ["id", "timestamp", "severity", "sensor", "device", "source", "country", "kind", "proto", "action"];
-    const rows = filtered.map((event) => [event.id, event.timestamp, event.severity, event.sensor, event.device, event.source, event.country, event.kind, event.proto, event.action]);
-    const csv = [headers, ...rows].map((row) => row.map((value) => `"${String(value).replace(/"/g, '""')}"`).join(",")).join("\n");
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = "dystopia-events.csv";
-    anchor.click();
-    URL.revokeObjectURL(url);
+  async function collectForExport(): Promise<EventRow[]> {
+    if (!live) return demoFiltered;
+    const { from, to } = windowFor(range);
+    const base = new URLSearchParams({ from, to, limit: "100" });
+    if (debouncedQuery) base.set("q", debouncedQuery);
+    if (severity !== "all") base.set("severity", severity);
+    if (sensor !== "all") base.set("sensor", sensor);
+    if (protocol !== "all") base.set("protocol", protocol);
+    const rows: EventRow[] = [];
+    const seen = new Set<string>();
+    const cap = Math.min(serverTotal, EXPORT_LIMIT);
+    for (let offset = 0; offset < cap; offset += 100) {
+      const params = new URLSearchParams(base);
+      params.set("offset", String(offset));
+      const payload = await apiGet<ApiEvents>(`/api/analytics/events?${params.toString()}`);
+      for (const row of normalizeEvents(payload)) {
+        if (seen.has(row.id)) continue;
+        seen.add(row.id);
+        rows.push(row);
+      }
+      if (payload.items.length < 100) break;
+    }
+    return rows;
+  }
+
+  async function exportCsv() {
+    setExporting(true);
+    setServerError("");
+    try {
+      const rows = await collectForExport();
+      const headers = ["id", "timestamp", "severity", "sensor", "device", "source", "country", "kind", "proto", "action"];
+      const csv = [headers, ...rows.map((event) => [event.id, event.timestamp, event.severity, event.sensor, event.device, event.source, event.country, event.kind, event.proto, event.action])]
+        .map((row) => row.map((value) => `"${String(value).replace(/"/g, '""')}"`).join(","))
+        .join("\n");
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = "dystopia-events.csv";
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } catch (cause) {
+      setServerError(cause instanceof Error ? cause.message : "No se pudo exportar el CSV");
+    } finally {
+      setExporting(false);
+    }
   }
 
   return (
@@ -101,7 +237,7 @@ export function EventsPage({ search, range, events, total, mode, onOpenAttacker 
           <>
             <button className="button ghost" onClick={() => setShowFilters((value) => !value)}><SlidersHorizontal size={15} /> Filtros</button>
             <button className="button ghost" onClick={() => setColumnsOpen(true)}><Columns3 size={15} /> Columnas</button>
-            <button className="button primary" onClick={exportCsv}><Download size={15} /> Exportar CSV</button>
+            <button className="button primary" onClick={() => void exportCsv()} disabled={exporting}><Download size={15} /> {exporting ? "Exportando…" : "Exportar CSV"}</button>
           </>
         }
         meta={
@@ -149,9 +285,11 @@ export function EventsPage({ search, range, events, total, mode, onOpenAttacker 
             </select>
           </label>
           <button className="link-button" onClick={resetFilters}>Restablecer</button>
-          <span className="filter-count">{formatNumber(filtered.length)} resultados</span>
+          <span className="filter-count">{formatNumber(totalFiltered)} resultados</span>
         </div>
       )}
+
+      {serverError && <p className="investigation-error" role="alert">{serverError}</p>}
 
       <div className="discover-layout">
         <section className="panel discover-panel">
@@ -164,7 +302,8 @@ export function EventsPage({ search, range, events, total, mode, onOpenAttacker 
               </div>
             </div>
             <div className="discover-toolbar-right">
-              <span className="mono range-pill">1–{Math.min((safePage + 1) * PAGE_SIZE, filtered.length)} de {formatNumber(filtered.length)}</span>
+              {live && serverLoading && <span className="muted">Actualizando…</span>}
+              <span className="mono range-pill">{firstShown}–{lastShown} de {formatNumber(totalFiltered)}</span>
               <button className="icon-button small" onClick={() => setPage(Math.max(0, safePage - 1))} disabled={safePage === 0} aria-label="Página anterior"><ChevronLeft size={15} /></button>
               <button className="icon-button small" onClick={() => setPage(Math.min(pageCount - 1, safePage + 1))} disabled={safePage >= pageCount - 1} aria-label="Página siguiente"><ChevronRight size={15} /></button>
             </div>
@@ -189,8 +328,8 @@ export function EventsPage({ search, range, events, total, mode, onOpenAttacker 
             <h3>Severidad en la vista</h3>
             <div className="severity-stack">
               {SEVERITY_OPTIONS.filter((option) => option.value !== "all").map((option) => {
-                const count = filtered.filter((event) => event.severity === option.value).length;
-                const percentage = filtered.length ? Math.round((count / filtered.length) * 100) : 0;
+                const count = severityCounts.counts[option.value] ?? 0;
+                const percentage = severityCounts.total ? Math.round((count / severityCounts.total) * 100) : 0;
                 return (
                   <button key={option.value} onClick={() => { setSeverity(option.value); setPage(0); }} className={severity === option.value ? "active" : ""}>
                     <span><SeverityBadge severity={option.value as Severity} /> <b>{count}</b></span>

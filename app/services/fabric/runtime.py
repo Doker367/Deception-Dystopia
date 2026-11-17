@@ -72,6 +72,58 @@ _IFNAME_MAX = 15
 _IFNAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 _DEFAULT_PIDS_LIMIT = 64
 _DEFAULT_USER = "2000:2000"
+_SSH_HOST_KEY = "ssh_host_rsa_key"
+
+
+def _needs_ssh_host_key(agent_config: Optional[dict]) -> bool:
+    if not agent_config:
+        return False
+    return any(
+        str((service or {}).get("proto", "")).strip().lower() == "ssh"
+        for service in agent_config.get("services", [])
+    )
+
+
+def _ensure_ssh_host_key(agent_config: Optional[dict], logs_dir: Path) -> Optional[Path]:
+    """Genera la host key SSH en el host si el dispositivo la necesita.
+
+    ``paramiko.RSAKey.generate(2048)`` puede tardar decenas de segundos en
+    un contenedor con poca entropía/CPU y el listener no abre el puerto
+    hasta terminar. Generarla durante el deploy mantiene el arranque del
+    agente rápido y la fingerprint estable entre recreaciones. Si falla,
+    se avisa y el agente la generará dentro del contenedor como fallback.
+    """
+    if not _needs_ssh_host_key(agent_config):
+        return None
+    keys_dir = logs_dir / "keys"
+    key_path = keys_dir / _SSH_HOST_KEY
+    try:
+        import paramiko
+
+        keys_dir.mkdir(parents=True, exist_ok=True)
+        if key_path.exists():
+            try:
+                paramiko.RSAKey.from_private_key_file(str(key_path))
+            except Exception:  # noqa: BLE001 - clave corrupta: se reemplaza
+                key_path.unlink()
+        if not key_path.exists():
+            tmp = key_path.with_name(key_path.name + ".tmp")
+            paramiko.RSAKey.generate(2048).write_private_key_file(str(tmp))
+            os.chmod(tmp, 0o600)
+            os.replace(tmp, key_path)
+        os.chmod(keys_dir, 0o700)
+        os.chmod(key_path, 0o600)
+        if hasattr(os, "geteuid") and os.geteuid() == 0:
+            os.chown(keys_dir, 2000, 2000)
+            os.chown(key_path, 2000, 2000)
+        return key_path
+    except Exception as exc:  # noqa: BLE001 - fallback dentro del contenedor
+        logger.warning(
+            "No se pudo pregenerar la host key SSH para '%s' (%s); "
+            "el agente la generará al arrancar",
+            logs_dir.name, exc,
+        )
+        return None
 
 
 class ContainerRuntimeError(RuntimeError):
@@ -406,6 +458,23 @@ class DeviceRuntime:
 
         result.steps.append(RuntimeStep(name="container_pid", ok=True))
         return container_id, info.pid
+
+    def prepare_ssh_host_key(
+        self,
+        spec: DeviceSpec,
+        agent_config: Optional[dict] = None,
+    ) -> Optional[Path]:
+        """Pregenera la host key si el dispositivo declara SSH.
+
+        Se llama desde el engine antes de crear el contenedor. Es público
+        para que el despliegue real no dependa de la generación de claves
+        dentro del contenedor; los tests que montan ``_device_mounts``
+        directamente no pagan ese coste.
+        """
+        if self._logs_root is None:
+            return None
+        logs_dir = self._logs_root / spec.device_id
+        return _ensure_ssh_host_key(agent_config or {}, logs_dir)
 
     def _device_mounts(
         self,

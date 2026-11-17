@@ -12,7 +12,9 @@ vacía cuando una dirección no puede geolocalizarse por diseño.
 """
 
 import glob
+import hashlib
 import ipaddress
+import json
 import logging
 import os
 import threading
@@ -22,8 +24,12 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 _reader = None
+_readers: list = []
+_readers_loaded = False
 _lock = threading.Lock()
 _tried = False
+_overrides_cache: tuple[float, dict] | tuple[None, dict] = (None, {})
+_overrides_lock = threading.Lock()
 
 # Rangos de documentación (RFC 5737 / RFC 3849). Python los marca como
 # ``is_private``, pero para el operador son direcciones de ejemplo, no una
@@ -198,8 +204,14 @@ for _line in _CENTROIDS_RAW.strip().splitlines():
             pass
 
 
-def _find_db() -> Optional[str]:
-    """Localiza la base City/Country más específica disponible en el host."""
+def _find_dbs() -> list[str]:
+    """Localiza todas las bases City/Country disponibles, de mejor a peor.
+
+    La primera suele ser la base actualizada que el operador monta en
+    ``<config>/geoip``; las siguientes son respaldo (otra copia del host o la
+    incluida en el paquete Python). Consultar varias evita que una base
+    incompleta marque como "sin geolocalizar" una IP que otra sí conoce.
+    """
     from app.core.settings import BASE_DIR, CONFIG_DIR, GEOIP_DB
 
     candidates: list[Path] = []
@@ -225,9 +237,10 @@ def _find_db() -> Optional[str]:
         for name in names:
             candidates.append(directory / name)
 
+    found: list[str] = []
     for candidate in candidates:
         if candidate.is_file():
-            return str(candidate)
+            found.append(str(candidate))
 
     # Fallback: bases incluidas por paquetes Python. El paquete
     # ``maxminddb-geolite2`` expone el directorio ``_maxminddb_geolite2`` y
@@ -241,50 +254,191 @@ def _find_db() -> Optional[str]:
         roots = [package_dir]
         if module_name == "geoip2":
             roots.append(package_dir.parent)
-        found: list[str] = []
         for root in roots:
             found.extend(
                 path for path in glob.glob(str(root / "**" / "*.mmdb"), recursive=True)
                 if path.lower().endswith(".mmdb")
             )
-        if not found:
+
+    def _rank(path: str) -> tuple[int, int, str]:
+        lowered = os.path.basename(path).lower()
+        city = 0 if "city" in lowered else 1
+        country = 0 if "country" in lowered else 1
+        return city, country, path
+
+    # Deduplicar por ruta real: el mismo fichero puede aparecer por dos
+    # directorios distintos y abrirlo dos veces no aporta nada.
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for path in sorted(set(found), key=_rank):
+        try:
+            real = str(Path(path).resolve())
+        except OSError:
+            real = path
+        if real in seen:
             continue
+        seen.add(real)
+        ordered.append(path)
+    return ordered
 
-        def _rank(path: str) -> tuple[int, int]:
-            lowered = os.path.basename(path).lower()
-            city = 0 if "city" in lowered else 1
-            country = 0 if "country" in lowered else 1
-            return city, country
 
-        return sorted(set(found), key=_rank)[0]
-    return None
+def _find_db() -> Optional[str]:
+    """Compatibilidad: devuelve la base preferida o ``None``."""
+    bases = _find_dbs()
+    return bases[0] if bases else None
+
+
+def _get_readers() -> list:
+    """Abre una vez todas las bases disponibles; ``[]`` si no hay ninguna."""
+    global _reader, _readers, _readers_loaded, _tried
+    if _readers_loaded:
+        return _readers
+    with _lock:
+        if _readers_loaded:
+            return _readers
+        bases = _find_dbs()
+        if not bases:
+            logger.info("[geoip] sin base .mmdb; GeoIP deshabilitado")
+            _tried = True
+            _readers_loaded = True
+            return _readers
+        try:
+            import geoip2.database  # type: ignore
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[geoip] geoip2 no disponible: %s", exc)
+            _tried = True
+            _readers_loaded = True
+            return _readers
+        loaded: list = []
+        for db in bases:
+            try:
+                loaded.append(geoip2.database.Reader(db))
+                logger.info("[geoip] base cargada: %s", db)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("[geoip] no se pudo abrir %s: %s", db, exc)
+        # Publicar la lista solo cuando está completa. Marcar ``_readers_loaded``
+        # antes de rellenarla hacía que peticiones concurrentes (la UI dispara
+        # origen/eventos/timeline a la vez) vieran una lista vacía y cayeran al
+        # punto aproximado "Sin país" de forma permanente en la caché.
+        _readers = loaded
+        _reader = _readers[0] if _readers else None
+        _tried = True
+        _readers_loaded = True
+    return _readers
 
 
 def _get_reader():
-    global _reader, _tried
-    if _reader is not None or _tried:
-        return _reader
-    with _lock:
-        if _reader is not None or _tried:
-            return _reader
-        _tried = True
-        db = _find_db()
-        if not db:
-            logger.info("[geoip] sin base .mmdb; GeoIP deshabilitado")
-            return None
-        try:
-            import geoip2.database  # type: ignore
+    """Compatibilidad: primer lector cargado (puede ser ``None``)."""
+    readers = _get_readers()
+    return readers[0] if readers else None
 
-            _reader = geoip2.database.Reader(db)
-            logger.info("[geoip] base cargada: %s", db)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("[geoip] no se pudo abrir la base: %s", exc)
-    return _reader
+
+def _override_paths() -> list[Path]:
+    from app.core.settings import BASE_DIR, CONFIG_DIR
+
+    configured = os.getenv("NETPULSE_GEOIP_OVERRIDES", "").strip()
+    paths = [Path(configured).expanduser()] if configured else []
+    paths.extend([
+        CONFIG_DIR / "geoip" / "geoip-overrides.json",
+        CONFIG_DIR / "geoip-overrides.json",
+        BASE_DIR / "config" / "geoip" / "geoip-overrides.json",
+        BASE_DIR / "deploy" / "local" / "geoip" / "geoip-overrides.json",
+    ])
+    # Deduplicar sin perder el orden de prioridad.
+    seen: set[str] = set()
+    unique: list[Path] = []
+    for path in paths:
+        key = str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(path)
+    return unique
+
+
+def _load_overrides() -> dict:
+    """Carga correcciones manuales; se recargan si cambia el fichero."""
+    global _overrides_cache
+    path = next((item for item in _override_paths() if item.is_file()), None)
+    if path is None:
+        return {}
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        return {}
+    cache_mtime, cache_data = _overrides_cache
+    if cache_mtime == mtime:
+        return cache_data
+    with _overrides_lock:
+        cache_mtime, cache_data = _overrides_cache
+        if cache_mtime == mtime:
+            return cache_data
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            logger.warning("[geoip] overrides inválidos en %s: %s", path, exc)
+            data: dict = {}
+        else:
+            data = raw if isinstance(raw, dict) else {}
+        _overrides_cache = (mtime, data)
+        return data
+
+
+def _override_for(ip: str) -> Optional[dict]:
+    data = _load_overrides()
+    if not data:
+        return None
+    value = data.get(ip)
+    if isinstance(value, dict):
+        return _normalize_geo(value, "override")
+    try:
+        address = ipaddress.ip_address(ip)
+    except ValueError:
+        return None
+    for key, item in data.items():
+        if "/" not in str(key) or not isinstance(item, dict):
+            continue
+        try:
+            network = ipaddress.ip_network(str(key), strict=False)
+        except ValueError:
+            continue
+        if address in network:
+            return _normalize_geo(item, "override")
+    return None
+
+
+def _normalize_geo(data: dict, source: str) -> Optional[dict]:
+    """Forma canónica de una entrada GeoIP (base u override)."""
+    country_code = str(data.get("country_code") or "").upper() or None
+    country = data.get("country") or country_code
+    if not country_code and isinstance(country, str) and len(country) == 2:
+        country_code = country.upper()
+    if not country_code and not country:
+        return None
+    lat, lon = data.get("lat"), data.get("lon")
+    if not (isinstance(lat, (int, float)) and -90 <= lat <= 90):
+        lat = None
+    if not (isinstance(lon, (int, float)) and -180 <= lon <= 180):
+        lon = None
+    geo = {
+        "country_code": country_code,
+        "country": country,
+        "subdivision": data.get("subdivision"),
+        "subdivision_code": data.get("subdivision_code"),
+        "city": data.get("city"),
+        "lat": float(lat) if lat is not None else None,
+        "lon": float(lon) if lon is not None else None,
+        "accuracy_radius": data.get("accuracy_radius"),
+        "time_zone": data.get("time_zone"),
+        "location_source": data.get("location_source") or source,
+        "approximate": bool(data.get("approximate", False)),
+    }
+    return geo
 
 
 def available() -> bool:
-    """True si hay una base GeoIP cargada."""
-    return _get_reader() is not None
+    """True si hay al menos una base GeoIP cargada."""
+    return bool(_get_readers())
 
 
 def scope(ip: str) -> str:
@@ -324,21 +478,8 @@ def _centroid(country_code: Optional[str]) -> Optional[tuple[float, float]]:
     return COUNTRY_CENTROIDS.get(str(country_code).upper())
 
 
-def lookup(ip: str) -> Optional[dict]:
-    """Geolocaliza una IP pública.
-
-    Returns:
-        ``{country_code, country, subdivision, subdivision_code, city, lat,
-        lon, accuracy_radius, time_zone, location_source}`` o None si es
-        privada, inválida o no está en la base.
-    """
-    if scope(ip) != "public":
-        return None
-
-    reader = _get_reader()
-    if reader is None:
-        return None
-
+def _lookup_in_reader(reader, ip: str) -> Optional[dict]:
+    """Consulta una base concreta; nunca deja que una excepción corte el resto."""
     for method in ("city", "country"):
         try:
             resp = getattr(reader, method)(ip)
@@ -358,6 +499,7 @@ def lookup(ip: str) -> Optional[dict]:
             "accuracy_radius": None,
             "time_zone": None,
             "location_source": "maxmind",
+            "approximate": False,
         }
         try:
             subdivisions = getattr(resp, "subdivisions", None)
@@ -383,6 +525,84 @@ def lookup(ip: str) -> Optional[dict]:
                 result["location_source"] = "country_centroid"
         return result
     return None
+
+
+def _approximate_geo(ip: str) -> dict:
+    """Punto aproximado determinista para una IP pública sin datos.
+
+    No inventa un país: usa ``ZZ`` y una etiqueta explícita. La posición se
+    deriva del hash de la IP para que dos orígenes desconocidos no se solapen,
+    pero siempre se presenta como aproximada para no confundirla con una
+    geolocalización real.
+    """
+    digest = hashlib.sha256(ip.encode("utf-8", "replace")).digest()
+    lat = -55.0 + (digest[0] / 255.0) * 110.0
+    lon = -180.0 + (digest[1] / 255.0) * 360.0
+    return {
+        "country_code": "ZZ",
+        "country": "Sin país (aprox.)",
+        "subdivision": None,
+        "subdivision_code": None,
+        "city": None,
+        "lat": round(lat, 4),
+        "lon": round(lon, 4),
+        "accuracy_radius": None,
+        "time_zone": None,
+        "location_source": "approximate",
+        "approximate": True,
+    }
+
+
+def lookup(ip: str) -> Optional[dict]:
+    """Geolocaliza una IP pública con varias fuentes y redundancia.
+
+    Orden:
+    1. Correcciones del operador (``geoip-overrides.json``), si existen.
+    2. Todas las bases ``.mmdb`` encontradas (City antes que Country).
+       Una base incompleta no debe ocultar una IP que otra sí conoce.
+
+    Returns:
+        ``{country_code, country, subdivision, subdivision_code, city, lat,
+        lon, accuracy_radius, time_zone, location_source}`` o None si es
+        privada, inválida o no está en ninguna fuente.
+    """
+    if scope(ip) != "public":
+        return None
+
+    override = _override_for(ip)
+    if override is not None:
+        return override
+
+    best: Optional[dict] = None
+    for reader in _get_readers():
+        result = _lookup_in_reader(reader, ip)
+        if result is None:
+            continue
+        if best is None:
+            # La primera base (normalmente la que el operador actualiza en
+            # ``<config>/geoip``) es la fuente autoritativa.
+            best = result
+            continue
+        # Las bases adicionales solo rellenan huecos: no pisan un país,
+        # región o coordenada que la fuente principal ya conozca.
+        for key, value in result.items():
+            if best.get(key) in (None, "") and value not in (None, ""):
+                best[key] = value
+    if best is None:
+        # Nunca dejar una IP pública "sin geolocalizar": se marca un punto
+        # aproximado y explícito (ZZ) en lugar de desaparecer del mapa.
+        return _approximate_geo(ip)
+    if best.get("lat") is None or best.get("lon") is None:
+        # País conocido pero sin coordenadas (ni centroide): aproximar para que
+        # el origen siga apareciendo, marcándolo como aproximado.
+        approximate = _approximate_geo(ip)
+        best["lat"] = approximate["lat"]
+        best["lon"] = approximate["lon"]
+        best["location_source"] = "approximate"
+        best["approximate"] = True
+    else:
+        best.setdefault("approximate", False)
+    return best
 
 
 def describe(ip: str) -> dict:
@@ -411,4 +631,5 @@ def describe(ip: str) -> dict:
             "lat": None,
             "lon": None,
         }
-    return {"scope": "public", "scope_label": geo.get("country") or "Pública", **geo}
+    label = "Ubicación aproximada" if geo.get("approximate") else (geo.get("country") or "Pública")
+    return {"scope": "public", "scope_label": label, **geo}

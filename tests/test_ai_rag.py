@@ -152,6 +152,21 @@ def test_ask_cita_evidencia(rag):
     assert out["evidence"][0]["n"] == 1
 
 
+def test_ask_incluye_contexto_de_movimientos_como_evidencia(rag):
+    _root, conn, embedder = rag
+    llm = FakeLLM("El señuelo devolvió la salida del comando id [1].")
+    out = answer.ask(
+        "¿Qué respondió el señuelo?", conn=conn, embedder=embedder, llm=llm,
+        src_ip="203.0.113.7",
+        extra_context="Sesión s1 · usuario root\n$ id\n  -> uid=0(root)",
+    )
+    assert out["grounded"] is True
+    assert out["retrieval"]["context"] is True
+    assert out["evidence"][0]["kind"] == "movement"
+    assert out["evidence"][0]["src_ip"] == "203.0.113.7"
+    assert "uid=0(root)" in out["evidence"][0]["text"]
+
+
 def test_ask_marca_no_fundamentado_sin_citas(rag):
     root, conn, embedder = rag
     docs = _docs(root / "docs", "mitre.md", "# T1110\n\nFuerza bruta SSH con logins fallidos.")
@@ -197,7 +212,7 @@ def test_eventos_no_indexan_payload_por_defecto(rag, tmp_path):
         )
     )
     assert "hydra" not in text and "hunter2" not in text
-    assert "login_attempt=1" in text
+    assert "intentos de acceso=1" in text
 
     indexer.index_events(conn, embedder, path=events, include_payload=True, force=True)
     text = " ".join(
@@ -434,4 +449,36 @@ def test_api_findings_status_y_ack(tmp_path, monkeypatch):
         acked = client.post("/api/ai/rag/findings/1/ack", json={}, headers=tokens["operator"])
         assert acked.status_code == 200
         assert acked.json()["ack"] is True
+
+        # La ficha puede pedir que se adjunten los movimientos del señuelo.
+        from app.routers import ai_rag
+
+        captured: dict = {}
+        monkeypatch.setattr(
+            ai_rag, "movement_context",
+            lambda ip: f"Sesión s1 · usuario root\n$ id\n  -> uid=0(root) ({ip})",
+        )
+        monkeypatch.setattr(
+            ai_rag.service, "ask",
+            lambda question, **kwargs: captured.update(kwargs) or {"answer": "ok"},
+        )
+        asked = client.post(
+            "/api/ai/rag/ask",
+            json={
+                "question": "¿Qué respondió el señuelo?",
+                "src_ip": "203.0.113.9",
+                "include_movements": True,
+            },
+            headers=tokens["viewer"],
+        )
+        assert asked.status_code == 200
+        assert captured["src_ip"] == "203.0.113.9"
+        assert captured["extra_context"].startswith("Sesión s1")
+        plain = client.post(
+            "/api/ai/rag/ask",
+            json={"question": "¿Qué pasó?", "src_ip": "203.0.113.9"},
+            headers=tokens["viewer"],
+        )
+        assert plain.status_code == 200
+        assert captured["extra_context"] is None
 

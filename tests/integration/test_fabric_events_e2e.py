@@ -170,6 +170,8 @@ def control(tmp_path, monkeypatch):
     from app.services.fabric import controller as controller_mod
 
     monkeypatch.setenv("DYSTOPIA_FABRIC_REMOTE_TOKEN", _TOKEN)
+    # La ingesta de eventos usa un token dedicado (fail-closed sin él).
+    monkeypatch.setenv("DYSTOPIA_FABRIC_EVENTS_TOKEN", _TOKEN)
     monkeypatch.setattr(store_svc, "DB_PATH", tmp_path / "deception.db")
 
     from app.services import audit_svc
@@ -208,10 +210,21 @@ def test_evento_llega_a_sqlite(control, device_image, tmp_path):
     from app.services.fabric.deploy import OvsFabricEngine
     from app.services.fabric.event_forwarder import EventForwarder
     from app.services.fabric.parser import parse_manifest
+    from app.services.fabric.runtime import DeviceRuntime, DockerCliRuntime
 
     topology = parse_manifest(_manifest())
     plan = _plan(topology)
-    engine = OvsFabricEngine()
+    # Raíces aisladas: el directorio real puede contener eventos de
+    # despliegues anteriores y el control rechaza el lote entero si
+    # aparece un device_id ajeno al manifiesto de este test.
+    logs_root = tmp_path / "fabric-logs"
+    engine = OvsFabricEngine(
+        device_runtime=DeviceRuntime(
+            DockerCliRuntime(),
+            config_root=tmp_path / "fabric-config",
+            logs_root=logs_root,
+        )
+    )
 
     try:
         engine.deploy(plan, topology)
@@ -224,14 +237,57 @@ def test_evento_llega_a_sqlite(control, device_image, tmp_path):
         assert pid_b > 0
 
         # Conexión desde el netns de pcb al puerto 22 de pca (SSH señuelo).
-        for _ in range(2):
+        # El listener tarda un instante en cargar la host key: se sondea el
+        # puerto en vez de asumir que está listo tras crear el contenedor.
+        outcome = None
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
             outcome = _run("nsenter", "-t", str(pid_b), "-n", "--", "timeout", "5",
                            "bash", "-c", f"exec 3<>/dev/tcp/{ip_a}/22")
-            assert outcome.returncode == 0, outcome.stderr
+            if outcome.returncode == 0:
+                break
+            time.sleep(0.5)
+        assert outcome is not None and outcome.returncode == 0, (
+            outcome.stderr if outcome is not None else "sin intentos"
+        )
 
-        # El agente escribe el JSONL en su volumen.
-        jsonl = Path(f"/var/lib/dystopia/fabric/logs/{spec_a.device_id}/events.jsonl")
-        for _ in range(20):
+        # Un connect TCP crudo no completa el handshake SSH y, por tanto, no
+        # genera el evento ``connect``. Se ejecuta paramiko dentro del netns
+        # de pcb (mismo mount namespace del host) para negociar SSH de verdad.
+        ssh_probe = (
+            "import socket, sys, paramiko\n"
+            "sock = socket.create_connection((sys.argv[1], int(sys.argv[2])), timeout=10)\n"
+            "transport = paramiko.Transport(sock)\n"
+            "transport.start_client(timeout=10)\n"
+            "transport.close()\n"
+        )
+        handshake = _run("nsenter", "-t", str(pid_b), "-n", "--",
+                         sys.executable, "-c", ssh_probe, ip_a, "22")
+        assert handshake.returncode == 0, handshake.stderr
+
+        # El listener HTTP de pcb también debe emitir su connect: se prueba
+        # desde el netns de pca para cubrir ambos sentidos del segmento.
+        spec_b_ip = spec_b.interfaces[0].ip.split("/")[0]
+        pid_a = int(_run(
+            "docker", "inspect", "-f", "{{.State.Pid}}", spec_a.container_name,
+        ).stdout.strip())
+        http_outcome = None
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            http_outcome = _run(
+                "nsenter", "-t", str(pid_a), "-n", "--", "timeout", "5",
+                "bash", "-c", f"exec 3<>/dev/tcp/{spec_b_ip}/80",
+            )
+            if http_outcome.returncode == 0:
+                break
+            time.sleep(0.5)
+        assert http_outcome is not None and http_outcome.returncode == 0, (
+            http_outcome.stderr if http_outcome is not None else "sin intentos"
+        )
+
+        # El agente escribe el JSONL en su volumen aislado.
+        jsonl = logs_root / spec_a.device_id / "events.jsonl"
+        for _ in range(50):
             if jsonl.exists() and "connect" in jsonl.read_text(encoding="utf-8"):
                 break
             time.sleep(0.2)
@@ -239,23 +295,21 @@ def test_evento_llega_a_sqlite(control, device_image, tmp_path):
 
         # El forwarder envía el lote al control (offsets persistentes).
         forwarder = EventForwarder(
-            devices_dir=tmp_path / "logs",  # no toca el estado real
+            devices_dir=logs_root,
             state_path=tmp_path / "forwarder-state.json",
             url=f"{control}/api/fabric/events",
             token=_TOKEN,
             interval=0.1,
             backoff=0,
         )
-        # Lee del directorio real de logs del fabric desplegado.
-        forwarder._devices_dir = Path("/var/lib/dystopia/fabric/logs")
         result = forwarder.run_once()
         assert result["sent"] >= 2, result  # connect de pca y pcb
 
         # El evento está en la SQLite de deception.
         with sqlite3.connect(str(store_svc.DB_PATH)) as conn:
             rows = conn.execute(
-                "SELECT device_id, type, src_ip FROM deception_events "
-                "WHERE device_id = ? AND type = 'connect'",
+                "SELECT device_id, event_type, src_ip FROM deception_events "
+                "WHERE device_id = ? AND event_type = 'connect'",
                 (spec_a.device_id,),
             ).fetchall()
         assert rows, "el evento connect no llegó a deception_events"

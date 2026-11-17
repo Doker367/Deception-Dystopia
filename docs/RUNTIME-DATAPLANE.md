@@ -212,8 +212,10 @@ se han probado ni simulado con servicios reales:
 7. **Diferencias nativo vs fixture.** Las fixtures añaden alias planos. En
    producción Dionaea puede traer solo objetos anidados, Heralding
    `source_ip`, RedisHoneyPot `action`/`addr` y Endlessh solo las líneas
-   nativas. El normalizador cubre ambos cuando los campos están presentes, pero
-   debe validarse contra capturas reales (ver `deploy/honeypots/adapters.md`).
+   nativas. `runtime/netfields.py` busca el origen con redundancia (alias,
+   objetos anidados y socket en el mensaje) y deja la procedencia en
+   `detail.source_field`; aun así debe validarse contra capturas reales
+   (ver `deploy/honeypots/adapters.md`).
 8. **Enumeración de protocolos.** SMTP/IMAP/POP3/SMB/Redis/PostgreSQL/RDP/VNC
    se colapsan a `tcp` por el contrato v1. Ampliar el enum exige revisión del
    contrato y del ingest.
