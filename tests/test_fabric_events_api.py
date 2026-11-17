@@ -176,14 +176,30 @@ def test_proto_se_normaliza_a_minusculas(client, emitted):
 # ─ device_id ajeno / límites / esquema ─────────────────────
 
 
-def test_device_id_ajeno_403(client, emitted):
+def test_device_id_ajeno_se_rechaza_sin_tumbar_el_lote(client, emitted):
+    """Un device_id ajeno no invalida el resto: se cuenta y se sigue."""
     response = client.post(
         "/api/fabric/events", headers=AUTH,
         json={"events": [_event(), _event(device_id="intruso")]},
     )
-    assert response.status_code == 403
-    assert any("intruso" in error for error in response.json()["detail"]["errors"])
-    assert emitted == []
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["accepted"] == 1
+    assert payload["rejected"] == 1
+    assert any("intruso" in str(error) for error in payload["errors"])
+    assert len(emitted) == 1
+    assert emitted[0]["device_id"] == "pc-01"
+
+
+def test_sin_topologia_503(client, monkeypatch):
+    """Sin topología cargada se responde 503 (el forwarder reintenta)."""
+    from app.routers import fabric as fabric_router
+
+    monkeypatch.setattr(fabric_router, "_fabric_device_ids", lambda: set())
+    response = client.post(
+        "/api/fabric/events", headers=AUTH, json={"events": [_event()]},
+    )
+    assert response.status_code == 503
 
 
 def test_lote_demasiado_grande_413(client):

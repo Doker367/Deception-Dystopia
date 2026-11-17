@@ -563,11 +563,12 @@ async def receive_events(request: Request) -> dict:
         }) from exc
 
     known_devices = _fabric_device_ids()
-    unknown = sorted({event.device_id for event in parsed} - known_devices)
-    if unknown:
-        raise HTTPException(403, detail={
-            "message": "device_id ajeno al manifiesto del fabric",
-            "errors": [f"device_id desconocido: '{device_id}'" for device_id in unknown],
+    if not known_devices:
+        # Sin topología cargada (arranque, manifiesto inválido) no se puede
+        # validar: 503 para que el forwarder reintente, nunca 403 (perdería
+        # los eventos por un fallo transitorio del control).
+        raise HTTPException(503, detail={
+            "message": "topología del fabric no disponible; reintenta",
         })
 
     accepted = 0
@@ -575,6 +576,15 @@ async def receive_events(request: Request) -> dict:
     errors: list[dict] = []
     records: list[dict] = []
     for index, event in enumerate(parsed):
+        if event.device_id not in known_devices:
+            # Un device_id ajeno no invalida el resto del lote: se cuenta y
+            # se sigue (p. ej. logs huérfanos de pruebas). No se filtra nada.
+            rejected += 1
+            errors.append({
+                "index": index,
+                "error": f"device_id desconocido: '{event.device_id}'",
+            })
+            continue
         problem = _event_error(event)
         if problem is None:
             normalized_detail = _normalize_credentials(
