@@ -119,7 +119,10 @@ class EventStore:
                     db.execute("INSERT INTO events VALUES(?,?,?,?,?,?,?,?,?)",
                                (sensor, e["event_id"], e["device_id"], received, now,
                                 e["observed_at"], e["type"], e["src_ip"], encode(e)))
-                    rule = e["type"] if e["type"] in {"login_success", "file_download", "port_scan", "command"} else None
+                    if e["type"] == "command" and (e.get("detail") or {}).get("canary"):
+                        rule = "canary_access"
+                    else:
+                        rule = e["type"] if e["type"] in {"login_success", "file_download", "port_scan", "command"} else None
                     if e["type"] == "login_attempt":
                         count = db.execute("SELECT COUNT(*) FROM events WHERE sensor=? AND device=? AND source=? AND kind='login_attempt' AND received_epoch>=?",
                                            (sensor, e["device_id"], e["src_ip"], now - 60)).fetchone()[0]

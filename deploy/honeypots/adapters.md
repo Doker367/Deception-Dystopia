@@ -163,7 +163,12 @@ Diferencias conocidas entre el log nativo y lo que espera el adaptador actual:
   ambiguo (p. ej. 4002/8001) cambie el protocolo.
 
 Corregir estas diferencias en los adaptadores (fuera del área de este
-artefacto) antes de considerar la ingesta lista para producción.
+artefacto) antes de considerar la ingesta lista para producción. El
+normalizador compartido (`runtime/netfields.py`) ya busca el origen en alias
+planos, objetos anidados (`connection.remote_ip`, `source.ip`, `client.ip`) y
+sockets embebidos (`addr`, `host=... port=...`, `ip:puerto`), y nunca usa
+`logdata.HOST` como origen; sigue pendiente validarlo contra capturas reales
+de cada motor.
 
 ## Pruebas con fixtures
 

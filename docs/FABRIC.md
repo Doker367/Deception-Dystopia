@@ -167,10 +167,47 @@ es el modo de producción del lab).
 | GET | `/api/fabric/health` | viewer | Salud: checks de bridges/enlaces/dispositivos |
 | GET | `/api/fabric/events?device_id=&limit=` | viewer | Últimos eventos del fabric (store) |
 | POST | `/api/fabric/events` | servicio | Ingesta del forwarder (`X-Fabric-Token`) |
+| GET | `/api/fabric/config` | admin | YAML del bloque `fabric:` para el editor (credenciales enmascaradas `__REDACTED__`) |
+| PUT | `/api/fabric/config` | admin | Guarda el YAML (valida antes; backup `.bak`; restaura `__REDACTED__` del manifiesto vigente) |
+| POST | `/api/fabric/devices/{id}/console` | admin | Abre sesión de consola interactiva (Fase 11) |
+| WS | `/api/fabric/devices/{id}/console/ws?token=` | admin | Puente WebSocket↔PTY de la consola |
 
 Errores: 401/403 auth · 409 transición inválida/ocupado · 413 lote grande ·
-422 manifiesto/eventos inválidos · 502 fallo del engine · 503 manifiesto
-ilegible o ingesta sin token configurado.
+422 manifiesto/eventos inválidos · 429 cuota de consolas · 502 fallo del engine ·
+503 manifiesto ilegible, ingesta sin token o consola deshabilitada.
+
+### 5.1 Consola interactiva (Fase 11)
+
+"Entrar en la máquina": terminal xterm.js en el drawer del dispositivo
+(botón **Terminal**, solo admin y con el contenedor `running`). Gates
+fail-closed:
+
+- JWT admin (en el query del WS: los navegadores no pueden fijar headers).
+- Fabric en estado `deployed` y el `device_id` en el manifiesto.
+- `DYSTOPIA_FABRIC_CONSOLE_ENABLED=true` (independiente del gate de deploy).
+- Cuota de sesiones (`DYSTOPIA_FABRIC_CONSOLE_MAX`, default 4), idle
+  timeout (`_CONSOLE_IDLE`, 600 s) y edad máxima (`_CONSOLE_MAX_AGE`, 3600 s).
+
+Transporte: el control **nunca** monta el socket de Docker. Con engine
+`remote` (control en contenedor) el control abre un WebSocket contra el
+servicio del host (`wss://…/console/ws`, bearer token + CA opcional) y
+hace de puente; el servicio del host es quien ejecuta `docker exec`. Con
+engine `ovs`/`stub` sobre el propio host, el control ejecuta `docker exec`
+en local. En ambos casos el comando está fijado (sin shell del host, sin
+argumentos libres): `docker exec -i -t -e COLUMNS=… -e LINES=…
+-e TERM=xterm-256color <contenedor-del-manifiesto> /bin/sh -i`.
+
+Activar en el laboratorio Docker (los dos lados):
+
+```bash
+# deploy/local/.env (control)
+DYSTOPIA_FABRIC_CONSOLE_ENABLED=true
+# /etc/dystopia/fabric.env (servicio del host)
+DYSTOPIA_FABRIC_CONSOLE_ENABLED=true
+```
+
+y recrear el control (`docker compose up -d --force-recreate control`)
+y el servicio (`systemctl restart dystopia-fabric`).
 
 ## 6. Dashboard
 
@@ -181,12 +218,21 @@ Página **Fabric** (sección Operación):
 - **Grafo interactivo**: switches (rectángulos) y dispositivos (círculos)
   agrupados por VLAN; troncales vs accesos; nodos con contenedor `running`
   y fabric `deployed` se marcan en verde. Clic en un dispositivo → drawer.
+- **Topología**: toggle de layout **Fuerza** (grafo libre) y **Jerárquico**
+  (switches en fila, dispositivos colgando de su switch); aristas con
+  etiqueta de parámetros WAN (latencia/jitter/pérdida/ancho de banda).
+- **Editor de manifiesto** (solo admin): textarea YAML del bloque
+  `fabric:` con validación previa (POST `/validate`) y guardado con
+  backup `.bak`; las credenciales se enmascaran como `__REDACTED__`.
+- **Terminal** (solo admin): botón **Terminal** en el drawer del
+  dispositivo con el contenedor `running`; abre una sesión interactiva
+  WebSocket↔PTY hacia el señuelo.
 - **Salud**: checks del host (bridges/enlaces/dispositivos), runtime
   disponible y estado del **forwarder** (enviados/pendientes/fallidos).
 - **Tabla**: dispositivo, IP, MAC, switch, VLAN, contenedor, conectividad
   (ping a vecinos) y servicios.
 - **Controles** (solo admin): Validate, Deploy, Rebuild, Destroy con
-  confirmación y avisos (toast).
+  confirmación y avisos (toast), más **Editar manifiesto** (editor YAML).
 
 ## 7. Modelo de seguridad
 

@@ -5,19 +5,20 @@
 #     -f docker-compose.yml -f docker-compose.remote.yml -f docker-compose.ai.yml \
 #     up -d --build --wait control ai-monitor
 #
-# Los modelos corren en el host, escuchando en 172.25.0.1 (docker0). El control
-# los alcanza por esa IP y el monitor comparte el volumen deception_db para
-# escribir hallazgos y memoria en la misma SQLite que lee la interfaz.
+# Los modelos corren en el host y escuchan en 0.0.0.0 (restringidos por
+# firewall a loopback y a la subred del control). El control los alcanza por
+# host.docker.internal (host-gateway) y el monitor, en network_mode host, por
+# 127.0.0.1. Así no dependemos de una subred Docker concreta.
 
 services:
   control:
     environment:
       NETPULSE_RAG_ENABLED: "true"
       NETPULSE_RAG_DB: /srv/deception/rag.db
-      NETPULSE_RAG_EMBED_URL: http://172.25.0.1:8081/v1/embeddings
+      NETPULSE_RAG_EMBED_URL: http://host.docker.internal:8081/v1/embeddings
       NETPULSE_RAG_EMBED_MODEL: qwen3-embedding-0.6b
       NETPULSE_RAG_EMBED_DIM: "1024"
-      NETPULSE_RAG_LLM_URL: http://172.25.0.1:8091/v1/chat/completions
+      NETPULSE_RAG_LLM_URL: http://host.docker.internal:8091/v1/chat/completions
       NETPULSE_RAG_LLM_MODEL: her-9b
       NETPULSE_RAG_LLM_DISABLE_THINKING: "true"
       NETPULSE_RAG_INCLUDE_PAYLOAD: "true"
@@ -29,7 +30,7 @@ services:
       NETPULSE_AI_MONITOR_COOLDOWN_MIN: "180"
       NETPULSE_AI_MONITOR_NOTIFY_MIN_SEVERITY: "medium"
     extra_hosts:
-      - "host.docker.internal:172.25.0.1"
+      - "host.docker.internal:host-gateway"
 
   ai-monitor:
     image: dystopia/local-control:lab
@@ -47,10 +48,10 @@ services:
       NETPULSE_DECEPTION_DATA_DIR: /srv/deception
       NETPULSE_RAG_ENABLED: "true"
       NETPULSE_RAG_DB: /srv/deception/rag.db
-      NETPULSE_RAG_EMBED_URL: http://172.25.0.1:8081/v1/embeddings
+      NETPULSE_RAG_EMBED_URL: http://127.0.0.1:8081/v1/embeddings
       NETPULSE_RAG_EMBED_MODEL: qwen3-embedding-0.6b
       NETPULSE_RAG_EMBED_DIM: "1024"
-      NETPULSE_RAG_LLM_URL: http://172.25.0.1:8091/v1/chat/completions
+      NETPULSE_RAG_LLM_URL: http://127.0.0.1:8091/v1/chat/completions
       NETPULSE_RAG_LLM_MODEL: her-9b
       NETPULSE_RAG_LLM_DISABLE_THINKING: "true"
       NETPULSE_RAG_INCLUDE_PAYLOAD: "true"

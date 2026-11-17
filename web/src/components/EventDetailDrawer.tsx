@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   ArrowUpRight,
   Ban,
+  BrainCircuit,
   Check,
   Clock3,
   Copy,
@@ -11,9 +12,12 @@ import {
   Network,
   ShieldAlert,
   ShieldCheck,
+  Terminal,
   X,
 } from "lucide-react";
 import { SeverityBadge } from "./SeverityBadge";
+import { AskAiPanel } from "./AskAiPanel";
+import { MovementCard, type Movement } from "./MovementCard";
 import { apiDelete, apiGet, apiPost, getToken } from "../lib/api";
 import {
   countryFlag,
@@ -98,6 +102,9 @@ export function EventDetailDrawer({ event, onClose, onOpenAttacker }: {
   const [blockBusy, setBlockBusy] = useState(false);
   const [blockNotice, setBlockNotice] = useState("");
   const [blockError, setBlockError] = useState("");
+  const [asking, setAsking] = useState(false);
+  const [sessionMovements, setSessionMovements] = useState<Movement[]>([]);
+  const [movementsLoading, setMovementsLoading] = useState(false);
   const detail = event.detail ?? {};
   const fingerprint = useMemo(
     () => typeof detail.fingerprint === "string" ? parseFingerprintValue(detail.fingerprint) : null,
@@ -172,7 +179,26 @@ export function EventDetailDrawer({ event, onClose, onOpenAttacker }: {
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  useEffect(() => setCopied(null), [event.id]);
+  useEffect(() => { setCopied(null); setAsking(false); }, [event.id]);
+
+  useEffect(() => {
+    setSessionMovements([]);
+    const data = event.detail ?? {};
+    const isLogin = event.kind === "login_success" || data.original_type === "login_success";
+    const session = typeof data.session === "string" ? data.session : "";
+    if (!isLogin || !event.source || !getToken()) return;
+    const controller = new AbortController();
+    setMovementsLoading(true);
+    apiGet<{ movements?: Movement[] }>(`/api/investigations/attackers/${encodeURIComponent(event.source)}?limit=1`, controller.signal)
+      .then((payload) => {
+        if (controller.signal.aborted) return;
+        const items = payload.movements ?? [];
+        setSessionMovements(session ? items.filter((item) => item.session === session) : items);
+      })
+      .catch(() => { if (!controller.signal.aborted) setSessionMovements([]); })
+      .finally(() => { if (!controller.signal.aborted) setMovementsLoading(false); });
+    return () => controller.abort();
+  }, [event.id, event.source, event.kind]);
 
   const location = locationFor(event);
   const destination = endpoint(event.dst_ip, event.dst_port);
@@ -183,6 +209,7 @@ export function EventDetailDrawer({ event, onClose, onOpenAttacker }: {
   const resultApplies = ["login_attempt", "login_success", "command", "file_download", "port_scan"].includes(event.kind);
   const resultLabel = resultApplies ? humanValue(detail.success) : "No aplica";
   const hasSensorMessage = Boolean(event.message && event.message !== event.action);
+  const isLoginEvent = event.kind === "login_success" || detail.original_type === "login_success";
   const entries = Object.entries(detail).filter(([key]) => key !== "fingerprint" && key !== "mitre" && key !== "message" && key !== "success");
 
   async function copyValue(key: string, value: string) {
@@ -254,6 +281,9 @@ export function EventDetailDrawer({ event, onClose, onOpenAttacker }: {
                   <ArrowUpRight size={12} /> Abrir ficha del atacante
                 </button>
               )}
+              <button className="link-button" onClick={() => setAsking((value) => !value)} aria-expanded={asking}>
+                <BrainCircuit size={12} /> {asking ? "Ocultar IA" : "Preguntar a la IA"}
+              </button>
               {event.source && (blockEntry ? (
                 <button className="link-button" onClick={() => void unblockSource()} disabled={!canAdmin || blockBusy}
                   title={canAdmin ? "Retirar de la blocklist" : "Requiere rol admin"}>
@@ -304,6 +334,31 @@ export function EventDetailDrawer({ event, onClose, onOpenAttacker }: {
             <Fact label="ID en el motor" value={typeof detail.eventid === "string" ? detail.eventid : "—"} mono />
           </div>
         </section>
+
+        {isLoginEvent && (
+          <section className="event-detail-section movement-section">
+            <h3><Terminal size={16} /> Movimientos de esta sesión</h3>
+            <p className="muted">Comandos capturados después de este acceso aceptado y la respuesta que devolvió la shell emulada del señuelo. La evidencia original no se modifica.</p>
+            {movementsLoading ? <p className="muted">Cargando movimientos de la sesión…</p> : sessionMovements.length ? (
+              sessionMovements.map((movement) => <MovementCard key={movement.session} movement={movement} />)
+            ) : <p className="muted">No se encontraron comandos posteriores para esta sesión en la ventana consultada.</p>}
+          </section>
+        )}
+
+        {asking && (
+          <section className="event-detail-section">
+            <h3><BrainCircuit size={16} /> Preguntar a la IA sobre este evento</h3>
+            <AskAiPanel
+              srcIp={event.source || undefined}
+              demo={!getToken()}
+              includeMovements={isLoginEvent}
+              context={`Evento ${event.id} · ${event.action} (${event.kind}) · ${event.source || "origen sin dato"} → ${destination || "señuelo"} · ${formatFullDateTime(event.timestamp)}`}
+              defaultQuestion={event.kind === "login_success"
+                ? `¿Qué hizo ${event.source} después de este acceso aceptado y qué comandos ejecutó?`
+                : `¿Qué significa este evento y qué se observó alrededor de ${event.source || "esta IP"}?`}
+            />
+          </section>
+        )}
 
         <section className="event-detail-section">
           <h3>Mensaje normalizado</h3>

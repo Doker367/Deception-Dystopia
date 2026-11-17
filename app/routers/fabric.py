@@ -37,6 +37,7 @@ mal autenticado) y el forwarder del host deja de enviar. Pasos:
    ``pending`` a 0 tras unos ciclos.
 """
 
+import asyncio
 import ipaddress
 import json
 import logging
@@ -45,13 +46,29 @@ import secrets
 from datetime import datetime
 from typing import Any, Optional
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
+from fastapi import (
+    APIRouter,
+    Body,
+    Depends,
+    HTTPException,
+    Query,
+    Request,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from app.core.security import verify_token
 from app.middleware.auth import JWTBearer
 from app.middleware.rbac import get_current_user, requires_role
 from app.models.deception import DeceptionEventType
 from app.services.deception import telemetry_svc
+from app.services.fabric import console_service
+from app.services.fabric.console_svc import (
+    ERROR_PREFIX,
+    console_enabled,
+    remote_console_target,
+)
 from app.services.fabric.controller import (
     FabricState,
     FabricStateError,
@@ -271,6 +288,136 @@ def get_health():
     return get_controller().get_health()
 
 
+# ── Configuración del manifiesto (editor YAML) ──────────────
+
+
+class ConfigPayload(BaseModel):
+    """Cuerpo de PUT /api/fabric/config."""
+
+    content: str = Field(..., min_length=1, max_length=512 * 1024)
+
+
+@router.get("/config", dependencies=ADMIN)
+def get_config() -> dict:
+    """YAML del bloque ``fabric:`` para el editor (solo admin).
+
+    Devuelve el bloque ``fabric:`` del manifiesto; las credenciales
+    señuelo se enmascaran como ``__REDACTED__`` para no exponerlas
+    (AC13). Al guardar, PUT restaura los valores enmascarados desde el
+    manifiesto vigente y hace *merge* del bloque en el documento
+    completo (preserva segments/devices).
+    """
+    import yaml
+
+    from app.core.settings import DECEPTION_NETWORK_FILE
+
+    try:
+        raw = yaml.safe_load(DECEPTION_NETWORK_FILE.read_text(encoding="utf-8")) or {}
+    except FileNotFoundError:
+        raw = {}
+    fabric_block = raw.get("fabric") or {}
+    for override in fabric_block.get("device_overrides") or []:
+        for credential in override.get("credentials") or []:
+            if isinstance(credential, dict) and credential.get("password"):
+                credential["password"] = "__REDACTED__"
+    return {
+        "path": str(DECEPTION_NETWORK_FILE),
+        "content": yaml.safe_dump(fabric_block, sort_keys=False, allow_unicode=True),
+    }
+
+
+@router.put("/config", dependencies=ADMIN)
+def put_config(payload: ConfigPayload, user: dict = Depends(get_current_user)) -> dict:
+    """Guarda el YAML editado (bloque ``fabric:``) y valida el resultado.
+
+    El editor recibe/devuelve **solo el bloque ``fabric:``**; aquí se hace
+    *merge* en el documento completo del manifiesto (preservando
+    ``segments``/``devices``/etc.), se valida el documento completo con el
+    parser del fabric y se escribe atómicamente con backup ``.bak``.
+
+    En ``ready``/``disabled`` el controlador adopta el manifiesto (los
+    cambios aparecen al momento); en ``deployed`` es un informe puro y la
+    respuesta incluye ``needs_rebuild: true``.
+    """
+    import yaml
+
+    from app.core.settings import DECEPTION_NETWORK_FILE as MANIFEST_PATH
+
+    try:
+        fabric_block = yaml.safe_load(payload.content)
+    except yaml.YAMLError as exc:
+        raise HTTPException(422, f"YAML inválido: {exc}") from exc
+    if not isinstance(fabric_block, dict):
+        raise HTTPException(422, "El YAML debe ser el bloque 'fabric:'")
+
+    # Documento vigente (puede no existir todavía).
+    try:
+        current = yaml.safe_load(MANIFEST_PATH.read_text(encoding="utf-8")) or {}
+    except (FileNotFoundError, yaml.YAMLError):
+        current = {}
+    if not isinstance(current, dict):
+        current = {}
+
+    # Restaura las contraseñas enmascaradas (AC13) desde el manifiesto
+    # vigente: un ``__REDACTED__`` significa "sin cambio".
+    current_passwords: dict[tuple, str] = {}
+    for override in (current.get("fabric") or {}).get("device_overrides") or []:
+        for credential in override.get("credentials") or []:
+            if isinstance(credential, dict):
+                key = (
+                    override.get("id"), credential.get("service"),
+                    credential.get("username"),
+                )
+                current_passwords[key] = credential.get("password", "")
+    for override in fabric_block.get("device_overrides") or []:
+        for credential in override.get("credentials") or []:
+            if (
+                isinstance(credential, dict)
+                and credential.get("password") == "__REDACTED__"
+            ):
+                key = (
+                    override.get("id"), credential.get("service"),
+                    credential.get("username"),
+                )
+                credential["password"] = current_passwords.get(key, "")
+
+    # Merge: reemplaza SOLO la clave fabric del documento completo.
+    full_doc = {**current, "fabric": fabric_block}
+
+    try:
+        report = get_controller().validate(full_doc)
+    except FabricStateError as exc:
+        raise HTTPException(409, "; ".join(exc.errors)) from exc
+    if not report.get("valid"):
+        raise HTTPException(422, detail={
+            "message": "El manifiesto propuesto no valida",
+            "errors": report.get("errors", []),
+            "warnings": report.get("warnings", []),
+        })
+
+    backup = MANIFEST_PATH.with_suffix(MANIFEST_PATH.suffix + ".bak")
+    try:
+        MANIFEST_PATH.parent.mkdir(parents=True, exist_ok=True)
+        if MANIFEST_PATH.exists():
+            backup.write_bytes(MANIFEST_PATH.read_bytes())
+        MANIFEST_PATH.write_text(
+            yaml.safe_dump(full_doc, sort_keys=False, allow_unicode=True),
+            encoding="utf-8",
+        )
+    except OSError as exc:
+        raise HTTPException(500, f"No se pudo escribir el manifiesto: {exc}") from exc
+
+    state = report.get("state")
+    return {
+        "saved": True,
+        "path": str(MANIFEST_PATH),
+        "state": state,
+        # En deployed el informe es puro: el manifiesto guardado se
+        # aplicará en el próximo rebuild (no se toca el despliegue vivo).
+        "needs_rebuild": state == FabricState.DEPLOYED.value,
+    }
+
+
 # ── Ingesta de eventos del fabric (control ← host service) ──
 
 
@@ -474,7 +621,6 @@ async def receive_events(request: Request) -> dict:
                 FabricValidationError,
                 load_topology,
             )
-
             try:
                 topology = load_topology()
             except FabricValidationError:
@@ -484,3 +630,150 @@ async def receive_events(request: Request) -> dict:
             logger.exception("[fabric] evaluación de alertas del fabric falló")
 
     return {"accepted": accepted, "rejected": rejected, "errors": errors}
+
+
+# ── Consola interactiva (WebSocket↔PTY, Fase 11) ────────────
+
+
+@router.post("/devices/{device_id}/console", dependencies=ADMIN)
+async def open_device_console(device_id: str, user: dict = Depends(get_current_user)) -> dict:
+    """Preflight de la consola interactiva (no abre sesión).
+
+    Valida los mismos gates que el WebSocket —fabric ``deployed``, device en
+    el manifiesto y ``DYSTOPIA_FABRIC_CONSOLE_ENABLED=true``— para que la UI
+    pueda avisar antes de conectar. La sesión real la abre el WS.
+    """
+    del user  # autenticado vía dependencies=ADMIN
+    if not console_enabled():
+        raise HTTPException(
+            503,
+            "Consola deshabilitada: exporta DYSTOPIA_FABRIC_CONSOLE_ENABLED=true "
+            "(fail-closed)",
+        )
+    controller = get_controller()
+    topology = controller.get_topology()
+    known = {
+        device.get("id") for device in (topology.get("devices") or [])
+        if isinstance(device, dict) and device.get("id")
+    }
+    if device_id not in known:
+        raise HTTPException(404, "Dispositivo de fabric no encontrado")
+    status = controller.get_status()
+    if status.get("state") != FabricState.DEPLOYED.value:
+        raise HTTPException(409, "El fabric no está desplegado; no hay consola disponible")
+    container_name = next(
+        (
+            spec.get("container_name", "")
+            for spec in controller.get_devices()
+            if spec.get("device_id") == device_id
+        ),
+        "",
+    )
+    if not container_name:
+        raise HTTPException(502, "El dispositivo no tiene contenedor asociado")
+    return {
+        "available": True,
+        "device_id": device_id,
+        "transport": "remote" if remote_console_target() else "docker",
+    }
+
+
+@router.websocket("/devices/{device_id}/console/ws")
+async def device_console_ws(
+    websocket: WebSocket,
+    device_id: str,
+    token: str = Query(default=""),
+    cols: int = Query(default=80),
+    rows: int = Query(default=24),
+):
+    """Puente WebSocket↔PTY de una sesión de consola del fabric.
+
+    Autenticación por JWT en el query ``token`` (los navegadores no pueden
+    fijar headers en el handshake WS). Solo con el fabric ``deployed`` y
+    el device en el manifiesto; cierra con códigos WS dedicados (4401 no
+    autenticado, 4404 device desconocido, 1011 estado no disponible).
+
+    El transporte real lo elige ``console_service``: ``docker exec`` local o
+    WS contra el servicio del host cuando el motor es ``remote``.
+    """
+    payload = verify_token(token)
+    if payload is None or payload.get("role") != "admin":
+        await websocket.close(code=4401)
+        return
+
+    async def fail(message: str, code: int = 1011) -> None:
+        await websocket.accept()
+        await websocket.send_text(ERROR_PREFIX + message)
+        await websocket.close(code=code)
+
+    if not console_enabled():
+        await fail(
+            "Consola deshabilitada: exporta DYSTOPIA_FABRIC_CONSOLE_ENABLED=true "
+            "(fail-closed)"
+        )
+        return
+    controller = get_controller()
+    try:
+        status = controller.get_status()
+    except Exception:
+        status = {}
+    if not isinstance(status, dict) or status.get("state") != FabricState.DEPLOYED.value:
+        await fail("El fabric no está desplegado; no hay consola disponible")
+        return
+    topology = controller.get_topology()
+    known = {
+        device.get("id") for device in (topology.get("devices") or [])
+        if isinstance(device, dict) and device.get("id")
+    }
+    if device_id not in known:
+        await fail("Dispositivo desconocido", code=4404)
+        return
+    container_name = next(
+        (
+            spec.get("container_name", "")
+            for spec in controller.get_devices()
+            if spec.get("device_id") == device_id
+        ),
+        "",
+    )
+    if not container_name:
+        await fail("El dispositivo no tiene contenedor asociado")
+        return
+
+    try:
+        session = await console_service.open_session(
+            device_id=device_id,
+            container_name=container_name,
+            username=payload.get("sub", "admin"),
+            cols=cols,
+            rows=rows,
+        )
+    except RuntimeError as exc:
+        await fail(str(exc))
+        return
+
+    await websocket.accept()
+
+    async def pump_output() -> None:
+        """Reenvía la salida del PTY al cliente mientras haya datos."""
+        while True:
+            chunk = await console_service.read_chunk(session.session_id)
+            if chunk is None:  # EOF del proceso
+                await websocket.close(code=1000)
+                return
+            if chunk:
+                await websocket.send_text(chunk.decode("utf-8", errors="replace"))
+
+    pump_task = asyncio.create_task(pump_output())
+    try:
+        while True:
+            message = await websocket.receive_text()
+            # Mensajes de control del cliente (resize): no van al shell.
+            if message.startswith('{"type":"resize"'):
+                continue
+            await console_service.write_session(session.session_id, message.encode("utf-8"))
+    except WebSocketDisconnect:
+        pass
+    finally:
+        pump_task.cancel()
+        await console_service.close_session(session.session_id)

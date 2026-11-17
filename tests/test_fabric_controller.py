@@ -1283,6 +1283,121 @@ def test_status_forwarder_null_si_host_no_responde(tmp_path):
     assert controller.get_status()["forwarder"] is None
 
 
+class _FakeRemoteDeployEngine:
+    """Engine remote que devuelve un DeployResult con dispositivos."""
+
+    kind = "remote"
+
+    def __init__(self):
+        self.last_result = None
+
+    def deploy(self, plan, topology) -> None:
+        from app.services.fabric.deploy import DeployResult
+
+        self.last_result = DeployResult(
+            containers_created=[device.device_id for device in plan.devices],
+            devices=[
+                {
+                    "device_id": device.device_id,
+                    "container_id": f"cid-{device.device_id}",
+                    "pid": 1234,
+                    "success": True,
+                    "step": "",
+                    "error": "",
+                }
+                for device in plan.devices
+            ],
+        )
+
+    def destroy(self, topology) -> None:  # pragma: no cover - no usado
+        return None
+
+
+class _FakeRemoteHealthEngine:
+    """Engine remote que reporta el estado del contenedor por /health."""
+
+    kind = "remote"
+
+    def __init__(self, state: str = "running"):
+        self.state = state
+
+    def health(self) -> dict:
+        return {
+            "healthy": self.state == "running",
+            "runtime_available": True,
+            "checks": [],
+            "devices_health": [
+                {
+                    "device_id": "pc-01",
+                    "healthy": self.state == "running",
+                    "container": {"state": self.state, "pid": 4321},
+                    "interfaces": [],
+                    "neighbors": [],
+                    "checks": [],
+                },
+            ],
+        }
+
+    def deploy(self, plan, topology) -> None:  # pragma: no cover - no usado
+        return None
+
+    def destroy(self, topology) -> None:  # pragma: no cover - no usado
+        return None
+
+
+def test_get_device_sincroniza_runtime_con_contenedor(tmp_path):
+    """El detalle refleja el contenedor real aunque la BD diga 'pending'."""
+    controller = controller_mod.reset_controller(
+        engine=_FakeRemoteHealthEngine("running"),
+        db_path=tmp_path / "remote-health.db",
+        manifest_loader=lambda: _manifest(),
+    )
+    controller.validate()
+    device = controller.get_device("pc-01")
+    assert device is not None
+    assert device["runtime"]["state"] == "running"
+    assert device["runtime"]["container_state"] == "running"
+    # Y queda persistido para la lista.
+    listed = next(
+        item for item in controller.get_devices() if item["device_id"] == "pc-01"
+    )
+    assert listed["runtime"]["state"] == "running"
+
+
+def test_get_device_marca_stopped_si_contenedor_parado(tmp_path):
+    """Un contenedor parado no debe reportarse como running."""
+    controller = controller_mod.reset_controller(
+        engine=_FakeRemoteHealthEngine("exited"),
+        db_path=tmp_path / "remote-health-stopped.db",
+        manifest_loader=lambda: _manifest(),
+    )
+    controller.validate()
+    device = controller.get_device("pc-01")
+    assert device is not None
+    assert device["runtime"]["state"] == "stopped"
+
+
+def test_deploy_remote_persiste_estado_running(tmp_path):
+    """Con engine remote el runtime de los dispositivos debe ser 'running'.
+
+    Sin esto el botón Terminal (que exige ``runtime.state == 'running'``)
+    queda deshabilitado para siempre en el despliegue con engine remoto.
+    """
+    controller = controller_mod.reset_controller(
+        engine=_FakeRemoteDeployEngine(),
+        db_path=tmp_path / "remote-deploy.db",
+        manifest_loader=lambda: _manifest(),
+    )
+    controller.validate()
+    result = controller.deploy()
+    assert result["success"] is True
+    devices = controller.get_devices()
+    assert devices, "el manifiesto de prueba debe tener dispositivos"
+    for device in devices:
+        assert device["runtime"]["state"] == "running", device["device_id"]
+        assert device["runtime"]["container_id"].startswith("cid-")
+
+
 # ── Fase 8: auditoría de operaciones ───────────────────────
 
 

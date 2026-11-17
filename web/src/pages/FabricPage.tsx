@@ -6,12 +6,17 @@ import {
   Power,
   RefreshCw,
   Rocket,
+  Settings,
   ShieldCheck,
+  TerminalSquare,
   Trash2,
   X,
 } from "lucide-react";
 import type { ECElementEvent, EChartsOption } from "echarts";
 import { PageHeader } from "../components/PageHeader";
+import { FabricConsole } from "../components/FabricConsole";
+import { FabricConfigEditor } from "../components/FabricConfigEditor";
+import { Portal } from "../components/Portal";
 import { Panel } from "../components/Panel";
 import { EChart } from "../components/EChart";
 import { ActionDialog } from "../components/ActionDialog";
@@ -127,6 +132,13 @@ interface GraphEdge {
   bandwidth?: number | null;
   vlan_tag?: number | null;
   port?: string;
+  /** Parámetros WAN declarados para el enlace (emulación tc netem). */
+  wan?: {
+    latency_ms?: number | null;
+    jitter_ms?: number | null;
+    loss_pct?: number | null;
+    bandwidth_mbps?: number | null;
+  } | null;
 }
 
 interface GraphGroup {
@@ -336,10 +348,13 @@ function StatePill({ state }: { state: FabricState }) {
   );
 }
 
+type GraphLayout = "force" | "hierarchical";
+
 function buildGraphOption(
   graph: FabricGraph,
   runtimeByDevice: Map<string, string>,
   deployed: boolean,
+  layout: GraphLayout = "force",
 ): EChartsOption {
   const groupIndex = new Map(graph.groups.map((group, index) => [group.id, index + 1]));
   const categories = [
@@ -350,6 +365,48 @@ function buildGraphOption(
     })),
   ];
   const ink = isLight() ? "#3d4f60" : "#c9d6e4";
+
+  // Layout jerárquico: switches en la fila superior, dispositivos colgando
+  // de su switch. ECharts encaja el bounding box de coordenadas en el panel
+  // escalando X e Y por separado, así que el espacio de coordenadas es fijo
+  // (no depende del nº de dispositivos) y mantiene el aspecto del panel
+  // (~1.9) para que los símbolos no salgan deformados.
+  const positions = new Map<string, { x: number; y: number }>();
+  if (layout === "hierarchical") {
+    const switches = graph.nodes.filter((node) => node.kind === "switch");
+    const devices = graph.nodes.filter((node) => node.kind === "device");
+    const bySwitch = new Map<string, string[]>();
+    devices.forEach((device) => {
+      const swKey = `switch:${device.switch ?? "—"}`;
+      const list = bySwitch.get(swKey) ?? [];
+      list.push(device.id);
+      bySwitch.set(swKey, list);
+    });
+    const maxDevices = Math.max(1, ...[...bySwitch.values()].map((ids) => ids.length));
+    const xSpan = 1420; // ~2.03 * 700, el aspecto del área de dibujo
+    const yBase = 100;
+    const ySpan = 700;
+    const stepX = switches.length > 1 ? xSpan / (switches.length - 1) : 0;
+    const switchX = new Map<string, number>();
+    switches.forEach((node, index) => {
+      const x = index * stepX;
+      switchX.set(node.id, x);
+      positions.set(node.id, { x, y: yBase });
+    });
+    bySwitch.forEach((ids, swKey) => {
+      const anchorX = switchX.get(swKey);
+      ids.forEach((id, index) => {
+        positions.set(id, {
+          x: anchorX ?? index * stepX,
+          // Reparte los dispositivos entre yBase+ySpan/maxDevices y yBase+ySpan
+          // (con 1 dispositivo queda al fondo, manteniendo el aspecto).
+          y: yBase + ((index + 1) * ySpan) / maxDevices,
+        });
+      });
+    });
+  }
+
+  const spanX = Math.max(...[...positions.values()].map((pos) => pos.x), 1);
 
   return {
     animationDuration: 450,
@@ -387,23 +444,26 @@ function buildGraphOption(
     }],
     series: [{
       type: "graph",
-      layout: "force",
+      layout: layout === "hierarchical" ? "none" : "force",
       roam: true,
-      draggable: true,
-      top: 20,
-      bottom: 46,
-      left: 18,
-      right: 18,
-      force: { repulsion: 280, edgeLength: [85, 160], gravity: 0.08 },
+      draggable: layout === "force",
+      ...(layout === "force"
+        ? { force: { repulsion: 280, edgeLength: [85, 160], gravity: 0.08 } }
+        : { left: 34, right: 34, top: 46, bottom: 48 }),
       categories,
       data: graph.nodes.map((node) => {
         const runtime = node.device_id ? runtimeByDevice.get(node.device_id) : undefined;
         const running = deployed && runtime === "running";
+        const pos = positions.get(node.id);
+        // Los nodos del borde derecho llevan la etiqueta a la izquierda para
+        // que no se corte contra el borde del panel.
+        const nearRight = (pos?.x ?? 0) > spanX * 0.72;
         return {
           id: node.id,
           name: node.label,
           value: node.kind === "device" ? node.ip ?? "" : node.switch_id ?? "",
           category: node.kind === "switch" ? 0 : groupIndex.get(node.group) ?? 1,
+          ...(pos ? { x: pos.x, y: pos.y, fixed: true } : {}),
           symbol: node.kind === "switch" ? "roundRect" : "circle",
           symbolSize: node.kind === "switch" ? 46 : 32,
           itemStyle: node.kind === "switch"
@@ -416,25 +476,37 @@ function buildGraphOption(
               },
           label: {
             show: true,
-            position: node.kind === "switch" ? "inside" : "right",
-            color: node.kind === "switch" ? "#f2f0ec" : ink,
+            position: node.kind === "switch" ? "top" : nearRight ? "left" : "right",
+            color: ink,
             fontSize: 10.5,
-            overflow: "truncate",
-            width: 110,
+            backgroundColor: isLight() ? "rgba(247, 245, 240, 0.88)" : "rgba(30, 30, 29, 0.88)",
+            borderRadius: 3,
+            padding: [1, 3],
           },
         };
       }),
-      links: graph.edges.map((edge) => ({
-        source: edge.source,
-        target: edge.target,
-        lineStyle: {
-          color: edge.state === "up" ? ACCENTS.green : ACCENTS.slate,
-          width: edge.kind === "trunk" ? 2.2 : 1.2,
-          type: edge.state === "up" ? "solid" : "dashed",
-          opacity: 0.85,
-          curveness: 0.08,
-        },
-      })),
+      links: graph.edges.map((edge) => {
+        const wanParts: string[] = [];
+        if (edge.wan) {
+          if (edge.wan.latency_ms) wanParts.push(`${edge.wan.latency_ms}ms`);
+          if (edge.wan.loss_pct) wanParts.push(`${edge.wan.loss_pct}% loss`);
+          if (edge.wan.bandwidth_mbps) wanParts.push(`${edge.wan.bandwidth_mbps}Mbps`);
+        }
+        return {
+          ...edge,
+          label: {
+            show: wanParts.length > 0,
+            formatter: wanParts.join(" · "),
+            fontSize: 10,
+            color: ink,
+          },
+        };
+      }),
+      edgeLabel: {
+        show: true,
+        fontSize: 10,
+        color: ink,
+      },
       edgeSymbol: ["none", "none"],
       emphasis: { focus: "adjacency", lineStyle: { width: 3 } },
       lineStyle: { opacity: 0.85 },
@@ -444,7 +516,16 @@ function buildGraphOption(
 
 // ── Drawer de dispositivo ───────────────────────────────────
 
-function FabricDeviceDrawer({ row, onClose }: { row: DeviceRow; onClose: () => void }) {
+function FabricDeviceDrawer({
+  row,
+  onClose,
+  onOpenConsole,
+}: {
+  row: DeviceRow;
+  onClose: () => void;
+  onOpenConsole: (deviceId: string) => void;
+}) {
+  const canAdmin = getRole() === "admin";
   const { spec, manifest, iface, segmentId } = row;
   const [detail, setDetail] = useState<FabricDeviceDetail | null>(null);
   const [events, setEvents] = useState<FabricEvent[]>([]);
@@ -484,171 +565,191 @@ function FabricDeviceDrawer({ row, onClose }: { row: DeviceRow; onClose: () => v
   const runtimeMeta = RUNTIME_META[runtime?.state ?? "pending"] ?? RUNTIME_META.pending;
 
   return (
-    <div className="drawer-backdrop" onClick={onClose}>
-      <aside className="event-drawer config-drawer" onClick={(event) => event.stopPropagation()}>
-        <div className="drawer-head">
-          <div>
-            <span className="eyebrow">Fabric / device</span>
-            <h2>{spec.device_id}</h2>
-            <span className="mono muted">{iface?.ip ?? "sin IP"}</span>
-          </div>
-          <button className="icon-button" onClick={onClose} aria-label="Cerrar dispositivo"><X size={18} /></button>
-        </div>
-
-        <div className="drawer-badges">
-          <span className="proto-chip">{detail?.role ?? manifest?.role ?? "device"}</span>
-          <span className="sensor-chip">{segmentId || "sin segmento"}</span>
-          <span className="health-pill"><i />{vlan === null || vlan === undefined ? "sin etiqueta" : `VLAN ${vlan}`}</span>
-          <span className="health-pill" style={{ color: runtimeMeta.color, background: withAlpha(runtimeMeta.color, 0.12) }}>
-            <i />{runtimeMeta.label}
-          </span>
-        </div>
-
-        {loading && (
-          <div className="empty-state small">
-            <RefreshCw size={18} />
-            <strong>Cargando dispositivo</strong>
-            <span>Leyendo runtime y últimos eventos.</span>
-          </div>
-        )}
-        {error && (
-          <div className="segment-note">
-            <AlertTriangle size={15} />
-            <p>{error}</p>
-          </div>
-        )}
-
-        <div className="honeypot-config-grid">
-          <div><span>IP</span><strong className="mono">{iface?.ip ?? "—"}</strong></div>
-          <div><span>MAC</span><strong className="mono">{iface?.mac ?? "—"}</strong></div>
-          <div><span>Switch</span><strong className="mono">{iface?.switch ?? "—"}</strong></div>
-          <div><span>VLAN</span><strong className="mono">{vlan ?? "sin etiqueta"}</strong></div>
-          <div><span>Segmento</span><strong>{segmentId || "—"}</strong></div>
-          <div><span>Gateway</span><strong className="mono">{iface?.gateway ?? "—"}</strong></div>
-          <div><span>Contenedor</span><strong className="mono">{spec.container_name}</strong></div>
-          <div><span>Recursos</span><strong>{spec.cpus} CPU · {spec.mem_limit}</strong></div>
-          <div><span>Estado runtime</span><strong>{runtimeMeta.label}</strong></div>
-          <div><span>PID</span><strong className="mono">{runtime?.pid ?? "—"}</strong></div>
-          <div><span>Estado contenedor</span><strong>{runtime?.container_state ?? "—"}</strong></div>
-          <div><span>Salud</span><strong>{runtime?.healthy === undefined ? "—" : runtime.healthy ? "sano" : "con errores"}</strong></div>
-        </div>
-
-        {runtime?.error && (
-          <div className="segment-note">
-            <AlertTriangle size={15} />
-            <p>{runtime.error}</p>
-          </div>
-        )}
-
-        <section className="config-block">
-          <span className="eyebrow">Servicios declarados</span>
-          <div className="service-chip-list">
-            {services.length === 0 && <span className="muted">Sin servicios declarados.</span>}
-            {services.map((service) => (
-              <span className="proto-chip" key={`${service.proto}-${service.port}`}>
-                {service.proto}/{service.port}{service.engine ? ` · ${service.engine}` : ""}
-              </span>
-            ))}
-          </div>
-        </section>
-
-        {runtime?.interfaces && runtime.interfaces.length > 0 && (
-          <section className="config-block">
-            <span className="eyebrow">Interfaces (runtime)</span>
-            <div className="service-chip-list">
-              {runtime.interfaces.map((item) => (
-                <span
-                  className="proto-chip"
-                  key={item.name}
-                  style={{
-                    color: item.port_present ? ACCENTS.green : ACCENTS.red,
-                    borderColor: withAlpha(item.port_present ? ACCENTS.green : ACCENTS.red, 0.45),
-                  }}
-                >
-                  {item.name} · {item.switch} · VLAN {item.vlan_tag ?? "—"} · {item.port_present ? "puerto OK" : "puerto ausente"}
-                </span>
-              ))}
+    <Portal>
+      <div className="drawer-backdrop" onClick={onClose}>
+        <aside className="event-drawer config-drawer" onClick={(event) => event.stopPropagation()}>
+          <div className="drawer-head">
+            <div>
+              <span className="eyebrow">Fabric / device</span>
+              <h2>{spec.device_id}</h2>
+              <span className="mono muted">{iface?.ip ?? "sin IP"}</span>
             </div>
-          </section>
-        )}
-
-        {runtime?.neighbors && runtime.neighbors.length > 0 && (
-          <section className="config-block">
-            <span className="eyebrow">Conectividad (ping)</span>
-            <div className="service-chip-list">
-              {runtime.neighbors.map((neighbor) => (
-                <span
-                  className="proto-chip"
-                  key={neighbor.ip}
-                  style={{
-                    color: neighbor.reachable ? ACCENTS.green : ACCENTS.red,
-                    borderColor: withAlpha(neighbor.reachable ? ACCENTS.green : ACCENTS.red, 0.45),
-                  }}
+            <div style={{ display: "flex", gap: 8 }}>
+              {canAdmin && (
+                <button
+                  className="button ghost"
+                  onClick={() => onOpenConsole(spec.device_id)}
+                  disabled={runtime?.state !== "running"}
+                  title={
+                    runtime?.state === "running"
+                      ? "Abrir terminal interactivo hacia el contenedor"
+                      : "La consola requiere el dispositivo desplegado y en ejecución"
+                  }
                 >
-                  {neighbor.ip} · {neighbor.reachable ? "reachable" : "sin respuesta"}
-                </span>
-              ))}
+                  <TerminalSquare size={15} /> Terminal
+                </button>
+              )}
+              <button className="icon-button" onClick={onClose} aria-label="Cerrar dispositivo">
+                <X size={18} />
+              </button>
             </div>
-          </section>
-        )}
+          </div>
 
-        <section className="config-block">
-          <span className="eyebrow">Últimos eventos</span>
-          {events.length === 0 ? (
+          <div className="drawer-badges">
+            <span className="proto-chip">{detail?.role ?? manifest?.role ?? "device"}</span>
+            <span className="sensor-chip">{segmentId || "sin segmento"}</span>
+            <span className="health-pill"><i />{vlan === null || vlan === undefined ? "sin etiqueta" : `VLAN ${vlan}`}</span>
+            <span className="health-pill" style={{ color: runtimeMeta.color, background: withAlpha(runtimeMeta.color, 0.12) }}>
+              <i />{runtimeMeta.label}
+            </span>
+          </div>
+
+          {loading && (
             <div className="empty-state small">
-              <AlertTriangle size={18} />
-              <strong>Sin eventos</strong>
-              <span>El agente aún no ha registrado interacciones.</span>
-            </div>
-          ) : (
-            <div className="service-chip-list" style={{ flexDirection: "column", alignItems: "stretch" }}>
-              {events.map((event) => (
-                <div
-                  key={event.id}
-                  style={{
-                    display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center",
-                    justifyContent: "space-between", padding: "6px 8px",
-                    border: "1px solid var(--line)", borderRadius: 3,
-                  }}
-                >
-                  <span className="mono" style={{ fontSize: 11 }}>{formatDateTime(event.timestamp)}</span>
-                  <span className="proto-chip">{event.type}</span>
-                  <span className="mono" style={{ fontSize: 11 }}>
-                    {event.src_ip}{event.src_port ? `:${event.src_port}` : ""}
-                  </span>
-                  <span className="muted" style={{ fontSize: 11 }}>
-                    {event.proto}{event.username ? ` · ${event.username}` : ""}
-                  </span>
-                </div>
-              ))}
+              <RefreshCw size={18} />
+              <strong>Cargando dispositivo</strong>
+              <span>Leyendo runtime y últimos eventos.</span>
             </div>
           )}
-        </section>
+          {error && (
+            <div className="segment-note">
+              <AlertTriangle size={15} />
+              <p>{error}</p>
+            </div>
+          )}
 
-        {spec.routes.length > 0 && (
+          <div className="honeypot-config-grid">
+            <div><span>IP</span><strong className="mono">{iface?.ip ?? "—"}</strong></div>
+            <div><span>MAC</span><strong className="mono">{iface?.mac ?? "—"}</strong></div>
+            <div><span>Switch</span><strong className="mono">{iface?.switch ?? "—"}</strong></div>
+            <div><span>VLAN</span><strong className="mono">{vlan ?? "sin etiqueta"}</strong></div>
+            <div><span>Segmento</span><strong>{segmentId || "—"}</strong></div>
+            <div><span>Gateway</span><strong className="mono">{iface?.gateway ?? "—"}</strong></div>
+            <div><span>Contenedor</span><strong className="mono">{spec.container_name}</strong></div>
+            <div><span>Recursos</span><strong>{spec.cpus} CPU · {spec.mem_limit}</strong></div>
+            <div><span>Estado runtime</span><strong>{runtimeMeta.label}</strong></div>
+            <div><span>PID</span><strong className="mono">{runtime?.pid ?? "—"}</strong></div>
+            <div><span>Estado contenedor</span><strong>{runtime?.container_state ?? "—"}</strong></div>
+            <div><span>Salud</span><strong>{runtime?.healthy === undefined ? "—" : runtime.healthy ? "sano" : "con errores"}</strong></div>
+          </div>
+
+          {runtime?.error && (
+            <div className="segment-note">
+              <AlertTriangle size={15} />
+              <p>{runtime.error}</p>
+            </div>
+          )}
+
           <section className="config-block">
-            <span className="eyebrow">Rutas estáticas</span>
-            <pre className="device-yaml">
-              {spec.routes.map((route) => `${route.destination} via ${route.gateway}`).join("\n")}
-            </pre>
+            <span className="eyebrow">Servicios declarados</span>
+            <div className="service-chip-list">
+              {services.length === 0 && <span className="muted">Sin servicios declarados.</span>}
+              {services.map((service) => (
+                <span className="proto-chip" key={`${service.proto}-${service.port}`}>
+                  {service.proto}/{service.port}{service.engine ? ` · ${service.engine}` : ""}
+                </span>
+              ))}
+            </div>
           </section>
-        )}
 
-        {spec.neighbors.length > 0 && (
+          {runtime?.interfaces && runtime.interfaces.length > 0 && (
+            <section className="config-block">
+              <span className="eyebrow">Interfaces (runtime)</span>
+              <div className="service-chip-list">
+                {runtime.interfaces.map((item) => (
+                  <span
+                    className="proto-chip"
+                    key={item.name}
+                    style={{
+                      color: item.port_present ? ACCENTS.green : ACCENTS.red,
+                      borderColor: withAlpha(item.port_present ? ACCENTS.green : ACCENTS.red, 0.45),
+                    }}
+                  >
+                    {item.name} · {item.switch} · VLAN {item.vlan_tag ?? "—"} · {item.port_present ? "puerto OK" : "puerto ausente"}
+                  </span>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {runtime?.neighbors && runtime.neighbors.length > 0 && (
+            <section className="config-block">
+              <span className="eyebrow">Conectividad (ping)</span>
+              <div className="service-chip-list">
+                {runtime.neighbors.map((neighbor) => (
+                  <span
+                    className="proto-chip"
+                    key={neighbor.ip}
+                    style={{
+                      color: neighbor.reachable ? ACCENTS.green : ACCENTS.red,
+                      borderColor: withAlpha(neighbor.reachable ? ACCENTS.green : ACCENTS.red, 0.45),
+                    }}
+                  >
+                    {neighbor.ip} · {neighbor.reachable ? "reachable" : "sin respuesta"}
+                  </span>
+                ))}
+              </div>
+            </section>
+          )}
+
           <section className="config-block">
-            <span className="eyebrow">Vecinos / ARP estático</span>
-            <pre className="device-yaml">
-              {spec.neighbors.map((neighbor) => `${neighbor.ip} → ${neighbor.mac}${neighbor.hostname ? ` (${neighbor.hostname})` : ""}`).join("\n")}
-            </pre>
+            <span className="eyebrow">Últimos eventos</span>
+            {events.length === 0 ? (
+              <div className="empty-state small">
+                <AlertTriangle size={18} />
+                <strong>Sin eventos</strong>
+                <span>El agente aún no ha registrado interacciones.</span>
+              </div>
+            ) : (
+              <div className="service-chip-list" style={{ flexDirection: "column", alignItems: "stretch" }}>
+                {events.map((event) => (
+                  <div
+                    key={event.id}
+                    style={{
+                      display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center",
+                      justifyContent: "space-between", padding: "6px 8px",
+                      border: "1px solid var(--line)", borderRadius: 3,
+                    }}
+                  >
+                    <span className="mono" style={{ fontSize: 11 }}>{formatDateTime(event.timestamp)}</span>
+                    <span className="proto-chip">{event.type}</span>
+                    <span className="mono" style={{ fontSize: 11 }}>
+                      {event.src_ip}{event.src_port ? `:${event.src_port}` : ""}
+                    </span>
+                    <span className="muted" style={{ fontSize: 11 }}>
+                      {event.proto}{event.username ? ` · ${event.username}` : ""}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
           </section>
-        )}
 
-        <div className="config-footnote">
-          <ShieldCheck size={13} /> Las credenciales del manifiesto nunca llegan al dashboard.
-          {" "}Imagen <code>{spec.image}</code>.
-        </div>
-      </aside>
-    </div>
+          {spec.routes.length > 0 && (
+            <section className="config-block">
+              <span className="eyebrow">Rutas estáticas</span>
+              <pre className="device-yaml">
+                {spec.routes.map((route) => `${route.destination} via ${route.gateway}`).join("\n")}
+              </pre>
+            </section>
+          )}
+
+          {spec.neighbors.length > 0 && (
+            <section className="config-block">
+              <span className="eyebrow">Vecinos / ARP estático</span>
+              <pre className="device-yaml">
+                {spec.neighbors.map((neighbor) => `${neighbor.ip} → ${neighbor.mac}${neighbor.hostname ? ` (${neighbor.hostname})` : ""}`).join("\n")}
+              </pre>
+            </section>
+          )}
+
+          <div className="config-footnote">
+            <ShieldCheck size={13} /> Las credenciales del manifiesto nunca llegan al dashboard.
+            {" "}Imagen <code>{spec.image}</code>.
+          </div>
+        </aside>
+      </div>
+    </Portal>
   );
 }
 
@@ -657,6 +758,9 @@ function FabricDeviceDrawer({ row, onClose }: { row: DeviceRow; onClose: () => v
 export function FabricPage() {
   const { notify } = useToast();
   const canAdmin = getRole() === "admin";
+  const [layout, setLayout] = useState<GraphLayout>("force");
+  const [consoleDevice, setConsoleDevice] = useState<string | null>(null);
+  const [configOpen, setConfigOpen] = useState(false);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -726,7 +830,7 @@ export function FabricPage() {
     () => new Map(specs.map((spec) => [spec.device_id, spec.runtime?.state ?? "pending"])),
     [specs],
   );
-  const graphOption = buildGraphOption(graph, runtimeByDevice, state === "deployed");
+  const graphOption = buildGraphOption(graph, runtimeByDevice, state === "deployed", layout);
 
   function handleGraphClick(params: ECElementEvent) {
     if (params.dataType !== "node") return;
@@ -786,7 +890,9 @@ export function FabricPage() {
                 <button className="button ghost" onClick={() => void runValidate()} disabled={actionsDisabled}>
                   <ShieldCheck size={15} /> {validating ? "Validando…" : "Validate"}
                 </button>
-                <button
+                <button className="button ghost" onClick={() => setConfigOpen(true)}>
+                  <Settings size={15} /> Editar manifiesto
+                </button>                <button
                   className={`button primary ${busy === "deploy" ? "spinning" : ""}`}
                   onClick={() => setPending("deploy")}
                   disabled={actionsDisabled || state !== "ready" || !status?.gate_open}
@@ -861,7 +967,25 @@ export function FabricPage() {
               eyebrow="Topología"
               title="Red virtual"
               description="Troncales entre switches y accesos por VLAN. Haz clic en un dispositivo para ver su detalle."
-              actions={<span className="mono muted">{meta.hint}</span>}
+              actions={
+                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                  <span className="mono muted">{meta.hint}</span>
+                  <button
+                    className={`button ghost ${layout === "force" ? "active" : ""}`}
+                    onClick={() => setLayout("force")}
+                    title="Layout de fuerza (grafo libre)"
+                  >
+                    Fuerza
+                  </button>
+                  <button
+                    className={`button ghost ${layout === "hierarchical" ? "active" : ""}`}
+                    onClick={() => setLayout("hierarchical")}
+                    title="Layout jerárquico: switches arriba, dispositivos debajo"
+                  >
+                    Jerárquico
+                  </button>
+                </div>
+              }
               flush
             >
               {state === "disabled" || graph.nodes.length === 0 ? (
@@ -1143,7 +1267,24 @@ export function FabricPage() {
         </div>
       </ActionDialog>
 
-      {selectedRow && <FabricDeviceDrawer row={selectedRow} onClose={() => setSelectedDevice(null)} />}
+      {consoleDevice && <FabricConsole deviceId={consoleDevice} onClose={() => setConsoleDevice(null)} />}
+      {configOpen && (
+        <FabricConfigEditor
+          onClose={() => setConfigOpen(false)}
+          onSaved={() => void load()}
+        />
+      )}
+
+      {selectedRow && !consoleDevice && !configOpen && (
+        <FabricDeviceDrawer
+          row={selectedRow}
+          onClose={() => setSelectedDevice(null)}
+          onOpenConsole={(deviceId) => {
+            setSelectedDevice(null);
+            setConsoleDevice(deviceId);
+          }}
+        />
+      )}
     </div>
   );
 }

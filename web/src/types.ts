@@ -19,6 +19,8 @@ export interface AttackOrigin {
   region?: string;
   /** Código ISO 3166-2 sin prefijo de país (p. ej. CA). */
   regionCode?: string;
+  /** Posición estimada porque ninguna base GeoIP trajo datos. */
+  approximate?: boolean;
   city: string;
   ip: string;
   lat: number;
@@ -44,6 +46,7 @@ export interface EventRow {
   city?: string;
   /** public | private | loopback | documentation | multicast | … */
   scope?: string;
+  approximate?: boolean;
   kind: string;
   proto: string;
   port: number;

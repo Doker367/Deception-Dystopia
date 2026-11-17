@@ -414,6 +414,29 @@ def get_events(
     return [_row_to_event(r) for r in rows]
 
 
+def get_canary_hits(limit: int = 100) -> list[dict]:
+    """Eventos que tocaron un archivo canario (tripwire pasivo)."""
+    if not DB_PATH.exists():
+        return []
+    try:
+        with _write_lock:
+            conn = _connect()
+            try:
+                conn.row_factory = sqlite3.Row
+                rows = conn.execute(
+                    """SELECT * FROM deception_events
+                       WHERE json_extract(detail, '$.canary') IS NOT NULL
+                       ORDER BY id DESC LIMIT ?""",
+                    (limit,),
+                ).fetchall()
+            finally:
+                conn.close()
+    except Exception as exc:  # noqa: BLE001
+        logger.error("[deception] error leyendo canarios: %s", exc)
+        return []
+    return [_row_to_event(r) for r in rows]
+
+
 def get_sessions(limit: int = 100) -> list[dict]:
     """Agrega eventos por (dispositivo, atacante) para la vista de sesiones."""
     if not DB_PATH.exists():

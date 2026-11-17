@@ -39,6 +39,7 @@ interface ApiOrigin {
   lat: number | null;
   lng: number | null;
   scope?: string;
+  approximate?: boolean;
   events: number;
   uniqueSources: number;
   severity: Severity;
@@ -53,8 +54,15 @@ interface ApiOrigins {
   unlocated?: number;
 }
 
-interface ApiEvents {
+export interface ApiEventFacets {
+  severity: Record<string, number>;
+  sensor: Record<string, number>;
+  protocol: Record<string, number>;
+}
+
+export interface ApiEvents {
   total: number;
+  facets?: ApiEventFacets;
   items: Array<{
     id: string;
     timestamp: string;
@@ -67,6 +75,7 @@ interface ApiEvents {
     regionCode?: string;
     city?: string;
     scope?: string;
+    approximate?: boolean;
     kind: string;
     proto: string;
     port: number | null;
@@ -146,7 +155,7 @@ const EMPTY_OVERVIEW: AnalyticsOverview = {
   latestEvent: null,
 };
 
-function windowFor(range: string) {
+export function windowFor(range: string) {
   const to = new Date();
   const hours = HOURS[range] ?? 24;
   const from = new Date(to.getTime() - hours * 60 * 60 * 1000);
@@ -206,6 +215,7 @@ function normalizeOrigins(payload: ApiOrigins): AttackOrigin[] {
       regionCode: origin.regionCode || "",
       city: origin.city || "",
       ip: origin.ip || "—",
+      approximate: Boolean(origin.approximate),
       lat: origin.lat,
       lng: origin.lng,
       events: origin.events,
@@ -218,7 +228,7 @@ function normalizeOrigins(payload: ApiOrigins): AttackOrigin[] {
   });
 }
 
-function normalizeEvents(payload: ApiEvents): EventRow[] {
+export function normalizeEvents(payload: ApiEvents): EventRow[] {
   return payload.items.map((event) => ({
     ...event,
     source: event.source || "Sin dato",

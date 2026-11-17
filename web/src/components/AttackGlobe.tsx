@@ -136,22 +136,33 @@ const SEVERITY_LABEL: Record<Severity, string> = {
   info: "Info",
 };
 
-function withAlpha(hex: string, alpha: number) {
-  const value = hex.replace("#", "");
-  const bigint = Number.parseInt(value, 16);
-  const r = (bigint >> 16) & 255;
-  const g = (bigint >> 8) & 255;
-  const b = bigint & 255;
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+// Arcos por país: mismo color para el mismo país, distinto entre países. La
+// severidad se mantiene en los puntos y en la tabla para no perder esa señal.
+const COUNTRY_ARC_COLORS = [
+  "#e2601f", "#66afe9", "#f0ad4e", "#b39ddb", "#e982a8", "#9bd275",
+  "#4dd0c4", "#f3d35b", "#ff8a65", "#7e9cf5", "#ce93d8", "#aed581",
+  "#ffd54f", "#4fc3f7", "#ba68c8", "#81c784", "#ffb74d", "#9575cd",
+  "#4db6ac", "#f06292",
+];
+
+function countryArcColor(countryCode: string): string {
+  const key = (countryCode || "??").toUpperCase();
+  let hash = 0;
+  for (let index = 0; index < key.length; index += 1) {
+    hash = (hash * 31 + key.charCodeAt(index)) >>> 0;
+  }
+  return COUNTRY_ARC_COLORS[hash % COUNTRY_ARC_COLORS.length];
 }
 
-function tooltipFor(origin: AttackOrigin) {
+function tooltipFor(origin: AttackOrigin, color?: string) {
+  const dotColor = color ?? SEVERITY_COLOR[origin.severity];
   return `
     <div class="globe-tooltip">
       <div class="globe-tooltip-head">
-        <span class="globe-tooltip-dot" style="background:${SEVERITY_COLOR[origin.severity]}"></span>
+        <span class="globe-tooltip-dot" style="background:${dotColor}"></span>
         <strong>${[origin.city, origin.region, origin.country].filter(Boolean).join(", ")}</strong>
         <span class="globe-tooltip-badge">${SEVERITY_LABEL[origin.severity]}</span>
+        ${origin.approximate ? '<span class="globe-tooltip-badge core">Aprox.</span>' : ""}
       </div>
       <div class="globe-tooltip-row"><span>Origen</span><b class="mono">${origin.ip}</b></div>
       <div class="globe-tooltip-row"><span>Eventos</span><b>${origin.events.toLocaleString("es-MX")}</b></div>
@@ -160,6 +171,15 @@ function tooltipFor(origin: AttackOrigin) {
       <div class="globe-tooltip-foot"><span>Último evento</span><b>${origin.lastSeen}</b></div>
     </div>
   `;
+}
+
+function withAlpha(hex: string, alpha: number) {
+  const value = hex.replace("#", "");
+  const bigint = Number.parseInt(value, 16);
+  const r = (bigint >> 16) & 255;
+  const g = (bigint >> 8) & 255;
+  const b = bigint & 255;
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
 interface AttackGlobeProps {
@@ -342,6 +362,19 @@ export function AttackGlobe({
     }
     return { byCountry, byRegion };
   }, [points, availableRegions]);
+  const countryColors = useMemo(() => {
+    const codes = Array.from(new Set(points
+      .filter((origin) => !origin.approximate)
+      .map((origin) => origin.countryCode || "??"))).sort();
+    return new Map(codes.map((code, index) => [
+      code,
+      COUNTRY_ARC_COLORS[index % COUNTRY_ARC_COLORS.length],
+    ]));
+  }, [points]);
+  const colorFor = (origin: AttackOrigin) => origin.approximate
+    ? ACCENTS.slate
+    : countryColors.get(origin.countryCode) ?? countryArcColor(origin.countryCode);
+
   const pointData = useMemo<GlobePoint[]>(
     () => [
       ...points.map((origin) => ({
@@ -349,7 +382,7 @@ export function AttackGlobe({
         lng: origin.lng,
         kind: "origin" as const,
         origin,
-        color: SEVERITY_COLOR[origin.severity],
+        color: colorFor(origin),
         altitude: 0.018 + Math.min(origin.events / 1800, 1) * 0.08,
         radius: 0.22 + Math.min(origin.events / 1800, 1) * 0.34,
       })),
@@ -362,20 +395,23 @@ export function AttackGlobe({
         radius: 0.42,
       },
     ],
-    [points],
+    [points, countryColors],
   );
 
   const arcData = useMemo<GlobeArc[]>(
     () =>
-      points.map((origin) => ({
-        startLat: origin.lat,
-        startLng: origin.lng,
-        endLat: DATACENTER.lat,
-        endLng: DATACENTER.lng,
-        color: [withAlpha(SEVERITY_COLOR[origin.severity], 0.08), SEVERITY_COLOR[origin.severity]],
-        origin,
-      })),
-    [points],
+      points.map((origin) => {
+        const color = colorFor(origin);
+        return {
+          startLat: origin.lat,
+          startLng: origin.lng,
+          endLat: DATACENTER.lat,
+          endLng: DATACENTER.lng,
+          color: [withAlpha(color, 0.05), withAlpha(color, 0.55), color],
+          origin,
+        };
+      }),
+    [points, countryColors],
   );
 
   const maxEvents = Math.max(...points.map((origin) => origin.events), 1);
@@ -462,7 +498,7 @@ export function AttackGlobe({
             const item = point as GlobePoint;
             return item.kind === "core"
               ? `<div class="globe-tooltip"><div class="globe-tooltip-head"><span class="globe-tooltip-dot" style="background:${ACCENTS.cyan}"></span><strong>${DATACENTER.name}</strong><span class="globe-tooltip-badge core">Core</span></div><div class="globe-tooltip-row"><span>Ubicación</span><b>${DATACENTER.city}, ${DATACENTER.country}</b></div><div class="globe-tooltip-foot"><span>Rol</span><b>Red señuelo</b></div></div>`
-              : tooltipFor(item.origin as AttackOrigin);
+              : tooltipFor(item.origin as AttackOrigin, item.color);
           }}
           onPointClick={(point: object) => {
             const item = point as GlobePoint;
@@ -474,13 +510,16 @@ export function AttackGlobe({
           arcEndLat="endLat"
           arcEndLng="endLng"
           arcColor="color"
-          arcAltitudeAutoScale={0.38}
-          arcStroke={0.38}
-          arcDashLength={0.48}
-          arcDashGap={0.2}
-          arcDashAnimateTime={2600}
+          arcAltitudeAutoScale={0.32}
+          arcStroke={0.6}
+          arcDashLength={0.55}
+          arcDashGap={0.12}
+          arcDashAnimateTime={2200}
           arcsTransitionDuration={0}
-          arcLabel={(arc: object) => tooltipFor((arc as GlobeArc).origin)}
+          arcLabel={(arc: object) => {
+            const item = arc as GlobeArc;
+            return tooltipFor(item.origin, item.color[item.color.length - 1]);
+          }}
           labelsData={labelData}
           labelLat="lat"
           labelLng="lng"
@@ -571,6 +610,7 @@ export function AttackGlobe({
           </div>
 
           <div className="globe-legend">
+            <span><i style={{ background: `linear-gradient(90deg, ${COUNTRY_ARC_COLORS.join(", ")})` }} /> País (punto/arco)</span>
             <span><i style={{ background: SEVERITY_COLORS.critical }} /> Crítico</span>
             <span><i style={{ background: SEVERITY_COLORS.high }} /> Alto</span>
             <span><i style={{ background: SEVERITY_COLORS.medium }} /> Medio</span>

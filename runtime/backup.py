@@ -170,6 +170,10 @@ UNCOVERED_RUNTIME_STATE = (
         "ingest environment file carries the bind address; the TLS material "
         "it points to is covered, the file itself is not"),
     UncoveredArtifact(
+        "fabric", "fabric.env", "control_env", "file",
+        "fabric environment file carries bearer tokens; the operator backs it "
+        "up with the fabric procedure, never with the control-plane export"),
+    UncoveredArtifact(
         "cell", "cells", "state", "directory",
         "cell data roots are operator-provisioned workloads, not control-plane state"),
     UncoveredArtifact(

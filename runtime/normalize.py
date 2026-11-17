@@ -25,13 +25,18 @@ Design invariants (mirroring ``deploy/honeypots/adapters.md``):
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from ipaddress import ip_address
 import hashlib
 import json
 import re
 from uuid import UUID, NAMESPACE_URL, uuid5
 
+from runtime import canary
 from runtime.contracts import identifier, validate_event
+from runtime.netfields import (
+    canonical_ip as _canonical_ip,
+    find_destination,
+    find_source,
+)
 
 # proto allowed by the v1 contract.
 _PROTOCOL_SET = {"tcp", "udp", "ssh", "telnet", "http", "ftp", "mysql", "snmp"}
@@ -102,19 +107,13 @@ def _first_mapping(value):
 
 
 def canonical_ip(value):
-    """Canonical literal IP, or ``None`` when the record has no usable source."""
-    if not isinstance(value, str):
-        return None
-    text = value.strip()
-    if not text or "%" in text:
-        return None
-    try:
-        parsed = ip_address(text)
-    except ValueError:
-        return None
-    if parsed.is_multicast or parsed.is_unspecified:
-        return None
-    return str(parsed)
+    """Canonical literal IP, or ``None`` when the value has no usable address.
+
+    Delegates to :mod:`runtime.netfields` so the collector and the ECS
+    adapters accept the same spellings (``ip:port``, ``[ipv6]:port``,
+    ``host=IP port=N``, scoped IPv6) and reject the same non-origins.
+    """
+    return _canonical_ip(value)
 
 
 def normalize_timestamp(value):
@@ -329,46 +328,41 @@ def _resolve_type(raw: dict, engine: str) -> str:
 
 
 def _src_ip(raw: dict) -> str:
-    value = _text(raw, "src_ip", "src_host", "source_ip", "remote_host", "src")
-    ip = canonical_ip(value)
-    if ip:
-        return ip
-    # RedisHoneyPot escribe ``addr: "ip:puerto"`` en vez de un campo src_ip.
-    addr = _text(raw, "addr")
-    if addr:
-        host = addr.rsplit(":", 1)[0] if ":" in addr else addr
-        ip = canonical_ip(host)
-        if ip:
-            return ip
-    # OpenCanary ``src_host`` is a hostname in the fixture; fall back to its
-    # nested logdata when present, otherwise fail closed.
-    logdata = raw.get("logdata")
-    if isinstance(logdata, dict):
-        nested = canonical_ip(logdata.get("HOST"))
-        if nested:
-            return nested
+    """Return the canonical sender address using every documented alias.
+
+    The native formats differ (``src_ip``, ``src_host``, Heralding
+    ``source_ip``, RedisHoneyPot ``addr``, nested ``connection.remote_ip``,
+    Endlessh ``host=... port=...``). ``runtime.netfields`` applies the same
+    priority everywhere, including a conservative text fallback for messages
+    that only embed the socket. Never use ``logdata.HOST``: OpenCanary stores
+    the decoy address there, not the attacker.
+    """
+    found = find_source(raw)
+    if found and found.ip:
+        return found.ip
     raise NormalizeError("no canonical source IP")
 
 
 def _src_port(raw: dict):
+    found = find_source(raw)
+    if found and found.port is not None:
+        return found.port
     port = _int(raw.get("src_port") or raw.get("source_port") or raw.get("remote_port"))
     if port is not None:
         return port
-    addr = _text(raw, "addr")
-    if addr and ":" in addr:
-        return _int(addr.rsplit(":", 1)[1])
     return None
 
 
 def _dst_ip(raw: dict):
     """Destination address as reported by the sensor, canonical or None."""
-    value = _text(raw, "dst_ip", "dst_host", "destination_ip", "destination_host")
-    connection = _first_mapping(raw.get("connection"))
-    value = value or _text(connection, "dst_ip", "dst_host", "destination_ip")
-    return canonical_ip(value)
+    found = find_destination(raw)
+    return found.ip if found else None
 
 
 def _dst_port(raw: dict):
+    found = find_destination(raw)
+    if found and found.port is not None:
+        return found.port
     value = raw.get("dst_port") or raw.get("destination_port")
     connection = _first_mapping(raw.get("connection"))
     value = value or connection.get("dst_port") or connection.get("destination_port")
@@ -388,9 +382,15 @@ def _protocol_probe(raw: dict, etype: str) -> bool:
     return any(isinstance(value, str) and _HTTP_PROBE.match(value.strip()) for value in candidates)
 
 
-def _detail(raw: dict, engine: str, etype: str) -> dict:
+def _detail(raw: dict, engine: str, etype: str, source_field: str = "") -> dict:
     """Bounded, redacted detail. Passwords and tokens never leave the sensor."""
     detail: dict = {}
+    # Provenance of the attribution: useful when a native engine used an
+    # unusual/nested field instead of the canonical src_ip.
+    if source_field and source_field not in {
+        "src_ip", "src_host", "source_ip", "remote_host", "src", "addr",
+    }:
+        detail["source_field"] = source_field[:128]
     session = _text(raw, "session", "session_id")
     if session:
         detail["session"] = session
@@ -404,6 +404,9 @@ def _detail(raw: dict, engine: str, etype: str) -> dict:
             command = (command + " " + " ".join(str(a) for a in args)) if command else " ".join(str(a) for a in args)
         if command not in (None, ""):
             detail["command"] = str(command)
+            canary_id = canary.match(str(command))
+            if canary_id:
+                detail["canary"] = canary_id
     if etype == "file_download":
         url = _text(raw, "url") or _text(_first_mapping(raw.get("downloads")), "url")
         filename = _text(raw, "filename", "outfile") or _text(_first_mapping(raw.get("downloads")), "filename")
@@ -531,7 +534,10 @@ def normalize_raw(engine: str, device_id: str, raw, observed_at=None) -> dict | 
     if engine == "endlessh" and _text(record, "event") == "other" and canonical_ip(record.get("src_ip")) is None:
         return None
 
-    src_ip = _src_ip(record)
+    source = find_source(record)
+    if source is None or not source.ip:
+        raise NormalizeError("no canonical source IP")
+    src_ip = source.ip
     original_type = _resolve_type(record, engine)
     probe = _protocol_probe(record, original_type)
     # A bare HTTP request line accepted by a Telnet listener is a protocol
@@ -551,16 +557,20 @@ def normalize_raw(engine: str, device_id: str, raw, observed_at=None) -> dict | 
         "type": etype,
         "proto": proto,
     }
-    src_port = _src_port(record)
+    src_port = source.port if source.port is not None else _src_port(record)
     if src_port is not None:
         event["src_port"] = src_port
-    dst_ip = _dst_ip(record)
+    destination = find_destination(record)
+    dst_ip = destination.ip if destination else None
     if dst_ip:
         event["dst_ip"] = dst_ip
-    dst_port = _dst_port(record)
+    dst_port = (
+        destination.port if destination and destination.port is not None
+        else _dst_port(record)
+    )
     if dst_port:
         event["dst_port"] = dst_port
-    detail = _detail(record, engine, etype)
+    detail = _detail(record, engine, etype, source_field=source.origin)
     if probe:
         detail["classification"] = "protocol_probe"
         detail["probe_protocol"] = "http"

@@ -210,6 +210,12 @@ def list_events(
     )
 
 
+@router.get("/canaries", dependencies=AUTH)
+def list_canary_hits(limit: int = 100):
+    """Accesos a archivos canario (honeytokens) registrados por los señuelos."""
+    return store_svc.get_canary_hits(limit=limit)
+
+
 @router.get("/sessions", dependencies=AUTH)
 def list_sessions(limit: int = 100):
     """Sesiones agregadas por (dispositivo, atacante)."""

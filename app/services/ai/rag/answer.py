@@ -50,6 +50,9 @@ Reglas obligatorias:
     lo hubo, también.
 11. No vuelques tablas, YAML, listas de puertos, rutas ni volcados técnicos.
     Resúmelos en una frase.
+12. Si la evidencia corresponde a un honeypot o servidor señuelo, dilo
+    explícitamente: el acceso fue al señuelo, no a un host real. No lo
+    presentes como un compromiso confirmado de la infraestructura.
 No muestres tu cadena de razonamiento."""
 
 SYSTEM_TRIAGE = """Eres un analista de un SOC que clasifica evidencia de honeypots.
@@ -88,8 +91,15 @@ def ask(
     kinds: Optional[Sequence[str]] = None,
     src_ip: Optional[str] = None,
     mode: str = "analysis",
+    extra_context: Optional[str] = None,
 ) -> dict:
-    """Recupera evidencia, pregunta al modelo y valida las citas."""
+    """Recupera evidencia, pregunta al modelo y valida las citas.
+
+    ``extra_context`` permite añadir un bloque local y acotado (por ejemplo,
+    los movimientos y respuestas del señuelo de la ficha abierta) como
+    evidencia adicional numerada. El llamador es responsable de generarlo en
+    el servidor: nunca debe venir de texto libre del navegador.
+    """
     if mode not in {"analysis", "triage"}:
         raise ValueError("mode debe ser analysis|triage")
     question = (question or "").strip()
@@ -99,7 +109,17 @@ def ask(
     retrieval = search(
         question, conn=conn, embedder=embedder, k=k, kinds=kinds, src_ip=src_ip
     )
-    evidence = retrieval["results"]
+    evidence = list(retrieval["results"])
+    extra_context = (extra_context or "").strip()
+    if extra_context:
+        evidence.insert(0, {
+            "kind": "movement",
+            "source": "movimientos del señuelo",
+            "src_ip": src_ip,
+            "ts": None,
+            "heading": "Comandos y respuestas del señuelo",
+            "text": extra_context,
+        })
     base = {
         "mode": mode,
         "question": question,
@@ -107,7 +127,8 @@ def ask(
             "mode": retrieval["mode"],
             "degraded": retrieval["degraded"],
             "error": retrieval.get("error"),
-            "count": len(evidence),
+            "count": len(retrieval["results"]),
+            "context": bool(extra_context),
         },
         "evidence": [_public(index, item) for index, item in enumerate(evidence, start=1)],
     }

@@ -397,6 +397,13 @@ class OvsFabricEngine:
         for device in plan.devices:
             self._store_credentials(topology, device.device_id, result)
             agent_config = _agent_config(topology, device.device_id)
+            # La host key RSA puede tardar decenas de segundos dentro del
+            # contenedor (poca entropía/CPU) y el listener SSH no abre el
+            # puerto hasta tenerla. Generarla aquí mantiene el arranque del
+            # agente rápido y la fingerprint estable entre recreaciones.
+            prepare_key = getattr(self._device_runtime, "prepare_ssh_host_key", None)
+            if callable(prepare_key):
+                prepare_key(device, agent_config)
             outcome = self._device_runtime.deploy_device(
                 device, agent_config=agent_config
             )

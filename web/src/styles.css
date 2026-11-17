@@ -2601,6 +2601,16 @@ pre {
   gap: 16px;
   padding-bottom: 14px;
   border-bottom: 1px solid var(--line);
+  /* Drawer largo: el título y el botón cerrar siguen visibles al hacer scroll.
+     `top: -22px` deja que el head se desplace dentro del padding del drawer
+     antes de pegarse; con `top: 0` el clamping del sticky lo pintaba 22px
+     más abajo que su posición de flujo y solapaba los badges. */
+  position: sticky;
+  top: -22px;
+  margin: -22px -22px 0;
+  padding: 22px 22px 14px;
+  background: inherit;
+  z-index: 2;
 }
 
 .drawer-head h2 {
@@ -4903,6 +4913,51 @@ pre {
 .investigation-section p { font-size: 13.5px; line-height: 1.6; }
 .investigation-breakdown { display: grid; grid-template-columns: 105px minmax(0, 1fr); gap: 12px; padding: 8px 0; }
 .investigation-breakdown > div { display: flex; flex-wrap: wrap; gap: 6px; }
+.drawer-head-actions { display: flex; align-items: center; gap: 8px; flex: none; }
+.drawer-head-actions .button.active { border-color: var(--cyan); color: var(--cyan); }
+.movement-section h3 svg { color: var(--cyan); vertical-align: -2px; margin-right: 6px; }
+.movement-card { margin-top: 12px; overflow: hidden; border: 1px solid var(--line); border-radius: 3px; background: #262625; }
+.movement-head { display: flex; flex-wrap: wrap; align-items: center; gap: 7px 12px; padding: 10px 12px; border-bottom: 1px solid var(--line); background: rgba(255, 255, 255, 0.03); font-size: 13px; }
+.movement-head strong { color: var(--text); font-size: 14px; }
+.movement-head time { color: var(--muted); font-size: 12.5px; }
+.movement-badge { padding: 2px 7px; border: 1px solid rgba(var(--red-rgb), 0.5); border-radius: 999px; color: #ffb3a8; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; }
+.movement-steps { display: grid; gap: 2px; margin: 0; padding: 6px 12px 12px; list-style: none; }
+.movement-narrative { margin: 7px 0 3px; color: var(--muted); font-size: 13px; line-height: 1.5; }
+.movement-narrative strong { color: var(--text); }
+.movement-steps li { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 10px; align-items: start; padding: 8px 0; border-bottom: 1px dashed rgba(255, 255, 255, 0.06); }
+.movement-steps li:last-child { border-bottom: none; }
+.movement-steps time { color: var(--faint); font-size: 12px; font-variant-numeric: tabular-nums; padding-top: 2px; }
+.movement-step-body { display: grid; gap: 5px; min-width: 0; }
+.movement-command { display: flex; align-items: baseline; gap: 7px; min-width: 0; }
+.movement-prompt { color: var(--green); font-family: "JetBrains Mono", monospace; font-size: 12.5px; flex: none; }
+.movement-command code { color: #8fc7e8; font-family: "JetBrains Mono", monospace; font-size: 12.5px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.movement-count { color: var(--amber); font-size: 11.5px; flex: none; }
+.movement-response { max-height: 220px; overflow: auto; margin: 0; padding: 8px 10px; border-left: 2px solid rgba(var(--cyan-rgb), 0.45); border-radius: 0 3px 3px 0; background: #1b1b1a; color: var(--text-soft); font-family: "JetBrains Mono", monospace; font-size: 12px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+.movement-no-response { color: var(--faint); font-size: 12px; font-style: italic; }
+.movement-summary { display: grid; gap: 4px; margin: 12px 0 4px; padding: 11px 13px; border: 1px solid var(--line); border-left: 3px solid var(--cyan); border-radius: 3px; background: rgba(var(--cyan-rgb), 0.035); }
+.movement-summary strong { color: var(--text); font-size: 14px; }
+.movement-summary span { color: var(--muted); font-size: 13px; line-height: 1.5; }
+.movement-summary.entered { border-left-color: var(--red); background: rgba(var(--red-rgb), 0.045); }
+.movement-summary.entered strong { color: #ffb3a8; }
+.movement-truncated { margin: 8px 0 0; color: var(--amber); font-size: 12px; }
+.drawer-ai { display: grid; gap: 10px; padding: 14px; border: 1px solid var(--line); border-radius: 3px; background: #232322; }
+.drawer-ai-head { display: grid; gap: 3px; }
+.drawer-ai-head > span { display: flex; align-items: center; gap: 7px; color: var(--text); font-size: 15px; font-weight: 600; }
+.drawer-ai-head > span svg { color: var(--cyan); }
+.drawer-ai-head small, .drawer-ai-context { color: var(--muted); font-size: 12.5px; line-height: 1.5; }
+.drawer-ai-context { margin: 0; }
+.drawer-ai-field { display: grid; gap: 6px; color: var(--text-soft); font-size: 13.5px; }
+.drawer-ai-field textarea { width: 100%; padding: 10px 11px; border: 1px solid var(--line-strong); border-radius: 3px; background: #1d1d1c; color: var(--text); font: inherit; font-size: 14px; line-height: 1.5; resize: vertical; }
+.drawer-ai-field textarea:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+.drawer-ai-suggestions { display: flex; flex-wrap: wrap; gap: 6px; }
+.drawer-ai-chip { background: transparent; cursor: pointer; font-size: 12px; text-align: left; }
+.drawer-ai-chip:hover { border-color: var(--cyan); color: var(--cyan); }
+.drawer-ai-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.drawer-ai-actions .button { display: inline-flex; align-items: center; gap: 6px; }
+.drawer-ai .ai-result { margin-top: 4px; padding-top: 12px; }
+.drawer-ai-source { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; cursor: pointer; }
+.drawer-ai-source strong { font-size: 12.5px; }
+.drawer-ai .ai-evidence-item p { max-height: 180px; overflow: auto; white-space: pre-wrap; }
 .investigation-form { display: grid; gap: 13px; margin: 14px 0 18px; }
 .investigation-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .investigation-form label { display: grid; gap: 6px; color: var(--text-soft); font-size: 13.5px; min-width: 0; }
@@ -5550,7 +5605,10 @@ pre {
 
 .sidebar { animation: chrome-in-left 420ms cubic-bezier(0.16, 1, 0.3, 1) both; }
 .topbar { animation: chrome-in-top 420ms cubic-bezier(0.16, 1, 0.3, 1) both; }
-.page { animation: page-fade 240ms ease both; }
+/* Sin `both`: con fill-mode `both` la animación de opacity queda activa y
+   crea un stacking context permanente en `.page`, que atrapa los drawers
+   (`position: fixed`, z-index 80) por debajo del topbar/sidebar. */
+.page { animation: page-fade 240ms ease; }
 .page-header { animation: rise-in 420ms cubic-bezier(0.16, 1, 0.3, 1) both; }
 
 .metrics-grid > *,

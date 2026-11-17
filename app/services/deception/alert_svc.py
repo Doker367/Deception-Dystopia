@@ -79,6 +79,21 @@ def evaluate(record: dict) -> list[dict]:
     etype = record.get("type")
     alerts: list[dict] = []
 
+    detail = record.get("detail") or {}
+    if isinstance(detail, str):
+        try:
+            detail = json.loads(detail)
+        except ValueError:
+            detail = {}
+    canary_id = detail.get("canary") if isinstance(detail, dict) else None
+    if canary_id:
+        alerts.append(_make_alert(
+            record,
+            "canary_access",
+            "critical",
+            f"Acceso a archivo canario: {canary_id}",
+        ))
+
     rule_info = _EVENT_RULES.get(etype) if isinstance(etype, str) else None
     if rule_info:
         alerts.append(_make_alert(record, *rule_info))

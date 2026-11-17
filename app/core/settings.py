@@ -46,6 +46,11 @@ DECEPTION_DATA_DIR = Path(
     os.getenv("NETPULSE_DECEPTION_DATA_DIR", str(STATE_DIR / "deception"))
 )
 DECEPTION_DB = DECEPTION_DATA_DIR / "deception.db"
+# Transcripciones TTY de Cowrie (respuestas del señuelo). El control las monta
+# en solo lectura; si el directorio no existe, la ficha muestra solo comandos.
+COWRIE_TTY_DIR = Path(
+    os.getenv("DYSTOPIA_COWRIE_TTY_DIR", "/srv/cowrie-var/lib/cowrie/tty")
+)
 # Claves persistentes del motor (host keys SSH estables entre reinicios).
 DECEPTION_KEYS_DIR = DECEPTION_DIR / "keys"
 DECEPTION_SSH_HOST_KEY = Path(

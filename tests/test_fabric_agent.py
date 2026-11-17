@@ -201,7 +201,7 @@ def test_engine_desconocido_usa_nativo_con_warning(tmp_path):
     listeners, warnings = agent.create_listeners(config)
     assert len(listeners) == 1
     assert isinstance(listeners[0], HttpListener)
-    assert any("no enlazado en Fase 5a" in warning for warning in warnings)
+    assert any("no enlazado" in warning for warning in warnings)
 
 
 def test_proto_no_soportado_se_omite(tmp_path):

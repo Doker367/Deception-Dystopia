@@ -91,5 +91,20 @@ Para borrar todo (incluida la DB de laboratorio): `docker compose down -v`.
 - El único escritor de eventos es el colector. No arranques dos.
 - En Linux habrá que preparar bind mounts por celda (`cells/<N>`) con los GID
   reales (Cowrie 999, resto 2000) y dar lectura al servicio colector.
-- Si el log nativo de un motor no trae `src_ip`, el normalizador descarta la
-  línea: se cuenta en `collector_dead_letters`, no se inventa un evento.
+- El normalizador busca el origen con redundancia antes de descartar: alias
+  planos (`src_ip`, `src_host`, `source_ip`, `remote_ip`, `addr`), objetos
+  anidados (`source.ip`, `client.ip`, `connection.remote_ip`) y, como último
+  recurso, el socket embebido en el mensaje (`host=IP port=N`, `ip:puerto`).
+  Nunca usa `logdata.HOST` de OpenCanary: ese campo es la dirección del
+  señuelo, no la del atacante. Si tras agotar esas fuentes no hay una IP
+  canónica, la línea se descarta y se cuenta en `collector_dead_letters`; no
+  se inventa un evento ni se marca el señuelo como origen.
+- La procedencia de la atribución queda en `detail.source_field` cuando no
+  vino de un alias canónico (por ejemplo `connection.remote_ip` o `message`),
+  para poder auditar de dónde salió la IP.
+- Tras actualizar el normalizador, las líneas ya descartadas no se reprocesan
+  solas: el cursor del colector ya pasó por ellas. Para recuperarlas una vez,
+  detén el colector y borra su fila en `collector_offsets` (o toda la tabla)
+  antes de arrancarlo; el `event_id` determinista y el índice único
+  `(engine, source_event_id)` evitan duplicar los eventos que ya estaban
+  ingeridos.

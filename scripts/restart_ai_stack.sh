@@ -29,7 +29,7 @@ COMPOSE=(
   -f docker-compose.ai.yml
 )
 
-AI_HOST="${NETPULSE_AI_HOST:-172.25.0.1}"
+AI_HOST="${NETPULSE_AI_HOST:-127.0.0.1}"
 echo "== comprobando modelos locales en ${AI_HOST} =="
 for port in 8081 8091; do
   if ! curl -fsS --max-time 3 "http://${AI_HOST}:${port}/health" >/dev/null; then

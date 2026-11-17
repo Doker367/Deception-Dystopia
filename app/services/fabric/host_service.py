@@ -27,6 +27,7 @@ Arranque: ``python -m app.services.fabric.host_service`` (ver
 ``deploy/systemd/dystopia-fabric.service``).
 """
 
+import asyncio
 import hashlib
 import logging
 import os
@@ -37,8 +38,21 @@ from pathlib import Path
 from typing import Any, Optional
 
 import yaml
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
+from fastapi import (
+    APIRouter,
+    Depends,
+    FastAPI,
+    HTTPException,
+    Query,
+    Request,
+    WebSocket,
+)
 
+from app.services.fabric.console_svc import (
+    ERROR_PREFIX,
+    console_enabled,
+    console_service,
+)
 from app.services.fabric.controller import FabricPlan
 from app.services.fabric.deploy import FabricDeployError, OvsFabricEngine
 from app.services.fabric.models import FabricTopology
@@ -405,6 +419,128 @@ def health(request: Request) -> dict:
         "healthy": healthy,
         "devices_health": devices_health,
     }
+
+
+# ── Consola interactiva (Fase 11) ────────────────────────────
+
+
+async def _container_running(container_name: str) -> bool:
+    """``docker inspect`` acotado: solo el estado del contenedor del manifiesto."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "docker", "inspect", "--format", "{{.State.Running}}", container_name,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
+    except (OSError, asyncio.TimeoutError):
+        return False
+    return stdout.decode("utf-8", errors="replace").strip() == "true"
+
+
+@router.websocket("/console/ws")
+async def console_ws(
+    websocket: WebSocket,
+    device_id: str = Query(default=""),
+    cols: int = Query(default=80),
+    rows: int = Query(default=24),
+) -> None:
+    """Puente WS↔PTY hacia un contenedor señuelo del manifiesto.
+
+    Solo para el control (bearer token en la cabecera). El control no tiene
+    socket de Docker; este servicio sí, así que la consola real se abre
+    aquí y el control reenvía los bytes del navegador. Fail-closed:
+
+    - token bearer válido (4401 si no),
+    - ``DYSTOPIA_FABRIC_CONSOLE_ENABLED=true`` en el servicio,
+    - ``device_id`` presente en el manifiesto (4404),
+    - contenedor en ejecución,
+    - cuota/idle del ``console_service``.
+    """
+    settings: HostServiceSettings = websocket.app.state.settings
+    header = websocket.headers.get("authorization", "")
+    scheme, _, value = header.partition(" ")
+    if (
+        scheme.lower() != "bearer"
+        or not value
+        or not secrets.compare_digest(value.encode("utf-8"), settings.token.encode("utf-8"))
+    ):
+        await websocket.close(code=4401)
+        return
+
+    async def _fail(message: str, code: int = 1011) -> None:
+        await websocket.accept()
+        await websocket.send_text(ERROR_PREFIX + message)
+        await websocket.close(code=code)
+
+    if not console_enabled():
+        await _fail(
+            "Consola deshabilitada en el servicio del host: exporta "
+            "DYSTOPIA_FABRIC_CONSOLE_ENABLED=true (fail-closed)"
+        )
+        return
+    try:
+        topology = _load_topology(settings)
+    except HTTPException as exc:
+        await _fail(str(exc.detail))
+        return
+    spec = next(
+        (item for item in build_device_specs(topology) if item.device_id == device_id),
+        None,
+    )
+    if spec is None:
+        await _fail("Dispositivo no encontrado en el manifiesto", code=4404)
+        return
+    if not await _container_running(spec.container_name):
+        await _fail("El contenedor del dispositivo no está en ejecución")
+        return
+    try:
+        session = await console_service.open_session(
+            device_id=spec.device_id,
+            container_name=spec.container_name,
+            username="fabric-host",
+            cols=cols,
+            rows=rows,
+        )
+    except RuntimeError as exc:
+        await _fail(str(exc))
+        return
+
+    await websocket.accept()
+
+    async def pump_out() -> None:
+        while True:
+            chunk = await console_service.read_chunk(session.session_id)
+            if chunk is None:
+                return
+            if chunk:
+                await websocket.send_bytes(chunk)
+
+    async def pump_in() -> None:
+        while True:
+            message = await websocket.receive()
+            if message.get("type") == "websocket.disconnect":
+                return
+            data = message.get("bytes")
+            if data is None:
+                text = message.get("text")
+                if text is None:
+                    continue
+                data = text.encode("utf-8")
+            if not await console_service.write_session(session.session_id, data):
+                return
+
+    tasks = [asyncio.create_task(pump_out()), asyncio.create_task(pump_in())]
+    try:
+        await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        for task in tasks:
+            task.cancel()
+        await console_service.close_session(session.session_id)
+        try:
+            await websocket.close(code=1000)
+        except Exception:  # noqa: BLE001 - el cliente ya se desconectó
+            pass
 
 
 def create_app(

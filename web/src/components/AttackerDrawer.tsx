@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import { Ban, Check, Copy, Radio, RefreshCw, ShieldAlert, Terminal, X } from "lucide-react";
+import { Ban, BrainCircuit, Check, Copy, Radio, RefreshCw, ShieldAlert, Terminal, X } from "lucide-react";
 import { apiDelete, apiGet, apiPost, apiPut, getToken } from "../lib/api";
+import { AskAiPanel } from "./AskAiPanel";
+import { MovementCard, type Movement } from "./MovementCard";
 import { HONEYPOTS } from "../data/mock";
 import { EChart } from "./EChart";
 import { attackerTimelineOption } from "../lib/charts";
@@ -41,6 +43,7 @@ interface Profile {
   total: number;
   first_seen?: string;
   last_seen?: string;
+  movements?: Movement[];
   country?: string;
   countryCode?: string;
   region?: string;
@@ -130,6 +133,7 @@ export function AttackerDrawer({ source, mode, sample, onClose }: {
   const [copiedCommand, setCopiedCommand] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [following, setFollowing] = useState(false);
+  const [asking, setAsking] = useState(false);
 
   const firewall = useMemo(() => {
     if (!source) return { nft: "", iptables: "" };
@@ -191,6 +195,7 @@ export function AttackerDrawer({ source, mode, sample, onClose }: {
     setMessage("");
     setError("");
     setFollowing(false);
+    setAsking(false);
   }, [source, mode]);
 
   useEffect(() => {
@@ -244,6 +249,12 @@ export function AttackerDrawer({ source, mode, sample, onClose }: {
     ...item, detail: {}, port: item.port,
   }));
   const evidence = demo ? demoEvents : profile?.items ?? [];
+  const movements = demo ? [] : profile?.movements ?? [];
+  const movementCommands = movements.reduce((total, item) => total + item.commands, 0);
+  const movementAnswered = movements.reduce(
+    (total, item) => total + (item.answered ?? item.steps.filter((step) => Boolean(step.response)).length),
+    0,
+  );
   const fingerprint = demo ? null : bestFingerprint(evidence, profile?.fingerprint);
   const demoFirst = demoEvents.length ? demoEvents.map((item) => item.timestamp).sort()[0] : undefined;
   const demoLast = demoEvents.length ? demoEvents.map((item) => item.timestamp).sort().at(-1) : undefined;
@@ -374,7 +385,12 @@ export function AttackerDrawer({ source, mode, sample, onClose }: {
       <aside className="event-drawer investigation-drawer" role="dialog" aria-modal="true" aria-label={`Ficha del origen ${source}`} onClick={(event) => event.stopPropagation()}>
         <div className="drawer-head">
           <div><span className="eyebrow">Ficha de origen · IP observada</span><h2 className="mono">{source}</h2><span className="muted">Una IP no identifica por sí sola a una persona.</span></div>
-          <button className="icon-button" onClick={onClose} aria-label="Cerrar ficha" autoFocus><X size={18} /></button>
+          <div className="drawer-head-actions">
+            <button className={`button ghost ${asking ? "active" : ""}`} onClick={() => setAsking((value) => !value)} aria-expanded={asking}>
+              <BrainCircuit size={14} /> {asking ? "Ocultar IA" : "Preguntar a la IA"}
+            </button>
+            <button className="icon-button" onClick={onClose} aria-label="Cerrar ficha" autoFocus><X size={18} /></button>
+          </div>
         </div>
         {demo && <p className="investigation-notice">Datos de demostración. Inicia sesión y conecta la ingesta para consultar evidencia real y guardar anotaciones.</p>}
         {loading && !profile && !demo && <p role="status">Cargando evidencia…</p>}
@@ -385,8 +401,18 @@ export function AttackerDrawer({ source, mode, sample, onClose }: {
             <div><span>Eventos en la consulta</span><strong>{demo ? demoEvents.length : profile?.total}</strong></div>
             <div><span>Primera actividad</span><strong>{formatTime(demo ? demoFirst : profile?.first_seen)}</strong></div>
             <div><span>Última actividad</span><strong>{formatTime(demo ? demoLast : profile?.last_seen)}</strong></div>
+            <div><span>Accesos aceptados</span><strong>{movements.length}</strong></div>
+            <div><span>Comandos tras acceso</span><strong>{movementCommands}</strong></div>
             <div><span>Geolocalización aproximada</span><strong>{demo ? (demoCountry || "Sin dato") : locationLabel(profile)}</strong></div>
           </div>
+          {asking && <section className="investigation-section">
+            <AskAiPanel
+              srcIp={source ?? undefined}
+              demo={demo}
+              includeMovements={!demo}
+              context={`Ficha de ${source}${profile?.country ? ` · ${[profile.city, profile.region, profile.country].filter(Boolean).join(", ")}` : ""}`}
+            />
+          </section>}
           {!demo && draft.handling !== "none" && <p className="investigation-notice">Resguardo: {HANDLING_LABEL[draft.handling]}{draft.handling === "redirect" && draft.handling_target ? ` → ${draft.handling_target}` : ""}</p>}
           {!demo && <p className="muted investigation-scope">Consulta de los últimos 90 días, limitada a {profile?.scanned_limit?.toLocaleString("es-MX")} eventos recientes del almacén. El total mostrado no es histórico exhaustivo.</p>}
           <section className="investigation-section" aria-label="Actividad por intervalo UTC">
@@ -400,6 +426,19 @@ export function AttackerDrawer({ source, mode, sample, onClose }: {
            {!demo && <section className="investigation-section"><h3>Actividad observada</h3>
             {([ ["Sensores", profile?.sensors], ["Protocolos", profile?.protocols], ["Acciones", profile?.kinds], ["Dispositivos", profile?.devices] ] as Array<[string, Record<string, number> | undefined]>).map(([label, values]) => (
               <div className="investigation-breakdown" key={label}><span>{label}</span><div>{Object.entries(values ?? {}).map(([name, count]) => <span className="sensor-chip" key={name}>{name} · {count}</span>)}{!Object.keys(values ?? {}).length && "Sin dato"}</div></div>
+            ))}
+          </section>}
+          {!demo && <section className="investigation-section movement-section">
+            <h3><Terminal size={16} /> Movimientos tras el acceso</h3>
+            <p className="muted">Comandos capturados después de un inicio de sesión aceptado y la respuesta que devolvió la shell emulada del señuelo. Repetir el mismo comando con la misma salida se agrupa; la evidencia original no se modifica.</p>
+            <div className={`movement-summary ${movements.length ? "entered" : ""}`}>
+              <strong>{movements.length ? "Sí logró entrar al señuelo" : "No logró entrar"}</strong>
+              <span>{movements.length
+                ? `${movements.length} ${movements.length === 1 ? "sesión" : "sesiones"} con acceso aceptado · ${movementCommands} ${movementCommands === 1 ? "comando ejecutado" : "comandos ejecutados"} · ${movementAnswered} con respuesta registrada del señuelo.`
+                : "No hay inicios de sesión aceptados en la ventana consultada. Los intentos fallidos aparecen en la evidencia, pero no generan movimientos."}</span>
+            </div>
+            {movements.map((movement) => (
+              <MovementCard key={movement.session} movement={movement} />
             ))}
           </section>}
           {!demo && <section className="investigation-section"><h3>Huella observada</h3>

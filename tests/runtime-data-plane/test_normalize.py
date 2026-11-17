@@ -47,7 +47,9 @@ def test_expected_type_and_proto_mapping(normalized):
     assert all(e["proto"] == "ssh" for e in by_engine["cowrie"])
 
     opencanary = by_engine["opencanary"]
-    assert [e["type"] for e in opencanary] == ["connect", "login_attempt", "login_attempt"]
+    assert [e["type"] for e in opencanary] == [
+        "http_request", "login_attempt", "login_attempt",
+    ]
     assert [e["proto"] for e in opencanary] == ["http", "ssh", "mysql"]
 
     assert [e["type"] for e in by_engine["dionaea"]] == ["login_attempt", "login_attempt", "file_download"]

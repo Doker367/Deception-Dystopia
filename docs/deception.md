@@ -190,6 +190,7 @@ alto valor, con silencio configurable por (dispositivo, atacante, regla):
 | `file_download` | critical | Descarga de archivo desde un señuelo |
 | `port_scan` | high | Escaneo de puertos |
 | `brute_force` | high | ≥ N intentos de login en una ventana |
+| `canary_access` | critical | Lectura o listado de un archivo canario (honeytoken) |
 
 Cada alerta se registra en la auditoría (`action=deception_alert`), se
 reenvía a webhooks/Telegram/Slack/Email (`event_type=deception_alert`) y
@@ -204,6 +205,50 @@ NETPULSE_DECEPTION_ALERT_COOLDOWN=60          # segundos de silencio
 NETPULSE_DECEPTION_BRUTE_FORCE_THRESHOLD=5
 NETPULSE_DECEPTION_BRUTE_FORCE_WINDOW=60
 ```
+
+## Canarios y muestras (defensivo)
+
+### `/proc/self` realista en Cowrie
+
+La imagen de Cowrie añade binarios Debian benignos al `honeyfs` y parchea el
+shell para que `cat /proc/self/exe`, `busybox cat /proc/self/exe`,
+`ls -l /proc/self/exe`, `cmdline`, `comm`, `status` y `maps` correspondan al
+comando que se está ejecutando. Así deja de servirse el stub ELF genérico de 336 bytes, que es una
+huella trivial. Los binarios son solo contenido: nunca se ejecutan desde
+`honeyfs`. El parche es idempotente y falla el build si cambia un ancla de
+Cowrie (`docker/deception/cowrie/patch_process.py`).
+
+### Canario (honeytoken)
+
+El filesystem falso contiene un archivo plausible:
+
+```
+/srv/files/finance/2026-q4.csv
+DYSTOPIA-CANARY-FINANCE-2026-7F3C9A2E
+```
+
+Si un atacante lo lista o lo lee, `runtime/normalize.py` añade
+`detail.canary = "finance-2026"` al evento. La API de solo lectura
+`GET /api/deception/canaries` lista esos accesos y, con el motor de alertas
+activo, se dispara `canary_access` (critical). El canario no llama a Internet,
+no identifica al atacante y no modifica el señuelo: es un tripwire pasivo.
+
+### Análisis de muestras capturadas
+
+Cowrie guarda los archivos descargados en `var/lib/cowrie/downloads` y registra
+su `shasum`/`outfile`. El analizador es **pasivo**: no ejecuta la muestra, no
+sigue enlaces fuera del directorio de descargas y no hace red.
+
+```bash
+python3 scripts/analyze_cowrie_samples.py \
+  --log /var/lib/dystopia/honeypots/cowrie/var/log/cowrie/cowrie.json \
+  --downloads /var/lib/dystopia/honeypots/cowrie/var/lib/cowrie/downloads \
+  --output /tmp/cowrie-samples.json
+```
+
+Calcula SHA-256/MD5/tamaño, clasifica por magic bytes y, si están instalados,
+añade `file`, ClamAV (`--clamav`) y YARA (`--yara-rules`). Para detonar una
+muestra hace falta un sandbox aislado aparte; este script no lo es.
 
 ## Dashboard (Fase D)
 
@@ -250,18 +295,25 @@ Herramientas complementarias para producción (integración futura):
 - **GeoIP offline** (`geoip_svc.py`): país/ciudad/coordenadas con una base
   MaxMind local. Autodetecta `NETPULSE_GEOIP_DB`, `NETPULSE_GEOIP_DIR`,
   `config/geoip/`, `deploy/local/geoip/` y la base incluida en
-  `maxminddb-geolite2` (sin servicios externos). Las IPs privadas,
-  loopback o de documentación se etiquetan como tales en vez de mostrar un
-  país vacío; si una base solo conoce el país, se usa su centroide para no
-  perder el punto del mapa. Los orígenes públicos que no estén en la base se
-  informan como **sin geolocalizar** (`unlocated`) y no se mezclan con
-  ubicaciones de demostración.
-- **Mapa global** en el dashboard: puntos **rojos** = origen de los
-  ataques (geolocalizados, tamaño por nº de eventos), punto **verde** =
-  centro de datos objetivo y **líneas de trayectoria animadas** desde cada
-  atacante al objetivo. **Zoom con rueda / botones y arrastre (pan)**, y
-  tabla de orígenes con **país, estado/región, ciudad**, eventos y acción
-  de bloqueo. Mapa vectorial propio
+  `maxminddb-geolite2` (sin servicios externos). **Consulta todas las bases
+  encontradas**: la montada por el operador es la fuente principal y las demás
+  solo rellenan campos que falten. Además admite correcciones manuales en
+  `geoip-overrides.json` (mismo directorio, o ruta en
+  `NETPULSE_GEOIP_OVERRIDES`) con el mismo formato que devuelve `lookup()`:
+  `country_code`, `country`, `subdivision`, `subdivision_code`, `city`,
+  `lat`, `lon`, `time_zone`. Las IPs privadas, loopback o de documentación se
+  etiquetan como tales en vez de mostrar un país vacío; si una base solo
+  conoce el país, se usa su centroide para no perder el punto del mapa. Si
+  ninguna fuente conoce una IP pública, se pinta un **punto aproximado**
+  (`ZZ`, etiqueta “Sin país (aprox.)”) derivado de la propia IP, en lugar de
+  dejarla como **sin geolocalizar**.
+- **Mapa global** en el dashboard: puntos de color **por país** (tamaño por
+  nº de eventos), punto del centro de datos objetivo y **líneas de
+  trayectoria animadas** desde cada atacante al objetivo. Cada **país usa un
+  color distinto** en puntos y líneas (los orígenes aproximados usan un gris
+  neutro y la etiqueta `Aprox.`). **Zoom con rueda / botones y arrastre
+  (pan)**, y tabla de orígenes con **país, estado/región, ciudad**, eventos y
+  acción de bloqueo. Mapa vectorial propio
   (`app/static/world.geo.json`, Natural Earth, dominio público), sin tiles
   externos. Datos: `GET /api/deception/geo`.
 - **Simulación multi-país**: `POST /api/deception/simulate?country=US`

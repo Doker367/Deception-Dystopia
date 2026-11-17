@@ -25,13 +25,19 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import hashlib
 import hmac
-import ipaddress
 import json
 import math
 import os
 import re
 from typing import Any, Callable, Mapping, Optional, Protocol
 from uuid import NAMESPACE_URL, uuid5
+
+from runtime.netfields import (
+    canonical_ip as canonical_ip_value,
+    find_destination,
+    find_source as find_source_address,
+    parse_address,
+)
 
 SCHEMA_VERSION = 1
 UNKNOWN_SEGMENT = "unknown"
@@ -179,15 +185,12 @@ def _safe(call: Optional[Callable[..., Any]], *args: Any) -> Any:
 
 
 def canonical_ip(value: Any) -> Optional[str]:
-    if not isinstance(value, str):
-        return None
-    text = value.strip()
-    if not text or len(text) > 64 or "%" in text:
-        return None
-    try:
-        return str(ipaddress.ip_address(text))
-    except ValueError:
-        return None
+    """Canonical IP literal accepted by the event contract.
+
+    Uses the shared attribution rules (``ip:port``, bracketed IPv6, scoped
+    IPv6) so no adapter silently drops a valid origin that carries a port.
+    """
+    return canonical_ip_value(value)
 
 
 def valid_port(value: Any) -> Optional[int]:
@@ -644,9 +647,34 @@ def build_event(
     chosen_segment = chosen_segment or UNKNOWN_SEGMENT
 
     source_ip = canonical_ip(src_ip)
-    dest_ip = canonical_ip(dst_ip) or canonical_ip(resolved.get("ip"))
     source_port = valid_port(src_port)
+    if source_port is None:
+        parsed_source = parse_address(src_ip)
+        if parsed_source is not None:
+            source_port = valid_port(parsed_source.port)
+    if source_ip is None and raw is not None:
+        # Redundancia de atribución: el adaptador puede no conocer el campo
+        # nativo de este motor. Buscar en el registro completo (primer nivel,
+        # objetos anidados source/client/connection y sockets en el mensaje)
+        # evita perder el origen y, sobre todo, evita marcar el señuelo.
+        found_source = find_source_address(raw)
+        if found_source is not None:
+            source_ip = found_source.ip
+            if source_port is None:
+                source_port = valid_port(found_source.port)
+    dest_ip = canonical_ip(dst_ip)
     dest_port = valid_port(dst_port)
+    if dest_port is None:
+        parsed_destination = parse_address(dst_ip)
+        if parsed_destination is not None:
+            dest_port = valid_port(parsed_destination.port)
+    if dest_ip is None and raw is not None:
+        found_destination = find_destination(raw)
+        if found_destination is not None:
+            dest_ip = found_destination.ip
+            if dest_port is None:
+                dest_port = valid_port(found_destination.port)
+    dest_ip = dest_ip or canonical_ip(resolved.get("ip"))
     net_protocol = normalize_protocol(protocol)
     if net_protocol == "unknown" and dest_port is not None:
         net_protocol = protocol_for_port(dest_port)
