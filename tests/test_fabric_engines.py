@@ -344,3 +344,17 @@ def test_build_supervisor_registra_motor_real(tmp_path):
     assert warnings == [] and fallbacks == []
     assert supervisor.states[0]["engine"] == "cowrie"
     assert supervisor.states[0]["port"] == 22
+
+
+def test_find_binary_fallback_al_venv_del_agente(tmp_path, monkeypatch):
+    """El entrypoint ejecuta el venv sin activarlo: PATH puede no incluirlo."""
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    binary = fake_bin / "cowrie"
+    binary.write_text("#!/bin/sh\n")
+    binary.chmod(0o755)
+    monkeypatch.setattr(sys, "executable", str(fake_bin / "python"))
+
+    assert find_binary("cowrie", which=lambda name: None) == str(binary)
+    # Sin el binario junto al intérprete sigue devolviendo None.
+    assert find_binary("opencanaryd", which=lambda name: None) is None

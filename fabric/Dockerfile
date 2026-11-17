@@ -13,6 +13,7 @@
 FROM debian:trixie-slim
 
 ENV DEBIAN_FRONTEND=noninteractive \
+    PATH="/opt/venv/bin:${PATH}" \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONPATH=/opt/dystopia

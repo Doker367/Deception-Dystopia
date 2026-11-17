@@ -31,6 +31,7 @@ FROM dystopia/fabric-device:v1
 USER root
 
 ENV DEBIAN_FRONTEND=noninteractive
+ENV PATH="/opt/venv/bin:${PATH}"
 
 # Dependencias de sistema de los motores (compiladores y cabeceras de
 # criptografía que arrastran twisted/pyOpenSSL; se eliminan al final).

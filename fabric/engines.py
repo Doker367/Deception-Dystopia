@@ -143,11 +143,22 @@ def engine_supported(engine: str) -> bool:
 
 
 def find_binary(engine: str, which: Callable[[str], Optional[str]] = shutil.which) -> Optional[str]:
-    """Ruta del ejecutable del motor, o ``None`` si no está instalado."""
+    """Ruta del ejecutable del motor, o ``None`` si no está instalado.
+
+    Busca en ``PATH`` y, si no aparece, junto al intérprete del agente
+    (``/opt/venv/bin``): el entrypoint ejecuta el venv directamente sin
+    activarlo, así que ``PATH`` puede no incluirlo.
+    """
     name = BINARIES.get((engine or "").strip().lower())
     if name is None:
         return None
-    return which(name)
+    found = which(name)
+    if found:
+        return found
+    candidate = Path(sys.executable).resolve().parent / name
+    if candidate.is_file() and os.access(candidate, os.X_OK):
+        return str(candidate)
+    return None
 
 
 # ── Generación de configuración ─────────────────────────────
