@@ -282,8 +282,12 @@ async def run_agent(
 
     config = load_device_config(config_file)
     if not config.services:
-        raise AgentConfigError(
-            "device.json no declara servicios; el agente no tiene nada que servir"
+        # Un host sin servicios sigue siendo señuelo (IP, ping, ARP, escaneo).
+        # Se mantiene vivo en lugar de salir: el fabric no debe romperse por
+        # un dispositivo que solo existe como presencia en la red.
+        logger.warning(
+            "[fabric-agent] %s no declara servicios; queda a la escucha",
+            config.device_id,
         )
 
     # Debe fijarse antes de importar los listeners: settings lee la ruta
@@ -327,9 +331,12 @@ async def run_agent(
         supervisor.start()
 
     if not started and supervisor is None:
-        set_event_sink(None)
-        raise AgentConfigError(
-            "ningún listener pudo arrancar; revisa services/proto/engine en device.json"
+        # Un dispositivo sin servicios sigue siendo un host señuelo válido
+        # (tiene IP, responde a ping/ARP y puede ser escaneado). No se sale:
+        # se mantiene vivo y se avisa para que el operador lo sepa.
+        logger.warning(
+            "[fabric-agent] %s no declara servicios; queda a la escucha "
+            "(sin listeners ni motores)", config.device_id,
         )
 
     logger.info(

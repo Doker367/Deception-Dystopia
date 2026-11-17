@@ -216,22 +216,27 @@ def test_proto_no_soportado_se_omite(tmp_path):
 # ── Arranque ────────────────────────────────────────────────
 
 
-def test_agente_sin_servicios_falla(tmp_path):
+def test_agente_sin_servicios_sigue_vivo(tmp_path, caplog):
+    """Un host sin servicios sigue siendo señuelo: no se sale, queda a la escucha."""
     config_path = _write_config(tmp_path, _config(services=[]))
-    with pytest.raises(agent.AgentConfigError) as excinfo:
-        asyncio.run(agent.run_agent(config_path, tmp_path / "logs"))
-    assert "no declara servicios" in str(excinfo.value)
+    stop = asyncio.Event()
+    stop.set()  # termina de inmediato, como un SIGTERM
+
+    asyncio.run(agent.run_agent(config_path, tmp_path / "logs", stop_event=stop))
+
+    assert any("no declara servicios" in record.message for record in caplog.records)
+    assert base.get_event_sink() is None
 
 
-def test_agente_sin_listeners_falla_y_configura_host_key(tmp_path, monkeypatch):
+def test_agente_sin_listeners_sigue_vivo_y_configura_host_key(tmp_path, monkeypatch):
     monkeypatch.setenv(agent.HOST_KEY_ENV, "/tmp/original-key")
     config_path = _write_config(tmp_path, _config(
         services=[{"port": 1234, "proto": "gopher", "engine": "native"}],
     ))
     log_dir = tmp_path / "logs"
-    with pytest.raises(agent.AgentConfigError) as excinfo:
-        asyncio.run(agent.run_agent(config_path, log_dir))
-    assert "ningún listener" in str(excinfo.value)
+    stop = asyncio.Event()
+    stop.set()
+    asyncio.run(agent.run_agent(config_path, log_dir, stop_event=stop))
     assert base.get_event_sink() is None
     import os
     assert os.environ[agent.HOST_KEY_ENV] == str(log_dir / "keys" / "ssh_host_rsa_key")
