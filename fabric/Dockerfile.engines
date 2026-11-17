@@ -1,0 +1,73 @@
+# NetPulse — imagen de dispositivo del fabric CON MOTORES REALES (Fase 11).
+#
+# Variante opcional de `fabric/Dockerfile`: añade los honeypots Cowrie y
+# OpenCanary por pip sobre la imagen base pequeña (solo listeners nativos).
+# El agente (`fabric/agent.py`) detecta el motor instalado y lo ejecuta de
+# verdad; si falta, cae al listener nativo sin romper nada.
+#
+# Contexto de build: la RAÍZ del repo.
+#
+#   docker build -t dystopia/fabric-device:engines -f fabric/Dockerfile.engines .
+#
+# La imagen base `dystopia/fabric-device:v1` debe existir antes (la
+# construye `docker build -t dystopia/fabric-device:v1 -f fabric/Dockerfile .`
+# o el propio `FROM` de abajo si se construye desde cero). El build NO es
+# obligatorio: sin esta imagen todo funciona con los listeners nativos.
+#
+# Decisiones de empaquetado:
+#   * Se instala en el MISMO venv (/opt/venv) que usa el agente, así que
+#     `cowrie` y `opencanaryd` quedan en /opt/venv/bin y `shutil.which`
+#     los encuentra porque el entrypoint ejecuta /opt/venv/bin/python.
+#   * Versiones fijadas (no `latest`): cowrie==3.1.7 (requiere Python
+#     ≥ 3.11, Debian trixie trae 3.13) y opencanary==0.9.10 (≥ 3.10).
+#   * Capas separadas para que un fallo de un motor no invalide el otro.
+#
+# Endurecimiento: se mantiene el del contenedor señuelo (usuario 2000,
+# sin privilegios). Los motores escuchan en puertos > 1024 (los del
+# manifiesto del fabric) para no necesitar CAP_NET_BIND_SERVICE.
+#
+FROM dystopia/fabric-device:v1
+
+USER root
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PATH="/opt/venv/bin:${PATH}"
+
+# Dependencias de sistema de los motores (compiladores y cabeceras de
+# criptografía que arrastran twisted/pyOpenSSL; se eliminan al final).
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        libssl-dev \
+        libffi-dev \
+        python3-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Cowrie (SSH/Telnet). El paquete trae la consola `cowrie` y el módulo
+# `cowrie.*`; no necesita root para escuchar en puertos altos.
+RUN /opt/venv/bin/pip install --no-cache-dir --no-compile "cowrie==3.1.7"
+
+# OpenCanary (multi-protocolo). El wrapper `opencanaryd` usa `sudo -E`
+# incluso sin privilegios; el shim elimina `-E` y hace exec del comando
+# (mismo criterio que docker/deception/opencanary/Dockerfile).
+RUN /opt/venv/bin/pip install --no-cache-dir --no-compile "opencanary==0.9.10" \
+    && printf '#!/bin/sh\n[ "$1" = "-E" ] && shift\nexec "$@"\n' \
+         > /usr/local/bin/sudo \
+    && chmod 0755 /usr/local/bin/sudo
+
+# El código del agente y runtime/ ya vienen de la base; aquí solo se
+# asegura que el binding de motores esté presente y legible por 2000.
+COPY --chown=2000:2000 fabric/engines.py /opt/dystopia/fabric/engines.py
+COPY --chown=2000:2000 runtime/ /opt/dystopia/runtime/
+
+# Limpieza de las herramientas de compilación (el runtime no las usa).
+RUN apt-get purge -y --auto-remove build-essential libssl-dev libffi-dev python3-dev \
+    && rm -rf /var/lib/apt/lists/* /root/.cache
+
+# Directorio de configuración generada por el agente (writable por 2000).
+RUN mkdir -p /var/log/fabric/engines \
+    && chown -R 2000:2000 /var/log/fabric /opt/dystopia
+
+USER 2000:2000
+
+ENTRYPOINT ["/opt/venv/bin/python", "/opt/dystopia/fabric/agent.py"]

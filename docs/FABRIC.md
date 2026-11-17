@@ -230,11 +230,44 @@ Página **Fabric** (sección Operación):
 | Auditoría | `fabric_validate/deploy/destroy/rebuild` en `audit_svc` (usuario, estado, hash, conteos) |
 | Alertas | `fabric_new_device_probed` (media) y `fabric_lateral_movement` (alta; ventana 10 min) |
 
+## 7b. Motores reales (Cowrie / OpenCanary)
+
+Un servicio puede declarar `engine: cowrie` o `engine: opencanary`. Si el
+contenedor usa la imagen con motores, el agente:
+
+1. Genera la configuración del motor en `/var/log/fabric/engines/<engine>/`.
+2. Arranca el proceso escuchando en el puerto declarado.
+3. Taila su log nativo y normaliza cada registro con
+   `runtime.normalize.normalize_raw(...)` hacia el mismo `events.jsonl`.
+
+El forwarder, el control y las alertas no cambian: ven el mismo formato que
+los listeners nativos. La configuración generada **no** contiene credenciales
+del manifiesto (Cowrie usa `AuthRandom`; OpenCanary no recibe usuarios).
+
+Imagen con motores (opcional, ~1 GB):
+
+```bash
+docker build -t dystopia/fabric-device:v1 -f fabric/Dockerfile .
+docker build -t dystopia/fabric-device:engines -f fabric/Dockerfile.engines .
+```
+
+Para usarla, declara en el dispositivo:
+
+```yaml
+resources:
+  image: "dystopia/fabric-device:engines"
+```
+
+Si el motor no está instalado o no arranca, el agente avisa y sirve ese
+protocolo con el listener nativo (fallback). Motores sin binding real hoy:
+`dionaea`, `heralding`, `redishoneypot`, `endlessh`.
+
 ## 8. Límites conocidos
 
-- **Engines externos**: un servicio con `engine: cowrie/opencanary/...` usa el
-  listener **nativo** por protocolo (con warning); el binding real de honeypots
-  es trabajo pendiente.
+- **Motores reales**: `engine: cowrie` y `engine: opencanary` se ejecutan de
+  verdad si la imagen los incluye (`dystopia/fabric-device:engines`); el resto
+  (`dionaea`, `heralding`, `redishoneypot`, `endlessh`) y los motores ausentes
+  caen al **listener nativo** con warning. Ver §"Motores reales" arriba.
 - **Rotación** de `events.jsonl`: logrotate diario (7 copias, `copytruncate`),
   instalado por `install-fabric-service.sh`.
 - **TLS opcional** entre control y host service: el instalador genera un

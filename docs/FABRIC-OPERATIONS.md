@@ -179,6 +179,29 @@ sudo tc qdisc del dev lk00b-swofici root
 Sin qdisc netem, `tc qdisc show` responde `qdisc noqueue 0: root refcnt 2`
 (o `pfifo_fast`). El destroy borra el qdisc y es idempotente.
 
+### Imagen con motores reales (Cowrie/OpenCanary, Fase 11)
+
+Opcional. La imagen base sirve los servicios con los listeners nativos; la
+variante `:engines` añade Cowrie y OpenCanary por pip.
+
+```bash
+cd /opt/dystopia/current
+sudo docker build -t dystopia/fabric-device:v1 -f fabric/Dockerfile .
+sudo docker build -t dystopia/fabric-device:engines -f fabric/Dockerfile.engines .
+```
+
+Verificación (el agente debe reportar el motor arrancado):
+
+```bash
+sudo docker logs dystopia-fabric-<device> 2>&1 | grep -i "fabric-engines"
+# [fabric-engines] cowrie <device>:22 arrancado (pid=…)
+sudo docker exec dystopia-fabric-<device> ls /var/log/fabric/engines/cowrie
+```
+
+Si el motor no está en la imagen, el log muestra el warning de fallback y el
+listener nativo sigue sirviendo. Los eventos llegan igual al JSONL y a la
+SQLite del control.
+
 ================================================================
 7) OPERACIÓN DIARIA
 ================================================================
