@@ -18,7 +18,8 @@ cliente externo (IP pública) → VPS:puerto TCP → DNAT (sin SNAT)
 | TCP en VPS y servidor WG | Señuelo |
 |---|---|
 | 12222, 12223 | Cowrie SSH, Telnet |
-| 13022, 13080 | OpenCanary SSH, HTTP |
+| 13022 | OpenCanary SSH |
+| 8080 | OpenCanary HTTP (trampa HTTP; `DYSTOPIA_HTTP_TRAP_PORT`) |
 | 14021 | Dionaea FTP |
 | 15021 | Heralding FTP |
 | 16379 | RedisHoneyPot |
@@ -118,7 +119,9 @@ independientemente antes de activar la exposición.
 
    ```bash
    read -r -p 'Interfaz WAN de la VPS: ' WAN_IF
-   for p in 12222 12223 13022 13080 14021 15021 16379 17222; do
+   # 8080 = trampa HTTP de OpenCanary (puerto del host que fija
+   # DYSTOPIA_HTTP_TRAP_PORT en deploy/local/.env; 8080 por defecto).
+   for p in 12222 12223 13022 14021 15021 16379 17222 8080; do
      sudo ufw route allow in on "$WAN_IF" out on wg0 to 10.66.0.3 port "$p" proto tcp
    done
    sudo ufw status verbose

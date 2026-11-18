@@ -14,8 +14,12 @@ Design invariants (mirroring ``deploy/honeypots/adapters.md``):
   ``(sensor, event_id)``; a replay is therefore idempotent, never a conflict.
   No random or wall-clock value is used when the native timestamp is present.
 * **Redaction.** Captured passwords/tokens are *never* copied into ``detail``.
-  Hostile payload (commands, URLs, hashes) is bounded and kept as plain strings
-  only; no nested objects, no execution semantics.
+  The single documented exception is the HTTP trap's Basic auth: the pair the
+  attacker sent is kept in ``detail.credentials`` (bounded), exactly like the
+  captured credentials of the fabric path (§12 fase 7); everything else
+  (SSH/FTP/MySQL passwords, tokens) is still dropped or redacted. Hostile
+  payload (commands, URLs, hashes) is bounded and kept as plain strings only;
+  no nested objects, no execution semantics.
 * **No discard-by-metadata.** A record with a missing device/timestamp/protocol
   is degraded to a safe default, not dropped; the operator still sees the event.
 * **Bounded.** ``detail`` is limited to 16 keys of strings <= 2048 bytes, and
@@ -337,6 +341,13 @@ def _src_ip(raw: dict) -> str:
     that only embed the socket. Never use ``logdata.HOST``: OpenCanary stores
     the decoy address there, not the attacker.
     """
+    # IP real capturada por el sensor detrás de un proxy de confianza
+    # (nginx del VPS): el sensor ya validó el peer antes de anotarla.
+    forwarded = _text(raw, "SRC_IP", "src_ip_forwarded")
+    if forwarded:
+        candidate = forwarded.split(",")[0].strip()
+        if canonical_ip(candidate) is not None:
+            return canonical_ip(candidate) or candidate
     found = find_source(raw)
     if found and found.ip:
         return found.ip
@@ -434,11 +445,24 @@ def _detail(raw: dict, engine: str, etype: str, source_field: str = "") -> dict:
                             ("path", "path"), ("PATH", "path"),
                             ("useragent", "useragent"), ("USERAGENT", "useragent"),
                             ("method", "method"), ("METHOD", "method"),
+                            ("status", "status"), ("STATUS", "status"),
+                            ("referer", "referer"), ("REFERER", "referer"),
                             ("host", "host"), ("HOSTNAME", "host"),
                             ("USERNAME", "username"), ("SESSION", "session")):
             value = logdata.get(key)
             if value not in (None, "") and target not in detail:
                 detail[target] = str(value)
+        # Credenciales Basic de la trampa HTTP (patch_http_capture.py emite
+        # ``AUTH: basic`` con USERNAME/PASSWORD). Es la excepción documentada
+        # a la regla de redacción: la pareja que envió el atacante se guarda
+        # en ``detail.credentials`` con el mismo criterio que las credenciales
+        # capturadas del fabric (§12 fase 7), acotada a 512.
+        if str(logdata.get("AUTH", "")).lower() == "basic" and (
+            logdata.get("USERNAME") or logdata.get("PASSWORD")
+        ):
+            detail["auth"] = "basic"
+            pair = f"{logdata.get('USERNAME', '')}:{logdata.get('PASSWORD', '')}"
+            detail["credentials"] = pair[:512]
     bounded = {}
     for key, value in detail.items():
         if value is None:
@@ -454,21 +478,37 @@ def _detail(raw: dict, engine: str, etype: str, source_field: str = "") -> dict:
     return bounded
 
 
+def _secret_values(raw: dict) -> list[str]:
+    """Valores secretos del registro (raíz y logdata anidado), para redactar."""
+    values: list[str] = []
+    for key in ("password", "pass", "pwd", "secret", "token"):
+        value = raw.get(key)
+        if isinstance(value, str) and value and value not in values:
+            values.append(value)
+    logdata = raw.get("logdata")
+    if isinstance(logdata, dict):
+        for key in ("PASSWORD", "PASS", "PWD", "SECRET", "TOKEN"):
+            value = logdata.get(key)
+            if isinstance(value, str) and value and value not in values:
+                values.append(value)
+    return values
+
+
 def _redact_message(message, raw: dict):
     """Strip credential material from a native log message before it is indexed.
 
     The message field is hostile input: it can embed the captured password
     (e.g. Cowrie ``login attempt [root/demo-password] failed``). Any known
     password value and any ``password[=: ]value`` assignment is replaced with
-    a placeholder so the event stays useful without leaking the secret.
+    a placeholder so the event stays useful without leaking the secret. Los
+    valores guardados en ``logdata`` (OpenCanary anida ahí USERNAME/PASSWORD)
+    también se redactan del mensaje.
     """
     if not message:
         return None
     text = str(message)
-    for key in ("password", "pass", "pwd"):
-        value = raw.get(key)
-        if isinstance(value, str) and value:
-            text = text.replace(value, "[REDACTED]")
+    for value in sorted(_secret_values(raw), key=len, reverse=True):
+        text = text.replace(value, "[REDACTED]")
     text = _CREDENTIAL_ASSIGNMENT.sub(
         lambda m: f"{m.group(1)}[REDACTED]", text
     )
@@ -535,9 +575,17 @@ def normalize_raw(engine: str, device_id: str, raw, observed_at=None) -> dict | 
         return None
 
     source = find_source(record)
-    if source is None or not source.ip:
+    # IP real anotada por el sensor detrás de un proxy de confianza (nginx
+    # del VPS). El sensor valida el peer antes de anotar SRC_IP; aquí solo se
+    # comprueba que sea una IP canónica.
+    forwarded = _text(record, "SRC_IP", "src_ip_forwarded")
+    trusted = canonical_ip(forwarded.split(",")[0].strip()) if forwarded else None
+    if trusted:
+        src_ip = trusted
+    elif source is not None and source.ip:
+        src_ip = source.ip
+    else:
         raise NormalizeError("no canonical source IP")
-    src_ip = source.ip
     original_type = _resolve_type(record, engine)
     probe = _protocol_probe(record, original_type)
     # A bare HTTP request line accepted by a Telnet listener is a protocol
@@ -557,7 +605,11 @@ def normalize_raw(engine: str, device_id: str, raw, observed_at=None) -> dict | 
         "type": etype,
         "proto": proto,
     }
-    src_port = source.port if source.port is not None else _src_port(record)
+    src_port = (
+        source.port
+        if source is not None and source.port is not None
+        else _src_port(record)
+    )
     if src_port is not None:
         event["src_port"] = src_port
     destination = find_destination(record)

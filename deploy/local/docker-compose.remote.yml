@@ -26,7 +26,11 @@ services:
     restart: unless-stopped
     ports:
       - "10.66.0.3:13022:22/tcp"
-      - "10.66.0.3:13080:80/tcp"
+      # Trampa HTTP pública por wg0: único puerto HTTP publicado, con puerto
+      # e IP configurables (por defecto 10.66.0.3:8080). Nunca 80/443: están
+      # reservados a la web real. Requiere la regla ufw de
+      # docs/MIGRACION-PUERTOS.md para admitir tráfico externo.
+      - "${DYSTOPIA_HTTP_TRAP_BIND:-10.66.0.3}:${DYSTOPIA_HTTP_TRAP_PORT:-8080}:80/tcp"
 
   dionaea:
     restart: unless-stopped

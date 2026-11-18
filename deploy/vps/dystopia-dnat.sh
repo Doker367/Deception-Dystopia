@@ -5,7 +5,9 @@ set -euo pipefail
 
 CHAIN=DYSTOPIA_DNAT
 TARGET=10.66.0.3
-PORTS=12222,12223,13022,13080,14021,15021,16379,17222
+# Puertos internos del laboratorio. 8080 es la trampa HTTP (OpenCanary);
+# debe coincidir con DYSTOPIA_HTTP_TRAP_PORT de deploy/local/.env.
+PORTS=12222,12223,13022,14021,15021,16379,17222,8080
 
 fail() { printf 'dystopia-dnat: %s\n' "$*" >&2; exit 1; }
 

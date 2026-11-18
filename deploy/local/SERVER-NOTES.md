@@ -19,7 +19,11 @@ Ver `docs/MIGRACION-PUERTOS.md`. Resumen:
   Origin Rule de `ferreteriashector.com`, pendiente el 2026-11-17).
 - Señuelos activos: `22`, `23`, `21`, `2222`, `2223`, `6379` en la VPS →
   puertos internos `12222`, `12223`, `14021`, `17222`, `13022`, `16379` en
-  `10.66.0.3`. `80` → OpenCanary se activa al liberar nginx.
+  `10.66.0.3`. `80` → trampa HTTP de OpenCanary se activa al liberar nginx.
+- Trampa HTTP: publicada en `10.66.0.3:8080` (`DYSTOPIA_HTTP_TRAP_PORT` /
+  `DYSTOPIA_HTTP_TRAP_BIND` en `deploy/local/.env`); único puerto HTTP
+  publicado. Requiere la regla ufw de `docs/MIGRACION-PUERTOS.md`. Diagnóstico
+  completo en `docs/DIAGNOSTICO-TRAMPA-HTTP.md`.
 - `443` queda cerrado (sin señuelo TLS desplegado).
 - Firewall de Hostinger: 13 reglas (`443`, `22`, `80`, `4443/udp`, `22022`,
   `8080`, `8443`, `21`, `23`, `2222`, `2223`, `6379`, `Drop`). Al cerrar
