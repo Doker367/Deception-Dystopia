@@ -156,7 +156,7 @@ def attacker_fingerprint(src_ip: str, request: Request):
             rendered = json.dumps(value, ensure_ascii=False)
         else:
             continue
-        for _ in range(3):
+        for _ in range(6):
             if isinstance(client, dict) and "client" in client:
                 client = client["client"]
                 continue
