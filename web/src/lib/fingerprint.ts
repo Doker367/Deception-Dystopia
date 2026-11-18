@@ -17,7 +17,24 @@ function text(value: unknown): string {
 export function parseFingerprintValue(raw: string): BrowserFingerprint | null {
   try {
     const parsed = JSON.parse(raw) as { client?: unknown; headers?: unknown };
-    const client = typeof parsed.client === "string" ? JSON.parse(parsed.client) as unknown : parsed.client;
+    let client: unknown = parsed.client;
+    // El payload puede venir con varios niveles de envoltorio ({"client": ...});
+    // se desenvuelve hasta 4 niveles para no perder los campos reales.
+    for (let depth = 0; depth < 4; depth += 1) {
+      if (typeof client === "string") {
+        try {
+          client = JSON.parse(client);
+        } catch {
+          break;
+        }
+        continue;
+      }
+      if (isRecord(client) && "client" in client) {
+        client = (client as { client?: unknown }).client;
+        continue;
+      }
+      break;
+    }
     if (!isRecord(client)) return null;
     const headers: Record<string, string> = {};
     if (isRecord(parsed.headers)) {
