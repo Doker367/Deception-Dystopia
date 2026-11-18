@@ -487,14 +487,19 @@ def _detail(raw: dict, engine: str, etype: str, source_field: str = "") -> dict:
             client = parsed.get("client")
             # El cliente puede venir anidado (``{"client": "{\"client\": ...}"``)
             # por dobles envoltorios del beacon; se desenvuelve hasta 3 niveles.
-            for _ in range(3):
+            for _ in range(4):
+                if isinstance(client, dict) and "client" in client:
+                    # Envoltorio {"client": ..., "headers": ...}
+                    client = client["client"]
+                    continue
                 if isinstance(client, str) and client.strip().startswith("{"):
                     try:
                         client = json.loads(client)
                     except ValueError:
                         client = None
-                else:
-                    break
+                        break
+                    continue
+                break
             if isinstance(client, dict):
                 summary = {
                     "cpu_cores": client.get("cores"),
