@@ -195,3 +195,33 @@ def test_opencanary_src_ip_dentro_de_logdata():
     event = normalize_raw("opencanary", "sw-access-01", record)
     assert event is not None
     assert event["src_ip"] == "198.51.100.42"
+
+
+def test_fingerprint_aplanado_en_detail():
+    client = {
+        "cores": 8, "ram_gb": 4, "gpuVendor": "Apple", "gpuRenderer": "Apple GPU",
+        "battery": {"level": 87, "charging": False}, "screen": "390x844x3",
+        "tz": "America/Mexico_City", "platform": "iPhone", "os": "iOS 13",
+        "touchscreen": True,
+    }
+    record = {
+        "src_host": "10.66.0.1",
+        "dst_port": 80,
+        "logtype": 3000,
+        "logdata": {
+            "PATH": "/__fp", "METHOD": "POST", "SRC_IP": "203.0.113.9",
+            "FINGERPRINT": json.dumps(
+                {"client": json.dumps(client), "headers": {"user-agent": "iPhone"}}
+            ),
+        },
+        "utc_time": "2026-11-18 02:10:00",
+    }
+    event = normalize_raw("opencanary", "sw-access-01", record)
+    assert event is not None
+    assert event["src_ip"] == "203.0.113.9"
+    summary = json.loads(event["detail"]["fingerprint_summary"])
+    assert summary["cpu_cores"] == 8
+    assert summary["ram_gb"] == 4
+    assert summary["gpu_vendor"] == "Apple"
+    assert summary["battery"]["level"] == 87
+    assert summary["timezone"] == "America/Mexico_City"

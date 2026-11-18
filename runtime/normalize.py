@@ -475,6 +475,39 @@ def _detail(raw: dict, engine: str, etype: str, source_field: str = "") -> dict:
             bounded[key] = text
         if len(bounded) >= 16:
             break
+    # Huella del navegador: se aplana para que la ficha muestre CPU/RAM/GPU/
+    # batería/pantalla sin obligar a leer el JSON completo.
+    fingerprint_raw = detail.get("fingerprint")
+    if isinstance(fingerprint_raw, str) and fingerprint_raw.strip().startswith("{"):
+        try:
+            parsed = json.loads(fingerprint_raw)
+        except ValueError:
+            parsed = None
+        if isinstance(parsed, dict):
+            client = parsed.get("client")
+            if isinstance(client, str) and client.strip().startswith("{"):
+                try:
+                    client = json.loads(client)
+                except ValueError:
+                    client = None
+            if isinstance(client, dict):
+                summary = {
+                    "cpu_cores": client.get("cores"),
+                    "ram_gb": client.get("ram_gb"),
+                    "gpu_vendor": client.get("gpuVendor"),
+                    "gpu_renderer": client.get("gpuRenderer"),
+                    "battery": client.get("battery"),
+                    "screen": client.get("screen"),
+                    "timezone": client.get("tz"),
+                    "platform": client.get("platform"),
+                    "os": client.get("os"),
+                    "touch": client.get("touchscreen"),
+                }
+                summary = {k: v for k, v in summary.items() if v not in (None, "", [])}
+                if summary:
+                    bounded["fingerprint_summary"] = json.dumps(
+                        summary, ensure_ascii=False
+                    )[:2048]
     return bounded
 
 
