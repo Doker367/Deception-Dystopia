@@ -83,6 +83,7 @@ En el **control** (Docker, `deploy/local/docker-compose.yml` + `.env`):
 | `DYSTOPIA_FABRIC_REMOTE_TIMEOUT` | `120` |
 | `DYSTOPIA_FABRIC_CONSOLE_ENABLED` | `true` para habilitar la consola interactiva (Fase 11; default `false`, fail-closed). **Debe estar a `true` en los dos lados**: control y `/etc/dystopia/fabric.env` del servicio del host. |
 | `DYSTOPIA_FABRIC_CONSOLE_MAX` | `4` | Máximo de consolas concurrentes. |
+| `DYSTOPIA_FABRIC_CONSOLE_PER_DEVICE_MAX` | `1` | Máximo de consolas simultáneas del **mismo dispositivo** (bloquea pestañas duplicadas). |
 | `DYSTOPIA_FABRIC_CONSOLE_IDLE` | `600` | Timeout de inactividad (s) por sesión. |
 | `DYSTOPIA_FABRIC_CONSOLE_MAX_AGE` | `3600` | Duración máxima (s) de una sesión. |
 

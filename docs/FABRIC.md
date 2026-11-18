@@ -170,7 +170,9 @@ es el modo de producción del lab).
 | GET | `/api/fabric/config` | admin | YAML del bloque `fabric:` para el editor (credenciales enmascaradas `__REDACTED__`) |
 | PUT | `/api/fabric/config` | admin | Guarda el YAML (valida antes; backup `.bak`; restaura `__REDACTED__` del manifiesto vigente) |
 | POST | `/api/fabric/devices/{id}/console` | admin | Abre sesión de consola interactiva (Fase 11) |
+| GET | `/api/fabric/console/sessions` | admin | Sesiones de consola activas (estado, transporte, actividad) |
 | WS | `/api/fabric/devices/{id}/console/ws?token=` | admin | Puente WebSocket↔PTY de la consola |
+| GET | `/api/fabric/console/sessions` | admin | Sesiones de consola vivas (id, device, actividad, estado) |
 
 Errores: 401/403 auth · 409 transición inválida/ocupado · 413 lote grande ·
 422 manifiesto/eventos inválidos · 429 cuota de consolas · 502 fallo del engine ·
@@ -185,8 +187,11 @@ fail-closed:
 - JWT admin (en el query del WS: los navegadores no pueden fijar headers).
 - Fabric en estado `deployed` y el `device_id` en el manifiesto.
 - `DYSTOPIA_FABRIC_CONSOLE_ENABLED=true` (independiente del gate de deploy).
-- Cuota de sesiones (`DYSTOPIA_FABRIC_CONSOLE_MAX`, default 4), idle
+- Cuota de sesiones (`DYSTOPIA_FABRIC_CONSOLE_MAX`, default 4), **cuota por
+  dispositivo** (`DYSTOPIA_FABRIC_CONSOLE_PER_DEVICE_MAX`, default 1), idle
   timeout (`_CONSOLE_IDLE`, 600 s) y edad máxima (`_CONSOLE_MAX_AGE`, 3600 s).
+- El idle/edad se aplica de verdad con un segador de fondo del control
+  (loop de 30 s en el lifespan; antes `reap_idle()` era código muerto).
 
 Transporte: el control **nunca** monta el socket de Docker. Con engine
 `remote` (control en contenedor) el control abre un WebSocket contra el
@@ -196,6 +201,38 @@ engine `ovs`/`stub` sobre el propio host, el control ejecuta `docker exec`
 en local. En ambos casos el comando está fijado (sin shell del host, sin
 argumentos libres): `docker exec -i -t -e COLUMNS=… -e LINES=…
 -e TERM=xterm-256color <contenedor-del-manifiesto> /bin/sh -i`.
+
+**Protocolo WS** (compatible con clientes previos):
+
+| Frame | Dirección | Significado |
+|---|---|---|
+| Texto crudo | navegador → control | Entrada del teclado (onData del xterm) al stdin del PTY. Ctrl+C/Ctrl+L pasan crudos: los interpreta el shell del contenedor. |
+| JSON `{"type":"resize","cols":n,"rows":n}` | navegador → control | Cambio de tamaño: `TIOCSWINSZ` + `SIGWINCH` al `docker exec` (local) o frame equivalente al host service (remote); nunca llega al stdin. |
+| Bytes / texto | control → navegador | Salida del PTY (binario en el salto control↔host, texto UTF-8 hacia el navegador). |
+| `\0ERR:<mensaje>` (texto) | control → navegador | Gate fallido (fail-closed): banner en la UI y cierre inmediato (códigos 4401/4404/1011). |
+
+Experiencia del terminal (frontend, `web/src/components/FabricConsole.tsx`):
+
+- **Reconexión automática** con backoff exponencial (600 ms → 6 s tope,
+  5 intentos) y cuenta atrás visible; el chip se vuelve ámbar ("reconectando")
+  y hay botón *Reintentar ahora*. Un fallo de gate no reintenta (el banner
+  ya muestra el motivo en español).
+- **Resize con debounce** (120 ms): el `fit()` del xterm se propaga al PTY
+  con frame JSON; en remote el servicio del host lo aplica igual que en local.
+- **Copiar/pegar**: Ctrl+Shift+C copia la selección; Ctrl+Shift+V pega el
+  portapapeles; también ClipboardAddon para OSC 52.
+- **Limpiar**: botón *Limpiar* (Ctrl+L del shell) en el strip de estado.
+- **Sesiones**: chips con estado de las consolas abiertas en otros
+  dispositivos (clic para cambiar) y `GET /api/fabric/console/sessions`
+  (solo admin) con la lista real del control.
+- **Accesibilidad**: drawer con `role="dialog"`/`aria-modal`, Escape
+  cierra, `aria-live` en el estado y en los errores, y layout responsive
+  (`width: 100vw` bajo 680 px, host del terminal con alto fluido).
+
+Cerrar el drawer cierra la sesión (el backend mata el PTY al caer el
+socket): cada terminal reconectado empieza un shell fresco en su
+contenedor. El historial del xterm (scrollback 1000 líneas) vive solo
+dentro de la sesión.
 
 Activar en el laboratorio Docker (los dos lados):
 
