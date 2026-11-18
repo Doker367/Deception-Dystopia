@@ -526,6 +526,26 @@ async def console_ws(
                 text = message.get("text")
                 if text is None:
                     continue
+                # Frame de control del control (JSON): resize del PTY. El
+                # control traduce el JSON del navegador; aquí NUNCA debe
+                # terminar en stdin del shell (sería texto visible).
+                stripped = text.strip()
+                if stripped.startswith("{"):
+                    try:
+                        import json as json_mod
+
+                        control = json_mod.loads(stripped)
+                    except Exception:  # noqa: BLE001 - entrada aplicación
+                        control = None
+                    if isinstance(control, dict) and control.get("type") == "resize":
+                        ok = await console_service.resize_session(
+                            session.session_id,
+                            control.get("cols", 80),
+                            control.get("rows", 24),
+                        )
+                        if not ok:
+                            return
+                        continue
                 data = text.encode("utf-8")
             if not await console_service.write_session(session.session_id, data):
                 return

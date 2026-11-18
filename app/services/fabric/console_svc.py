@@ -23,10 +23,12 @@ from __future__ import annotations
 import asyncio
 import fcntl
 import inspect
+import json
 import logging
 import os
 import pty
 import secrets
+import signal
 import struct
 import termios
 import time
@@ -42,6 +44,10 @@ CONSOLE_ENABLED_ENV = "DYSTOPIA_FABRIC_CONSOLE_ENABLED"
 CONSOLE_MAX_SESSIONS = int(os.getenv("DYSTOPIA_FABRIC_CONSOLE_MAX", "4"))
 CONSOLE_IDLE_TIMEOUT = int(os.getenv("DYSTOPIA_FABRIC_CONSOLE_IDLE", "600"))
 CONSOLE_MAX_AGE = int(os.getenv("DYSTOPIA_FABRIC_CONSOLE_MAX_AGE", "3600"))
+# Máximo de sesiones simultáneas hacia el MISMO dispositivo: evita que dos
+# pestañas (o el mismo terminal reconectado) dupliquen consolas sobre el
+# mismo contenedor señuelo.
+CONSOLE_MAX_PER_DEVICE = int(os.getenv("DYSTOPIA_FABRIC_CONSOLE_PER_DEVICE_MAX", "1"))
 
 # Con el engine "remote" los contenedores viven en el host y el control no
 # tiene socket de Docker: la consola se abre contra el servicio del host.
@@ -150,6 +156,11 @@ class ConsoleService:
             if self.active_count >= CONSOLE_MAX_SESSIONS:
                 raise RuntimeError(
                     f"Máximo de {CONSOLE_MAX_SESSIONS} consolas concurrentes alcanzado"
+                )
+            if self.count_for_device(device_id) >= CONSOLE_MAX_PER_DEVICE:
+                raise RuntimeError(
+                    "Ya hay una consola activa para este dispositivo; ciérrala "
+                    "antes de abrir otra (sin pestañas duplicadas)"
                 )
             session_id = f"tty-{secrets.token_hex(8)}"
             target = remote_console_target()
@@ -346,6 +357,58 @@ class ConsoleService:
             return await asyncio.wait_for(session.queue.get(), timeout=timeout)
         except asyncio.TimeoutError:
             return b""
+
+    def list_sessions(self) -> list[ConsoleSession]:
+        """Sesiones vivas (no cerradas), ordenadas por arranque."""
+        return sorted(
+            (s for s in self._sessions.values() if not s.closed),
+            key=lambda s: s.started_at,
+        )
+
+    def count_for_device(self, device_id: str) -> int:
+        """Sesiones activas hacia un mismo dispositivo (límite por device)."""
+        return sum(
+            1 for s in self._sessions.values()
+            if s.device_id == device_id and not s.closed
+        )
+
+    async def resize_session(self, session_id: str, cols: int, rows: int) -> bool:
+        """Redimensiona el terminal de la sesión.
+
+        Local: ``TIOCSWINSZ`` sobre el maestro del PTY + ``SIGWINCH`` a
+        ``docker exec`` para que replique el cambio al shell. Remoto: frame
+        JSON de control por el WS del servicio del host.
+        """
+        session = self._sessions.get(session_id)
+        if session is None or session.closed:
+            return False
+        cols = max(20, min(int(cols), 500))
+        rows = max(5, min(int(rows), 200))
+        session.last_activity = time.time()
+        if session.ws is not None:
+            try:
+                await session.ws.send(
+                    json.dumps({"type": "resize", "cols": cols, "rows": rows})
+                )
+            except Exception:  # noqa: BLE001 - WS remoto cerrado
+                await self.close_session(session_id)
+                return False
+            return True
+        if session.pty_fd is not None and session.proc is not None \
+                and session.proc.returncode is None:
+            try:
+                fcntl.ioctl(
+                    session.pty_fd,
+                    termios.TIOCSWINSZ,
+                    struct.pack("HHHH", rows, cols, 0, 0),
+                )
+                os.kill(session.proc.pid, signal.SIGWINCH)
+                return True
+            except (OSError, ProcessLookupError):
+                await self.close_session(session_id)
+                return False
+        return False
+
 
     async def close_session(self, session_id: str) -> None:
         """Cierra la sesión y mata el proceso/WS subyacente (tolerante)."""

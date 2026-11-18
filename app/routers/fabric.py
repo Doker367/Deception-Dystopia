@@ -65,6 +65,10 @@ from app.models.deception import DeceptionEventType
 from app.services.deception import telemetry_svc
 from app.services.fabric import console_service
 from app.services.fabric.console_svc import (
+    CONSOLE_IDLE_TIMEOUT,
+    CONSOLE_MAX_AGE,
+    CONSOLE_MAX_PER_DEVICE,
+    CONSOLE_MAX_SESSIONS,
     ERROR_PREFIX,
     console_enabled,
     remote_console_target,
@@ -768,12 +772,50 @@ async def device_console_ws(
     try:
         while True:
             message = await websocket.receive_text()
-            # Mensajes de control del cliente (resize): no van al shell.
-            if message.startswith('{"type":"resize"'):
-                continue
+            # Mensajes de control del cliente (resize): frame JSON, no raw.
+            if message.startswith("{"):
+                try:
+                    control = json.loads(message)
+                except json.JSONDecodeError:
+                    control = None
+                if isinstance(control, dict) and control.get("type") == "resize":
+                    ok = await console_service.resize_session(
+                        session.session_id, control.get("cols", 80), control.get("rows", 24)
+                    )
+                    if not ok:
+                        await console_service.close_session(session.session_id)
+                        break
+                    continue
             await console_service.write_session(session.session_id, message.encode("utf-8"))
     except WebSocketDisconnect:
         pass
     finally:
         pump_task.cancel()
         await console_service.close_session(session.session_id)
+
+
+@router.get("/console/sessions", dependencies=ADMIN)
+async def list_console_sessions(user: dict = Depends(get_current_user)) -> dict:
+    """Sesiones de consola activas (estado, transport, device) para la UI."""
+    sessions = console_service.list_sessions()
+    return {
+        "sessions": [
+            {
+                "session_id": s.session_id,
+                "device_id": s.device_id,
+                "state": "open" if s.ws is not None or s.pty_fd is not None else "zombie",
+                "transport": "remote" if s.ws is not None else "docker",
+                "started_at": s.started_at,
+                "last_activity": s.last_activity,
+                "container_name": s.container_name,
+                "username": s.username,
+            }
+            for s in sessions
+        ],
+        "active": console_service.active_count,
+        "max_sessions": CONSOLE_MAX_SESSIONS,
+        "per_device_max": CONSOLE_MAX_PER_DEVICE,
+        "idle_timeout": CONSOLE_IDLE_TIMEOUT,
+        "max_age": CONSOLE_MAX_AGE,
+    }
+

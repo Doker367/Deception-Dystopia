@@ -1,4 +1,7 @@
 """Dystopia control plane. Never owns sensor or hypervisor lifecycles."""
+import asyncio
+import logging
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, cast
@@ -18,11 +21,37 @@ from app.routers import (
     auth, admin_users, deception, fabric, vms, console, analytics, investigations, ai_rag,
 )
 
+logger = logging.getLogger("fabric.console")
+
+# Cada cuántos segundos revisa el segador las sesiones inactivas.
+REAP_INTERVAL_S = 30
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # No flags, import side effects or shutdown hooks may start/stop sensors.
+    # Segador de sesiones de consola del fabric (idle/max-age, Fase 11):
+    # ``console_svc.reap_idle()`` era código muerto; sin el loop el idle
+    # timeout y la edad máxima declarados no se aplicaban nunca.
+    reaper_task: asyncio.Task | None = None
+    if os.getenv("DYSTOPIA_FABRIC_CONSOLE_ENABLED", "false").strip().lower() == "true":
+        from app.services.fabric.console_svc import console_service
+
+        async def reap_loop() -> None:
+            while True:
+                await asyncio.sleep(REAP_INTERVAL_S)
+                try:
+                    reap_idle_result = console_service.reap_idle()
+                except Exception:  # noqa: BLE001 - el segador nunca tumba la API
+                    logger.exception("[fabric] reap_idle falló")
+                    continue
+                if reap_idle_result:
+                    logger.info("[fabric] reap_idle cerró %d sesión(es)", reap_idle_result)
+
+        reaper_task = asyncio.create_task(reap_loop())
     yield
+    if reaper_task is not None:
+        reaper_task.cancel()
 
 
 app = FastAPI(title=API_TITLE, version=API_VERSION, lifespan=lifespan)
