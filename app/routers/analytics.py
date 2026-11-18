@@ -135,20 +135,30 @@ def attacker_fingerprint(src_ip: str, request: Request):
     best_score = -1
     for row in store_svc.get_events(limit=200, src_ip=src_ip):
         raw = row.get("detail")
-        if not isinstance(raw, str) or "fingerprint" not in raw:
+        if isinstance(raw, str):
+            try:
+                parsed = json.loads(raw)
+            except ValueError:
+                continue
+        elif isinstance(raw, dict):
+            parsed = raw
+        else:
             continue
-        try:
-            parsed = json.loads(raw)
-        except ValueError:
+        value = parsed.get("fingerprint")
+        if not isinstance(value, str):
             continue
-        value = parsed.get("fingerprint") if isinstance(parsed, dict) else None
         if not isinstance(value, str):
             continue
         try:
             client = json.loads(value)
-            client = client.get("client", client) if isinstance(client, dict) else None
-            if isinstance(client, str):
-                client = json.loads(client)
+            for _ in range(3):
+                if isinstance(client, dict) and "client" in client:
+                    client = client["client"]
+                    continue
+                if isinstance(client, str):
+                    client = json.loads(client)
+                    continue
+                break
         except ValueError:
             continue
         if not isinstance(client, dict):
