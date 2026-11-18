@@ -70,12 +70,18 @@ Para borrar todo (incluida la DB de laboratorio): `docker compose down -v`.
 | Host (loopback) | Servicio |
 |---|---|
 | 12222 / 12223 | Cowrie SSH / Telnet |
-| 13022 / 13080 | OpenCanary SSH / HTTP |
+| 13022 | OpenCanary SSH |
+| `${DYSTOPIA_HTTP_TRAP_PORT:-8080}` | Trampa HTTP (OpenCanary, módulo http) |
 | 14021 | Dionaea FTP |
 | 15021 | Heralding FTP |
 | 16379 | RedisHoneyPot |
 | 17222 | Endlessh |
 | 8082 | Control plane + web |
+
+La trampa HTTP es el único puerto HTTP publicado (nunca 80/443). Con el
+override `docker-compose.remote.yml` se publica además en la IP WireGuard
+(`DYSTOPIA_HTTP_TRAP_BIND`, `10.66.0.3` en el servidor); para admitir tráfico
+externo el operador debe añadir la regla ufw de `docs/MIGRACION-PUERTOS.md`.
 
 ## Límites conocidos
 

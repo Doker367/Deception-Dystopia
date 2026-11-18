@@ -20,10 +20,30 @@ para el 2026-11-17).
 | `22` | `10.66.0.3:12222` | Cowrie SSH | ✅ |
 | `23` | `10.66.0.3:12223` | Cowrie Telnet | ✅ |
 | `21` | `10.66.0.3:14021` | Dionaea FTP | ✅ |
-| `80` | `10.66.0.3:13080` | OpenCanary HTTP | ⏳ al liberar nginx |
+| `80` | `10.66.0.3:8080` | Trampa HTTP (OpenCanary) | ⏳ al liberar nginx |
 | `2222` | `10.66.0.3:17222` | Endlessh | ✅ |
 | `2223` | `10.66.0.3:13022` | OpenCanary SSH | ✅ |
 | `6379` | `10.66.0.3:16379` | RedisHoneyPot | ✅ |
+
+La trampa HTTP se publica en el laboratorio con las variables
+`DYSTOPIA_HTTP_TRAP_PORT` (defecto `8080`) y `DYSTOPIA_HTTP_TRAP_BIND`
+(defecto `10.66.0.3` con el override remoto; loopback sin él) de
+`deploy/local/.env.example`. Es el **único** puerto HTTP publicado: no se
+publican `80/443` del contenedor ni otros puertos de honeypots.
+
+### Regla ufw de la trampa HTTP (la aplica el operador)
+
+En el laboratorio (`greencode2`), para admitir el tráfico hacia la trampa:
+
+```bash
+ufw allow from any to 10.66.0.3 port 8080 proto tcp
+```
+
+(sustituye `8080` por el valor real de `DYSTOPIA_HTTP_TRAP_PORT`). Nota: un
+puerto publicado por Docker se filtra por la cadena `DOCKER-USER`, no por el
+INPUT de ufw; si `dystopia-routing.sh` añade políticas restrictivas, añade
+también la excepción equivalente para la IP del contenedor, igual que ya se
+hace para Redis (`6379`) en la sección anterior.
 | `443` | — | sin señuelo TLS | se cerrará |
 
 Los puertos altos `12xxx`/`15xxx`/`16379`/`17222` ya no se publican en la VPS;
@@ -69,14 +89,25 @@ del contenedor honeypot.
    - quitar `listen 80`, `listen [::]:80`, `listen 443 ssl`,
      `listen [::]:443 ssl` de `/etc/nginx/sites-enabled/*`;
    - `nginx -t && systemctl reload nginx`;
-   - descomentar `80 13080` en `/etc/dystopia/dnat.map` y reiniciar
-     `dystopia-dnat`;
+   - descomentar `80 8080` en `/etc/dystopia/dnat.map` (la trampa HTTP de
+     OpenCanary escucha en `10.66.0.3:8080`, puerto `DYSTOPIA_HTTP_TRAP_PORT`)
+     y reiniciar `dystopia-dnat`;
    - borrar la regla `443` del firewall de Hostinger.
 4. **Certificados**: al liberar el 80, HTTP-01 deja de funcionar. Opciones:
    - Cloudflare Origin CA para los dominios proxied;
    - DNS-01 con token de Cloudflare;
    - bypass temporal del DNAT del 80 para los dominios directos
      (`greenalgorithm.com.mx`, `tarea1...`) durante la renovación.
+
+## Diagnóstico: por qué no entraban ataques HTTP (2026-11-16)
+
+Antes de esta trampa, la pila solo publicaba los puertos de los honeypots en
+`127.0.0.1` (y, con el override remoto, `12222/12223/13022/13080/14021/15021/
+16379/17222` en `10.66.0.3`): **ningún puerto HTTP quedaba publicado de forma
+alcanzable para escáneres** y el firewall no permitía ninguno, así que no
+llegaban peticiones HTTP al señuelo. La exposición ahora es explícita y
+configurable con `DYSTOPIA_HTTP_TRAP_PORT`/`DYSTOPIA_HTTP_TRAP_BIND`
+(regla ufw más arriba); el operador decide cuándo abrir el enlace.
 
 ## Verificación rápida
 
@@ -91,9 +122,27 @@ nc -w3 193.203.167.121 22                            # banner Cowrie
 nc -w3 193.203.167.121 23                            # login: Cowrie
 nc -w3 193.203.167.121 2223                          # banner OpenCanary
 
+# Trampa HTTP (tras publicar el puerto y aplicar la regla ufw)
+curl -is http://10.66.0.3:8080/index.html | head -1   # 200 + panel falso
+curl -is -u admin:probe http://10.66.0.3:8080/admin | head -1   # 401 (credencial registrada)
+
 # Web
 curl -sk -H 'Host: greenalgorithm.com.mx' https://193.203.167.121:8443/ -o /dev/null -w '%{http_code}\n'
 ```
+
+### Cómo verificar que llegan ataques HTTP
+
+1. `docker compose --env-file .env -f docker-compose.yml -f docker-compose.remote.yml \
+   config | grep -A3 "opencanary:" | grep 8080` — el binding efectivo existe.
+2. `curl -is -u admin:probe http://10.66.0.3:8080/admin` desde otra máquina —
+   debe responder `401` y quedar registrado.
+3. Tras el poll del colector (~10 s), el evento aparece en `deception_events`
+   con `type=login_attempt`, `proto=http`, `src_ip`/`src_port` reales y en
+   `detail`: `auth=basic`, `credentials=admin:probe`, `method=GET`,
+   `path=/admin`, `useragent`, `referer` y `host`. Las peticiones sin Basic
+   (404, scanners) aparecen como `http_request` con método/path/UA/status.
+4. `make attack` (laboratorio) ejercita la trampa en local firing
+   `curl -u admin:… http://127.0.0.1:8080/admin`.
 
 ## Rollback
 

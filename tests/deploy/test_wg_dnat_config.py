@@ -7,7 +7,7 @@ from pathlib import Path
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
-PORTS = {12222, 12223, 13022, 13080, 14021, 15021, 16379, 17222}
+PORTS = {12222, 12223, 13022, 14021, 15021, 16379, 17222, 8080}
 SERVICES = {"cowrie", "opencanary", "dionaea", "heralding", "redishoneypot", "endlessh"}
 
 
@@ -36,11 +36,20 @@ def test_wg_overlay_publishes_only_eight_honeypot_ports_and_private_panel():
     published = {}
     for name in SERVICES:
         for mapping in overlay[name]["ports"]:
+            if "${" in mapping:  # trampa HTTP: bind/puerto por variables
+                assert name == "opencanary"
+                assert mapping == (
+                    "${DYSTOPIA_HTTP_TRAP_BIND:-10.66.0.3}"
+                    ":${DYSTOPIA_HTTP_TRAP_PORT:-8080}:80/tcp"
+                )
+                continue
             address, port, _target = mapping.split(":")
             assert address == "10.66.0.3"
             assert int(port) not in published
             published[int(port)] = name
-    assert set(published) == PORTS
+    assert set(published) == PORTS - {8080}  # 8080 llega vía las variables
+    # La trampa HTTP es la única publicación HTTP: nunca 80/443 en el host.
+    assert all(port not in (80, 443) for port in published)
 
     panel = overlay["control"]["ports"]
     assert len(panel) == 2
@@ -113,6 +122,8 @@ def test_effective_compose_preflight_fails_closed_for_panel_and_extra_ports():
                          for port, target in ports.items()]}
         for name, ports in preflight.PORTS.items()
     }
+    # La trampa HTTP: una única publicación host:puerto→80 en la IP WG.
+    services["opencanary"]["ports"].append(binding("10.66.0.3", 8080, 80))
     services["control"] = {"ports": [binding("127.0.0.1", 8082, 8082),
                                       binding(tail, 8082, 8082)]}
     config = {"services": services}
@@ -122,4 +133,15 @@ def test_effective_compose_preflight_fails_closed_for_panel_and_extra_ports():
     assert not preflight.valid(config, tail, {tail})
     services["control"]["ports"][1]["host_ip"] = tail
     services["cowrie"]["ports"].append(binding("10.66.0.3", 13021, 21))
+    assert not preflight.valid(config, tail, {tail})
+    # La trampa nunca puede publicarse sobre 80/443 ni sobre el panel.
+    services["cowrie"]["ports"].pop()
+    services["opencanary"]["ports"][-1] = binding("10.66.0.3", 80, 80)
+    assert not preflight.valid(config, tail, {tail})
+    services["opencanary"]["ports"][-1] = binding("10.66.0.3", 8082, 80)
+    assert not preflight.valid(config, tail, {tail})
+    services["opencanary"]["ports"][-1] = binding("0.0.0.0", 8080, 80)
+    assert not preflight.valid(config, tail, {tail})
+    # Sin publicación HTTP (o con dos), fail-closed.
+    services["opencanary"]["ports"].pop()
     assert not preflight.valid(config, tail, {tail})

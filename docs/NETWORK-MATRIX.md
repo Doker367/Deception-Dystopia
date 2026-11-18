@@ -27,7 +27,7 @@ Las direcciones se escriben como placeholders: `<SENSOR_VLAN>`,
 |---|---|---|---|---|---|
 | F1 | `<VPS_PUBLIC_IP>` / ingress | `<WG_SERVER_IP>` | UDP 4443 (o el que se acuerde) | Túnel WireGuard | Permitir solo peer acordado |
 | F2 | `<VPS_PUBLIC_IP>` / ingress | `<SENSOR_VLAN>` | TCP 12222, 12223 | Cowrie SSH/Telnet | DNAT; preservar IP origen |
-| F3 | `<VPS_PUBLIC_IP>` / ingress | `<SENSOR_VLAN>` | TCP 13022, 13080 | OpenCanary SSH/HTTP | DNAT; preservar IP origen |
+| F3 | `<VPS_PUBLIC_IP>` / ingress | `<SENSOR_VLAN>` | TCP 13022, 8080 | OpenCanary SSH + trampa HTTP | DNAT; preservar IP origen |
 | F4 | `<VPS_PUBLIC_IP>` / ingress | `<SENSOR_VLAN>` | TCP 14021 | Dionaea FTP | DNAT; preservar IP origen |
 | F5 | `<VPS_PUBLIC_IP>` / ingress | `<SENSOR_VLAN>` | TCP 15021 | Heralding FTP | DNAT; preservar IP origen |
 | F6 | `<VPS_PUBLIC_IP>` / ingress | `<SENSOR_VLAN>` | TCP 16379 | RedisHoneyPot | DNAT; preservar IP origen |
@@ -65,7 +65,7 @@ declarados está en `CELL-INVENTORY.md`.
 | Cowrie | 12222 | 2222 | TCP | SSH | Conservar IP origen |
 | Cowrie | 12223 | 2223 | TCP | Telnet | Conservar IP origen |
 | OpenCanary | 13022 | 22 | TCP | SSH | Conservar IP origen |
-| OpenCanary | 13080 | 80 | TCP | HTTP | Panel falso + beacon `/__fp` |
+| OpenCanary | 8080 | 80 | TCP | HTTP | Panel falso + beacon `/__fp`; trampa HTTP (`DYSTOPIA_HTTP_TRAP_PORT`) |
 | Dionaea | 14021 | 21 | TCP | FTP | Solo FTP publicado hoy |
 | Heralding | 15021 | 21 | TCP | FTP | Solo FTP publicado hoy |
 | RedisHoneyPot | 16379 | 6379 | TCP | Redis | Conservar IP origen |

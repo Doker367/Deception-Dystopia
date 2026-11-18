@@ -73,7 +73,11 @@ services:
     cap_add: [NET_BIND_SERVICE]
     ports:
       - "127.0.0.1:13022:22/tcp"
-      - "127.0.0.1:13080:80/tcp"
+      # Único puerto HTTP publicado: la trampa (módulo http de opencanary,
+      # 80 en el contenedor). Puerto/IP del host configurables; por defecto
+      # solo loopback y, con el override remoto, 10.66.0.3:8080. Nunca se
+      # publican 80/443 ni el resto de puertos de los honeypots.
+      - "${DYSTOPIA_HTTP_TRAP_BIND:-127.0.0.1}:${DYSTOPIA_HTTP_TRAP_PORT:-8080}:80/tcp"
     volumes: ["opencanary_log:/var/log/opencanary"]
     tmpfs:
       - "/tmp:rw,noexec,nosuid,size=64m"

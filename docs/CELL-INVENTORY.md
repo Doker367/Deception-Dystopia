@@ -28,7 +28,7 @@ se construyen con release y digest; no se deben usar tags mutables.
 | Motor | device_id | Puertos contenedor (inventario) | Publicados en laboratorio | Publicados en remoto |
 |---|---|---|---|---|
 | Cowrie | `srv-files-01` | 2222/tcp ssh, 2223/tcp telnet | 12222→2222, 12223→2223 | 10.66.0.3:12222, 10.66.0.3:12223 |
-| OpenCanary | `sw-access-01` | 21, 22, 23, 80, 3306/tcp | 13022→22, 13080→80 | 10.66.0.3:13022, 10.66.0.3:13080 |
+| OpenCanary | `sw-access-01` | 21, 22, 23, 80, 3306/tcp | 13022→22, 8080→80 | 10.66.0.3:13022, 10.66.0.3:8080 |
 | Dionaea | `srv-files-01` | 21, 69/udp, 81, 135, 443, 445, 1433, 1723, 1883, 3306, 27017 | 14021→21 | 10.66.0.3:14021 |
 | Heralding | `srv-db-01` | 21, 22, 23, 25, 80, 110, 143, 443, 3306, 3389, 5432, 5900 | 15021→21 | 10.66.0.3:15021 |
 | RedisHoneyPot | `srv-db-01` | 6379/tcp | 16379→6379 | 10.66.0.3:16379 |
