@@ -579,6 +579,11 @@ def normalize_raw(engine: str, device_id: str, raw, observed_at=None) -> dict | 
     # del VPS). El sensor valida el peer antes de anotar SRC_IP; aquí solo se
     # comprueba que sea una IP canónica.
     forwarded = _text(record, "SRC_IP", "src_ip_forwarded")
+    if not forwarded:
+        # OpenCanary anota SRC_IP dentro de ``logdata``.
+        logdata = record.get("logdata")
+        if isinstance(logdata, dict):
+            forwarded = _text(logdata, "SRC_IP", "src_ip_forwarded")
     trusted = canonical_ip(forwarded.split(",")[0].strip()) if forwarded else None
     if trusted:
         src_ip = trusted
