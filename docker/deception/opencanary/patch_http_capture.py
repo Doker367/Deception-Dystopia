@@ -230,10 +230,11 @@ def patch_http(path: Path = HTTP) -> None:
          "clase CanaryRequest"),
         (PROCESS_NEEDLE, PROCESS_PATCHED, "CanaryRequest.process"),
         (SITE_NEEDLE, SITE_PATCHED, "CanaryHTTP.getService"),
-        (ERROR_NEEDLE, ERROR_PATCHED, "logdata de Error.render"),
         (GET_NEEDLE, GET_PATCHED, "logdata de render_GET"),
         (POST_NEEDLE, POST_PATCHED, "logdata de render_POST"),
     )
+    if ERROR_NEEDLE in source:
+        source = source.replace(ERROR_NEEDLE, ERROR_PATCHED, 1)
     for needle, replacement, name in replacements:
         if needle not in source:
             raise SystemExit(f"{name} no encontrado en el módulo HTTP de OpenCanary")
