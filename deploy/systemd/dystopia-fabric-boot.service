@@ -1,0 +1,30 @@
+[Unit]
+Description=Dystopia Network Fabric: redeploy after boot (OVS/veths no sobreviven al reinicio)
+Documentation=file:/opt/dystopia/current/docs/FABRIC-OPERATIONS.md
+After=network.target docker.service openvswitch-switch.service dystopia-fabric.service
+Wants=docker.service openvswitch-switch.service
+Requires=dystopia-fabric.service
+ConditionPathExists=/etc/dystopia/fabric.env
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/dystopia/fabric.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/dystopia/venv/bin/python /opt/dystopia/current/deploy/server/fabric-boot-deploy.py
+RemainAfterExit=yes
+TimeoutStartSec=600
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+ReadOnlyPaths=/opt/dystopia /etc/dystopia
+
+[Install]
+WantedBy=multi-user.target

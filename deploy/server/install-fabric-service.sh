@@ -164,8 +164,16 @@ fi
 
 # ── Unit + arranque ─────────────────────────────────────────
 install -m 0644 "$UNIT_SRC" "$UNIT_DST"
+# Redeploy tras reboot: OVS y los veths no sobreviven al reinicio.
+BOOT_UNIT_SRC="$(dirname "$UNIT_SRC")/${SERVICE}-boot.service"
+if [[ -f "$BOOT_UNIT_SRC" ]]; then
+    install -m 0644 "$BOOT_UNIT_SRC" "/etc/systemd/system/${SERVICE}-boot.service"
+fi
 systemctl daemon-reload
 systemctl enable "$SERVICE.service" >/dev/null
+if [[ -f "$BOOT_UNIT_SRC" ]]; then
+    systemctl enable "${SERVICE}-boot.service" >/dev/null
+fi
 systemctl restart "$SERVICE.service"
 log "servicio $SERVICE instalado y reiniciado"
 
