@@ -29,9 +29,17 @@ BRANCH = '''    def render_POST(self, request):
                                "device-memory", "downlink", "ect", "rtt", "save-data"}:
                         headers[key] = values[0].decode("utf-8", "replace")[:512]
                 payload = {"client": raw.decode("utf-8", "replace"), "headers": headers}
-                self.factory.log({"FINGERPRINT": json.dumps(payload, ensure_ascii=False)[:12000],
-                                  "PATH": "/__fp", "METHOD": "POST"},
-                                 transport=request.transport, logtype=3000)
+                _logdata = {"FINGERPRINT": json.dumps(payload, ensure_ascii=False)[:12000],
+                            "PATH": "/__fp", "METHOD": "POST"}
+                try:
+                    # IP real si la petición llega por el proxy de confianza
+                    # (helper definido por patch_http_capture.py).
+                    _fwd = _dystopia_forwarded(request)
+                    if _fwd:
+                        _logdata["SRC_IP"] = _fwd
+                except Exception:
+                    pass
+                self.factory.log(_logdata, transport=request.transport, logtype=3000)
             except Exception:
                 pass
             request.setResponseCode(204)
