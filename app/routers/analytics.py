@@ -131,7 +131,7 @@ def attacker_fingerprint(src_ip: str, request: Request):
         raise HTTPException(422, "IP inválida") from None
     from app.services.deception import store_svc
 
-    best = None
+    best: str | None = None
     best_score = -1
     for row in store_svc.get_events(limit=200, src_ip=src_ip):
         raw = row.get("detail")
@@ -145,27 +145,33 @@ def attacker_fingerprint(src_ip: str, request: Request):
         else:
             continue
         value = parsed.get("fingerprint")
-        if not isinstance(value, str):
+        if isinstance(value, str):
+            try:
+                client: object = json.loads(value)
+            except ValueError:
+                continue
+            rendered = value
+        elif isinstance(value, dict):
+            client = value
+            rendered = json.dumps(value, ensure_ascii=False)
+        else:
             continue
-        if not isinstance(value, str):
-            continue
-        try:
-            client = json.loads(value)
-            for _ in range(3):
-                if isinstance(client, dict) and "client" in client:
-                    client = client["client"]
-                    continue
-                if isinstance(client, str):
+        for _ in range(3):
+            if isinstance(client, dict) and "client" in client:
+                client = client["client"]
+                continue
+            if isinstance(client, str):
+                try:
                     client = json.loads(client)
-                    continue
-                break
-        except ValueError:
-            continue
+                except ValueError:
+                    client = None
+                continue
+            break
         if not isinstance(client, dict):
             continue
         score = len([v for v in client.values() if v not in (None, "", [], {})])
         if score > best_score:
-            best, best_score = value, score
+            best, best_score = rendered, score
     if best is None:
         raise HTTPException(404, "sin huella para esa IP")
     return {"src_ip": src_ip, "fingerprint": best, "score": best_score}
