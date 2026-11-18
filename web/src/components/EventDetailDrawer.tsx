@@ -106,10 +106,34 @@ export function EventDetailDrawer({ event, onClose, onOpenAttacker }: {
   const [sessionMovements, setSessionMovements] = useState<Movement[]>([]);
   const [movementsLoading, setMovementsLoading] = useState(false);
   const detail = event.detail ?? {};
-  const fingerprint = useMemo(
-    () => typeof detail.fingerprint === "string" ? parseFingerprintValue(detail.fingerprint) : null,
-    [detail.fingerprint],
-  );
+  const [remoteFingerprint, setRemoteFingerprint] = useState<string | null>(null);
+
+  // El evento de acceso (GET /index.html) no trae huella: el beacon la envía
+  // en un POST /__fp posterior. Se recupera la mejor huella de esa IP para
+  // que la ficha muestre CPU/RAM/GPU/batería igualmente.
+  useEffect(() => {
+    if (typeof detail.fingerprint === "string" || !event.source || !getToken()) {
+      setRemoteFingerprint(null);
+      return;
+    }
+    const controller = new AbortController();
+    apiGet<{ fingerprint: string }>(
+      `/api/analytics/attacker/${encodeURIComponent(event.source)}/fingerprint`,
+      controller.signal,
+    )
+      .then((data) => {
+        if (!controller.signal.aborted) setRemoteFingerprint(data.fingerprint ?? null);
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setRemoteFingerprint(null);
+      });
+    return () => controller.abort();
+  }, [event.id, event.source, detail.fingerprint]);
+
+  const fingerprint = useMemo(() => {
+    const raw = typeof detail.fingerprint === "string" ? detail.fingerprint : remoteFingerprint;
+    return raw ? parseFingerprintValue(raw) : null;
+  }, [detail.fingerprint, remoteFingerprint]);
 
   useEffect(() => {
     if (!getToken()) return;
