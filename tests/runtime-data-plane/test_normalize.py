@@ -225,3 +225,17 @@ def test_fingerprint_aplanado_en_detail():
     assert summary["gpu_vendor"] == "Apple"
     assert summary["battery"]["level"] == 87
     assert summary["timezone"] == "America/Mexico_City"
+
+
+def test_fingerprint_doblemente_anidado():
+    client = {"cores": 6, "ram_gb": 4, "gpuVendor": "Apple", "battery": {"level": 73}}
+    inner = json.dumps({"client": json.dumps(client), "headers": {"user-agent": "x"}})
+    record = {
+        "src_host": "10.66.0.1", "dst_port": 80, "logtype": 3000,
+        "logdata": {"PATH": "/__fp", "METHOD": "POST", "FINGERPRINT": json.dumps({"client": inner, "headers": {}})},
+        "utc_time": "2026-11-18 02:45:00",
+    }
+    event = normalize_raw("opencanary", "sw-access-01", record)
+    summary = json.loads(event["detail"]["fingerprint_summary"])
+    assert summary["cpu_cores"] == 6
+    assert summary["battery"]["level"] == 73
