@@ -5861,3 +5861,89 @@ pre {
   .ai-finding-head time { margin-left: 0; width: 100%; }
   .ai-searchbar .ai-search-ip { border-left: 0; padding-left: 2px; }
 }
+
+/* ════════════════════════════════════════════════════════════
+   Consola interactiva del fabric (drawer de terminal, Fase 11)
+   ════════════════════════════════════════════════════════════
+   El drawer hereda de `.event-drawer.config-drawer` el width/height;
+   aquí solo añadimos el layout interno del terminal (host del xterm),
+   el strip de sesiones y la accesibilidad de pantalla pequeña. */
+
+.console-drawer {
+  display: flex;
+  flex-direction: column;
+  width: min(860px, 100vw);
+}
+
+.console-drawer .drawer-head { position: static; margin: 0; padding: 22px 22px 14px; }
+
+.console-status-strip {
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0 22px 10px;
+}
+
+.console-status-strip .mono.muted {
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.console-sessions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 22px 10px;
+}
+
+/* Chip de sesión en el strip del drawer (mismo lenguaje que .proto-chip). */
+.console-sessions .network-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-soft);
+  font-size: 11.5px;
+  font-weight: 500;
+  text-transform: lowercase;
+}
+
+.console-sessions .network-chip i {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  flex: none;
+}
+
+.console-sessions .network-chip:hover { border-color: var(--text-soft); }
+
+.console-host {
+  flex: 1;
+  min-height: 320px;
+  margin: 0 22px 22px;
+  padding: 10px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 3px;
+  background: #101418;
+  overflow: hidden;
+}
+
+.console-error { margin: 0 22px 10px; }
+
+.console-retry { margin: 0 22px 10px; align-self: flex-start; }
+
+/* xterm.js ajusta el alto del canvas al contenedor; el host define el alto. */
+.console-host .xterm { height: 100%; }
+
+@media (max-width: 680px) {
+  .console-drawer { width: 100vw; }
+  .console-host { min-height: 260px; margin: 0 14px 14px; }
+  .console-status-strip { margin: 0 14px 8px; }
+  .console-sessions { margin: 0 14px 8px; }
+  .console-error, .console-retry { margin: 0 14px 8px; }
+}
+
+.console-clear { padding: 2px 9px; font-size: 11.5px; }

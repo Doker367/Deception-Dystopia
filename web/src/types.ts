@@ -95,3 +95,24 @@ export interface HoneypotConfig {
   healthcheck: { type: string; marker: string; interval: string; startPeriod: string };
   resources: { memLimit: string; cpus: string; pidsLimit: number; nofile: number; tmpfsMib: number };
 }
+
+// ── Consola interactiva del fabric (WebSocket ↔ PTY) ─────────
+
+/** Estado del puente de consola. */
+export type ConsoleStatus =
+  | "connecting"
+  | "open"
+  | "reconnecting"
+  | "error"
+  | "closed";
+
+/** Estado de una sesión de consola (fuente imperativa + espejo React). */
+export interface DeviceConsoleState {
+  status: ConsoleStatus;
+  /** Mensaje de error (nulo si no lo hay). */
+  error: string | null;
+  /** Intento de reconexión (1…n); 0 si nunca se reconectó. */
+  attempt: number;
+  /** Epoch (ms) del próximo intento; null si no hay pendiente. */
+  nextRetryAt: number | null;
+}

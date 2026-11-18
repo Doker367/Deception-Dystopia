@@ -25,6 +25,7 @@ import { apiGet, apiPost, getRole } from "../lib/api";
 import { formatDateTime } from "../lib/format";
 import { ACCENTS, withAlpha } from "../lib/palette";
 import { isLight } from "../lib/theme";
+import type { DeviceConsoleState } from "../types";
 
 // ── Contrato de /api/fabric/* ───────────────────────────────
 
@@ -760,6 +761,26 @@ export function FabricPage() {
   const canAdmin = getRole() === "admin";
   const [layout, setLayout] = useState<GraphLayout>("force");
   const [consoleDevice, setConsoleDevice] = useState<string | null>(null);
+  /* Sesiones de consola abiertas (para los chips con estado). */
+  const [consoleSessions, setConsoleSessions] = useState<
+    Record<string, DeviceConsoleState>
+  >({});
+  const onConsoleState = useCallback((deviceId: string, state: DeviceConsoleState) => {
+    setConsoleSessions((prev) => ({ ...prev, [deviceId]: state }));
+  }, []);
+  const closeConsole = useCallback(() => {
+    setConsoleSessions((prev) => {
+      const next = { ...prev };
+      if (consoleDevice !== null) delete next[consoleDevice];
+      return next;
+    });
+    setConsoleDevice(null);
+  }, [consoleDevice]);
+  const openConsole = useCallback((deviceId: string) => {
+    setSelectedDevice(null);
+    setConsoleDevice((current) => current === deviceId ? current : deviceId);
+  }, []);
+
   const [configOpen, setConfigOpen] = useState(false);
 
   const [loading, setLoading] = useState(true);
@@ -1267,7 +1288,18 @@ export function FabricPage() {
         </div>
       </ActionDialog>
 
-      {consoleDevice && <FabricConsole deviceId={consoleDevice} onClose={() => setConsoleDevice(null)} />}
+      {consoleDevice && (
+        <FabricConsole
+          key={consoleDevice}
+          deviceId={consoleDevice}
+          onState={onConsoleState}
+          otherSessions={Object.entries(consoleSessions)
+            .filter(([id]) => id !== consoleDevice)
+            .map(([id, state]) => ({ deviceId: id, status: state.status }))}
+          onOpenDevice={openConsole}
+          onClose={closeConsole}
+        />
+      )}
       {configOpen && (
         <FabricConfigEditor
           onClose={() => setConfigOpen(false)}
@@ -1281,7 +1313,7 @@ export function FabricPage() {
           onClose={() => setSelectedDevice(null)}
           onOpenConsole={(deviceId) => {
             setSelectedDevice(null);
-            setConsoleDevice(deviceId);
+            openConsole(deviceId);
           }}
         />
       )}
