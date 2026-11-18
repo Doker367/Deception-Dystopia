@@ -130,6 +130,38 @@ SITE_PATCHED = '''        site = CanaryHttpServiceSite(wrapped)
         return internet.TCPServer(self.port, site, interface=self.listen_addr)
 '''
 
+ERROR_NEEDLE = '''    def render(self, request):
+        request.setHeader(b"Server", self.factory.banner)
+        request.setResponseCode(int(self.error_code))
+        return Resource.render(self, request)
+'''
+
+ERROR_PATCHED = '''    def render(self, request):
+        request.setHeader(b"Server", self.factory.banner)
+        request.setResponseCode(int(self.error_code))
+        # (dystopia) los 404 también se registran con la IP real del proxy.
+        try:
+            _useragent = _dystopia_capture(request.getHeader("user-agent"), 512)
+            _logdata = {
+                "SKIN": getattr(self.factory, "skin", ""),
+                "HOSTNAME": request.getRequestHostname(),
+                "PATH": request.path,
+                "METHOD": _dystopia_capture(request.method, 16),
+                "STATUS": self.error_code,
+                "USERAGENT": _useragent or "<not supplied>",
+            }
+            _fwd = _dystopia_forwarded(request)
+            if _fwd:
+                _logdata["SRC_IP"] = _fwd
+            self.factory.log(
+                _logdata, transport=request.transport,
+                logtype=self.factory.logger.LOG_HTTP_GET,
+            )
+        except Exception:
+            pass
+        return Resource.render(self, request)
+'''
+
 GET_NEEDLE = '''            logdata = {
                 "SKIN": self.skin,
                 "HOSTNAME": request.getRequestHostname(),
@@ -201,6 +233,8 @@ def patch_http(path: Path = HTTP) -> None:
         (GET_NEEDLE, GET_PATCHED, "logdata de render_GET"),
         (POST_NEEDLE, POST_PATCHED, "logdata de render_POST"),
     )
+    if ERROR_NEEDLE in source:
+        source = source.replace(ERROR_NEEDLE, ERROR_PATCHED, 1)
     for needle, replacement, name in replacements:
         if needle not in source:
             raise SystemExit(f"{name} no encontrado en el módulo HTTP de OpenCanary")
