@@ -36,6 +36,27 @@ def _dystopia_capture(value, limit):
     return text[:limit]
 
 
+# Proxy de confianza: nginx del VPS (10.66.0.1) añade X-Forwarded-For con la
+# IP real del cliente (real_ip de Cloudflare). Solo se acepta desde ese peer:
+# un atacante directo no puede falsificar su IP con una cabecera.
+_DYSTOPIA_TRUSTED_PROXIES = {"10.66.0.1"}
+
+
+def _dystopia_forwarded(request):
+    """IP real del cliente según X-Forwarded-For/X-Real-IP del proxy de confianza."""
+    try:
+        peer = request.getClientAddress().host
+    except Exception:
+        return ""
+    if peer not in _DYSTOPIA_TRUSTED_PROXIES:
+        return ""
+    value = _dystopia_capture(request.getHeader("x-forwarded-for"), 128)
+    if not value:
+        value = _dystopia_capture(request.getHeader("x-real-ip"), 128)
+    candidate = value.split(",")[0].strip()
+    return candidate
+
+
 def _dystopia_basic_auth(header):
     """Descodifica credenciales RFC 7617 Basic. Nunca lanza."""
     from base64 import b64decode
@@ -67,6 +88,9 @@ def _dystopia_log_basic(factory, request, auth):
     referer = _dystopia_capture(request.getHeader("referer"), 512)
     if referer:
         logdata["REFERER"] = referer
+    _fwd = _dystopia_forwarded(request)
+    if _fwd:
+        logdata["SRC_IP"] = _fwd
     factory.log(logdata, transport=request.transport,
                 logtype=factory.logger.LOG_HTTP_POST_LOGIN_ATTEMPT)
     request.setResponseCode(401)
@@ -126,6 +150,9 @@ GET_PATCHED = '''            logdata = {
             _referer = _dystopia_capture(request.getHeader("referer"), 512)
             if _referer:
                 logdata["REFERER"] = _referer
+            _fwd = _dystopia_forwarded(request)
+            if _fwd:
+                logdata["SRC_IP"] = _fwd
 
             logtype = self.factory.logger.LOG_HTTP_GET
 '''
@@ -155,6 +182,9 @@ POST_PATCHED = '''        logdata = {
         _auth = _dystopia_capture(request.getHeader("authorization"), 32)
         if _auth:
             logdata["AUTH"] = _auth.split(None, 1)[0]
+        _fwd = _dystopia_forwarded(request)
+        if _fwd:
+            logdata["SRC_IP"] = _fwd
 '''
 
 
