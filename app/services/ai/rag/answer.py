@@ -110,6 +110,9 @@ def ask(
         question, conn=conn, embedder=embedder, k=k, kinds=kinds, src_ip=src_ip
     )
     evidence = list(retrieval["results"])
+    retrieved_chunk_ids = {
+        int(item["chunk_id"]) for item in evidence if item.get("chunk_id")
+    }
     extra_context = (extra_context or "").strip()
     if extra_context:
         evidence.insert(0, {
@@ -160,14 +163,21 @@ def ask(
     text = completion["text"]
 
     citations = _citations(text, len(evidence))
+    retrieval = validate_citations(
+        citations, evidence, retrieved_chunk_ids
+    ) if retrieved_chunk_ids else {
+        "valid": citations, "dropped": [], "chunk_ids": [],
+    }
     abstained = "EVIDENCIA INSUFICIENTE" in text.upper()
     structured = _parse_triage(text) if mode == "triage" else None
     return {
         **base,
         "answer": text,
         "abstained": abstained,
-        "grounded": bool(citations) and not abstained,
-        "citations": citations,
+        "grounded": bool(retrieval["valid"]) and not abstained,
+        "citations": retrieval["valid"],
+        "citation_chunks": retrieval["chunk_ids"],
+        "dropped_citations": retrieval["dropped"],
         "structured": structured,
         "model": completion.get("model"),
         "usage": completion.get("usage"),
@@ -194,9 +204,48 @@ def build_context(evidence: Sequence[dict], budget_chars: int = 12_000) -> str:
     return "\n\n".join(blocks)
 
 
-def _citations(text: str, total: int) -> list[int]:
-    found = sorted({int(match.group(1)) for match in _CITATION.finditer(text or "")})
-    return [value for value in found if 1 <= value <= total]
+def _citations(text: str, total: int = 0) -> list[int]:
+    """Números [n] citados en el texto, SIN filtrar rango (lo valida antes)."""
+    return sorted({int(match.group(1)) for match in _CITATION.finditer(text or "")})
+
+
+def validate_citations(
+    citations: Sequence[int],
+    evidence: Sequence[dict],
+    retrieved_chunk_ids: set[int],
+) -> dict:
+    """Valida que la respuesta solo cite fragmentos recuperados.
+
+    Devuelve ``valid`` (números de evidencia citables), ``dropped`` (citas
+    fuera de rango o cuyo fragmento no fue recuperado) y ``chunk_ids``
+    (fragmentos recuperados a los que apuntan las citas válidas). El
+    marcador ``[n]`` se descarta cuando apunta a un chunk_id que el
+    recuperador no entregó: así nunca se cita de memoria ni inventa fuente.
+    """
+    total = len(evidence)
+    valid: set[int] = set()
+    dropped: set[int] = set()
+    chunk_ids: set[int] = set()
+    for number in citations:
+        if not 1 <= number <= total:
+            dropped.add(int(number))
+            continue
+        chunk_id = evidence[number - 1].get("chunk_id")
+        if chunk_id is None:
+            # Evidencia extra sin chunk (movimientos del señuelo): sigue siendo
+            # evidencia citable, pero no aporta chunk_id al mapa.
+            valid.add(int(number))
+            continue
+        if int(chunk_id) in retrieved_chunk_ids:
+            valid.add(int(number))
+            chunk_ids.add(int(chunk_id))
+        else:
+            dropped.add(int(number))
+    return {
+        "valid": sorted(valid),
+        "dropped": sorted(dropped),
+        "chunk_ids": sorted(chunk_ids),
+    }
 
 
 def _public(number: int, item: dict) -> dict:

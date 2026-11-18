@@ -13,8 +13,14 @@ from app.core import settings
 from app.services.ai.rag import store
 from app.services.ai.rag import vectors as vec_utils
 from app.services.ai.rag.errors import RagUnavailable
+from app.services.ai.rag.rerank import rerank, signal_weights
 
 RRF_K = 60
+
+
+def _rerank_enabled() -> bool:
+    """Reranking determinista activado por env (defecto: true)."""
+    return bool(getattr(settings, "RAG_RERANK_ENABLED", True))
 
 
 def search(
@@ -42,15 +48,19 @@ def search(
     degraded = False
     embed_error: Optional[str] = None
     vector_hits: list[tuple[int, float]] = []
-    try:
-        query_vector, _ = vec_utils.normalize(embedder.embed([query])[0])
-        vector_hits = store.vector_search(
-            conn, query_vector, limit=candidates, kinds=kinds, src_ip=src_ip,
-            max_vectors=settings.RAG_MAX_VECTORS,
-        )
-    except RagUnavailable as exc:
+    if embedder is None:
         degraded = True
-        embed_error = str(exc)
+        embed_error = "embedder no disponible (None): degradación léxica"
+    else:
+        try:
+            query_vector, _ = vec_utils.normalize(embedder.embed([query])[0])
+            vector_hits = store.vector_search(
+                conn, query_vector, limit=candidates, kinds=kinds, src_ip=src_ip,
+                max_vectors=settings.RAG_MAX_VECTORS,
+            )
+        except RagUnavailable as exc:
+            degraded = True
+            embed_error = str(exc)
 
     keyword_hits = store.keyword_search(
         conn, query, limit=candidates, kinds=kinds, src_ip=src_ip
@@ -102,9 +112,17 @@ def search(
         if len(results) >= k:
             break
 
+    if _rerank_enabled() and results:
+        try:
+            rerank(results, query, signal_weights())
+        except Exception as exc:  # pragma: no cover - defensa barata
+            embed_error = embed_error or f"rerank falló: {str(exc)[:120]}"
+            results.sort(key=lambda item: (-float(item["score"]), item["chunk_id"]))
+
+    mode = "keyword" if degraded else "hybrid"
     return {
         "query": query,
-        "mode": "keyword" if degraded else "hybrid",
+        "mode": mode + ("+rerank" if (_rerank_enabled() and results) else ""),
         "degraded": degraded,
         "error": embed_error,
         "results": results,

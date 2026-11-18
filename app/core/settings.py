@@ -202,6 +202,19 @@ RAG_MIN_SCORE = float(os.getenv("NETPULSE_RAG_MIN_SCORE", "0.20"))
 RAG_CONTEXT_CHARS = int(os.getenv("NETPULSE_RAG_CONTEXT_CHARS", "12000"))
 RAG_MAX_PER_DOC = int(os.getenv("NETPULSE_RAG_MAX_PER_DOC", "2"))
 RAG_MAX_VECTORS = int(os.getenv("NETPULSE_RAG_MAX_VECTORS", "100000"))
+# Reranking determinista tras RRF: mezcla de señales baratas. Pesos en [0, inf):
+# se multiplican por cada señal normalizada (0..1) y se suman a la puntuación
+# RRF. Ver docs/AI-RAG.md para la justificación de los valores por defecto.
+RAG_RERANK_ENABLED = os.getenv("NETPULSE_RAG_RERANK_ENABLED", "true").lower() == "true"
+RAG_RERANK_W_RRF = float(os.getenv("NETPULSE_RAG_RERANK_W_RRF", "1.0"))
+RAG_RERANK_W_EXACT = float(os.getenv("NETPULSE_RAG_RERANK_W_EXACT", "0.35"))
+RAG_RERANK_W_PROXIMITY = float(os.getenv("NETPULSE_RAG_RERANK_W_PROXIMITY", "0.25"))
+RAG_RERANK_W_RECENCY = float(os.getenv("NETPULSE_RAG_RERANK_W_RECENCY", "0.15"))
+RAG_RERANK_RECENCY_DAYS = float(os.getenv("NETPULSE_RAG_RERANK_RECENCY_DAYS", "45"))
+# Escaneo vectorial acotado: filas máximo visitadas por consulta antes de
+# degradar a léxico. Límite de memoria en bloques por pasada (keyset batching).
+RAG_SCAN_CAP = int(os.getenv("NETPULSE_RAG_SCAN_CAP", "20000"))
+RAG_SCAN_BATCH = int(os.getenv("NETPULSE_RAG_SCAN_BATCH", "2048"))
 # Privacidad: por defecto NO se indexan comandos, URLs ni usuarios capturados.
 # Activarlo solo en un laboratorio autorizado; los secretos se redactan igual.
 RAG_INCLUDE_PAYLOAD = os.getenv("NETPULSE_RAG_INCLUDE_PAYLOAD", "false").lower() == "true"

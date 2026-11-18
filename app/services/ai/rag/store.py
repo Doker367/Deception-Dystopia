@@ -19,6 +19,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional, Sequence
 
+from app.core import settings as _settings_module
 from app.services.ai.rag import vectors as vec_utils
 from app.services.ai.rag.chunker import estimate_tokens
 from app.services.ai.rag.errors import RagUnavailable
@@ -277,17 +278,27 @@ def vector_search(
     src_ip: Optional[str] = None,
     max_vectors: int = 100_000,
 ) -> list[tuple[int, float]]:
-    """Similitud coseno sobre todos los fragmentos (vectores normalizados)."""
+    """Similitud coseno con escaneo por lotes (keyset) y cupo por consulta.
+
+    ``NETPULSE_RAG_SCAN_CAP`` (vía settings) acota las filas visitadas por
+    consulta: al superarlo se levanta ``RagUnavailable`` y el recuperador
+    degrada a búsqueda léxica (fail-closed, nunca se inventa cobertura).
+    El recorrido por lotes mantiene la memoria pico acotada aunque el
+    índice sea grande.
+    """
     total = int(conn.execute("SELECT COUNT(*) FROM rag_vectors").fetchone()[0])
     if total > max_vectors:
         raise RagUnavailable(
             f"índice con {total} vectores supera NETPULSE_RAG_MAX_VECTORS={max_vectors}; "
             "reduzca la ventana o migre a sqlite-vec"
         )
+    scan_cap = int(getattr(_settings_module, "RAG_SCAN_CAP", 0) or 0) or max_vectors
+    batch = int(getattr(_settings_module, "RAG_SCAN_BATCH", 2048) or 2048)
     sql = (
         "SELECT v.chunk_id, v.vec FROM rag_vectors v "
         "JOIN rag_chunks c ON c.id=v.chunk_id "
-        "JOIN rag_docs d ON d.id=c.doc_id"
+        "JOIN rag_docs d ON d.id=c.doc_id "
+        "WHERE v.chunk_id > ?"
     )
     where: list[str] = []
     params: list[Any] = []
@@ -298,13 +309,33 @@ def vector_search(
         where.append("d.src_ip=?")
         params.append(src_ip)
     if where:
-        sql += " WHERE " + " AND ".join(where)
+        sql += " AND " + " AND ".join(where)
+    sql += " ORDER BY v.chunk_id LIMIT ?"
 
-    scored = (
-        (vec_utils.dot_unit(vec_utils.unpack(row["vec"]), query_vector), int(row["chunk_id"]))
-        for row in conn.execute(sql, params)
-    )
-    return [(chunk_id, round(score, 6)) for score, chunk_id in heapq.nlargest(limit, scored)]
+    scored = []
+    scanned = 0
+    last_id = 0
+    unpack = vec_utils.unpack
+    dot = vec_utils.dot_unit
+    while True:
+        remaining = scan_cap - scanned
+        if remaining <= 0:
+            raise RagUnavailable(
+                f"escaneo vectorial acotado: {scanned} filas superan "
+                "NETPULSE_RAG_SCAN_CAP; degradando a búsqueda léxica"
+            )
+        take = max(1, min(batch, remaining))
+        rows = conn.execute(sql, [last_id, *params, take]).fetchall()
+        if not rows:
+            break
+        for row in rows:
+            last_id = int(row["chunk_id"])
+            scored.append((dot(unpack(row["vec"]), query_vector), last_id))
+        scanned += len(rows)
+        if scanned >= total:
+            break
+    return [(chunk_id, round(score, 6)) for score, chunk_id in
+            heapq.nlargest(limit, scored)]
 
 
 def fetch_chunks(conn: sqlite3.Connection, chunk_ids: Sequence[int]) -> dict[int, dict]:

@@ -129,7 +129,7 @@ def test_busqueda_hibrida_y_filtro_por_ip(rag):
 
     result = retriever.search("fuerza bruta SSH", conn=conn, embedder=embedder, k=5)
     assert result["results"]
-    assert result["mode"] == "hybrid"
+    assert result["mode"] in {"hybrid", "hybrid+rerank"}
 
     scoped = retriever.search(
         "fuerza bruta SSH", conn=conn, embedder=embedder, k=5, src_ip="203.0.113.9"
@@ -482,3 +482,160 @@ def test_api_findings_status_y_ack(tmp_path, monkeypatch):
         assert plain.status_code == 200
         assert captured["extra_context"] is None
 
+
+
+# ── Reranking, citas validadas, degradación y límite de escaneo ──────────────
+
+
+def test_rerank_signals_son_deterministas(rag, monkeypatch):
+    """Same input, mismo orden; las señales viven en [0, 1]."""
+
+    root, conn, embedder = rag
+    monkeypatch.setattr(settings, "RAG_RERANK_ENABLED", True)
+    docs = _docs(root / "docs", "mitre.md",
+                 "# T1110\n\nFuerza bruta SSH con logins fallidos repetidos.")
+    indexer.index_knowledge(conn, embedder, roots=[docs.parent])
+    fake = FakeEmbedder()
+    first = retriever.search("fuerza bruta SSH", conn=conn, embedder=fake, k=5)
+    second = retriever.search("fuerza bruta SSH", conn=conn, embedder=fake, k=5)
+    assert [item["chunk_id"] for item in first["results"]] == [
+        item["chunk_id"] for item in second["results"]
+    ]
+    assert first["results"], "el fix debe devolver resultados"
+    for item in first["results"]:
+        signals = item["signals"]
+        for name in ("exact", "proximity", "recency"):
+            assert 0.0 <= signals[name] <= 1.0
+
+
+def test_rerank_prioriza_ip_exacta(rag, monkeypatch):
+    """Con IP en consulta, el fragmento que la contiene sube."""
+    root, conn, embedder = rag
+    docs = _docs(
+        root / "docs", "eventos.md",
+        "El origen 203.0.113.9 ejecutó fuerza bruta SSH.\n\n"
+        "Fuerza bruta SSH general sobre otros señuelos.",
+    )
+    indexer.index_knowledge(conn, embedder, roots=[docs.parent])
+    monkeypatch.setattr(settings, "RAG_RERANK_W_EXACT", 0.9)
+    result = retriever.search(
+        "ataques de 203.0.113.9 por SSH", conn=conn, embedder=embedder, k=1
+    )
+    assert "203.0.113.9" in result["results"][0]["text"]
+
+
+def test_rerank_pesos_configurables_y_cero_uc(rag, monkeypatch):
+    """Con el peso de señales a cero se recupera el orden puro RRF."""
+    root, conn, embedder = rag
+    docs = _docs(root / "docs", "mitre.md", "# T1110\n\nFuerza bruta SSH con logins fallidos y scp de archivos.")
+    indexer.index_knowledge(conn, embedder, roots=[docs.parent])
+    monkeypatch.setattr(settings, "RAG_RERANK_ENABLED", True)
+    monkeypatch.setattr(settings, "RAG_RERANK_W_RRF", 1.0)
+    monkeypatch.setattr(settings, "RAG_RERANK_W_EXACT", 0.0)
+    monkeypatch.setattr(settings, "RAG_RERANK_W_PROXIMITY", 0.0)
+    monkeypatch.setattr(settings, "RAG_RERANK_W_RECENCY", 0.0)
+    plain = retriever.search("fuerza bruta SSH", conn=conn, embedder=embedder, k=5)
+    assert plain["results"] == sorted(
+        plain["results"], key=lambda item: (-item["signals"]["rrf_norm"], item["chunk_id"])
+    )
+
+
+def test_citas_validadas_descarta_inventadas(rag):
+    """[n] que apunta a un fragmento NO recuperado se descarta y marca grounded."""
+    root, conn, embedder = rag
+    docs = _docs(root / "docs", "mitre.md", "# T1110\n\nFuerza bruta SSH con logins fallidos repetidos.")
+    indexer.index_knowledge(conn, embedder, roots=[docs.parent])
+    llm = FakeLLM("Resumen con cita válida [1] y una inventada [7].")
+    out = answer.ask("¿Qué indica T1110?", conn=conn, embedder=embedder, llm=llm)
+    assert out["citations"] == [1]
+    assert out["dropped_citations"] == [7]
+    assert out["grounded"] is True
+    assert out["citation_chunks"] and out["citation_chunks"][0] in {
+        item["chunk_id"] for item in out["evidence"]
+    }
+
+    llm2 = FakeLLM("Solo cite inventadas: [5] y [9].")
+    out2 = answer.ask("¿Qué indica T1110?", conn=conn, embedder=embedder, llm=llm2)
+    assert out2["citations"] == []
+    assert out2["grounded"] is False
+    assert sorted(out2["dropped_citations"]) == [5, 9]
+
+
+def test_citas_solo_chunk_ids_recuperados(rag):
+    """"citation_chunks" nunca contiene ids fuera de la lista recuperada."""
+    root, conn, embedder = rag
+    docs = _docs(root / "docs", "mitre.md", "# T1110\n\nFuerza bruta SSH con logins fallidos.")
+    indexer.index_knowledge(conn, embedder, roots=[docs.parent])
+    llm = FakeLLM("Se observan logins fallidos [1]. T1110 [1]. Otro [2].")
+    out = answer.ask("¿Qué indica T1110?", conn=conn, embedder=embedder, llm=llm)
+    retrieved_ids = {
+        int(item["chunk_id"]) for item in retriever.search(
+            "¿Qué indica T1110?", conn=conn, embedder=embedder, k=5
+        )["results"]
+    }
+    assert set(out["citation_chunks"]) <= retrieved_ids
+    evidence_ids = {
+        item["chunk_id"] for item in out["evidence"] if item.get("chunk_id")
+    }
+    assert set(out["citation_chunks"]) <= evidence_ids
+
+
+def test_degradado_sin_embedder(rag):
+    """Sin servidor de embeddings a lexical puro con degraded=True."""
+    from app.services.ai.rag.errors import RagUnavailable
+
+    root, conn, embedder = rag
+    docs = _docs(root / "docs", "mitre.md", "# T1110\n\nFuerza bruta SSH con logins fallidos.")
+    indexer.index_knowledge(conn, embedder, roots=[docs.parent])
+
+    class BrokenEmbedder:
+        def embed(self, texts):
+            raise RagUnavailable("embeddings no disponibles: servidor caído")
+
+    result = retriever.search("fuerza bruta SSH", conn=conn,
+                              embedder=BrokenEmbedder(), k=5)
+    assert result["degraded"] is True
+    assert result["mode"] == "keyword+rerank" or result["mode"] == "keyword"
+    assert result["results"], "el canal léxico sigue devolviendo resultados"
+    assert "fuerza bruta" in result["results"][0]["text"].lower()
+
+
+def test_degradado_sin_embedder_objeto_nulo(rag):
+    """embedder=None también degrada a léxico (defensivo)."""
+    root, conn, embedder = rag
+    docs = _docs(root / "docs", "mitre.md", "# T1110\n\nFuerza bruta SSH.")
+    indexer.index_knowledge(conn, embedder, roots=[docs.parent])
+    result = retriever.search("fuerza bruta SSH", conn=conn, embedder=None, k=5)
+    assert result["degraded"] is True
+    assert result["results"]
+
+
+def test_rerank_recency_replica_antiguedad(rag, monkeypatch):
+    """La señal de recencia crece con ts recientes (tau corto)."""
+    from app.services.ai.rag import rerank
+
+    root, conn, embedder = rag
+    docs_text_new = "# Eventos\n\nFuerza bruta SSH contra el señuelo hoy."
+    docs = _docs(root / "docs", "eventos.md", docs_text_new)
+    indexer.index_knowledge(conn, embedder, roots=[docs.parent])
+    tau = rerank.signal_weights()["tau_days"]
+    fresh = rerank.recency("2026-11-17T00:00:00+00:00", tau)
+    old = rerank.recency("2001-01-01T00:00:00+00:00", tau)
+    assert fresh > old
+
+
+def test_scan_cap_lleva_a_lexico(rag, monkeypatch):
+    """Un límite de escaneo por debajo del corpus degrada a keyword."""
+
+    root, conn, embedder = rag
+    for index in range(6):
+        _docs(root / "docs", f"evento-{index}.md",
+              f"# T1110 muestra {index}\n\nFuerza bruta SSH con logins fallidos número {index}.")
+    docs_dir = root / "docs"
+    indexer.index_knowledge(conn, embedder, roots=[docs_dir])
+    assert store.stats(conn)["chunks"] > 4
+    monkeypatch.setattr(settings, "RAG_SCAN_CAP", 4)
+    result = retriever.search("fuerza bruta SSH", conn=conn, embedder=embedder, k=5)
+    assert result["results"], "el resultado léxico no puede quedar vacío"
+    assert result["degraded"] is True
+    assert "SCAN_CAP" in (result.get("error") or "")
