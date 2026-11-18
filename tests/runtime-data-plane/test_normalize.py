@@ -153,3 +153,32 @@ def test_redis_addr_field_is_parsed_as_source_and_port():
     assert event["src_ip"] == "203.0.113.50"
     assert event["src_port"] == 41234
     assert event["type"] == "connect"
+
+
+def test_opencanary_usa_ip_reenviada_por_proxy_de_confianza():
+    """El sensor anota SRC_IP tras validar el peer; el normalizador la prefiere."""
+    record = {
+        "src_host": "10.66.0.1",
+        "dst_port": 80,
+        "logtype": 3000,
+        "logdata": {"PATH": "/admin", "METHOD": "GET", "USERAGENT": "curl"},
+        "utc_time": "2026-11-18 01:00:00",
+        "SRC_IP": "203.0.113.7",
+    }
+    event = normalize_raw("opencanary", "sw-access-01", record)
+    assert event is not None
+    assert event["src_ip"] == "203.0.113.7"
+
+
+def test_opencanary_ip_reenviada_invalida_se_ignora():
+    record = {
+        "src_host": "10.66.0.1",
+        "dst_port": 80,
+        "logtype": 3000,
+        "logdata": {"PATH": "/", "METHOD": "GET"},
+        "utc_time": "2026-11-18 01:00:01",
+        "SRC_IP": "no-es-una-ip",
+    }
+    event = normalize_raw("opencanary", "sw-access-01", record)
+    assert event is not None
+    assert event["src_ip"] == "10.66.0.1"

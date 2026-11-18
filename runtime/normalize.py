@@ -341,6 +341,13 @@ def _src_ip(raw: dict) -> str:
     that only embed the socket. Never use ``logdata.HOST``: OpenCanary stores
     the decoy address there, not the attacker.
     """
+    # IP real capturada por el sensor detrás de un proxy de confianza
+    # (nginx del VPS): el sensor ya validó el peer antes de anotarla.
+    forwarded = _text(raw, "SRC_IP", "src_ip_forwarded")
+    if forwarded:
+        candidate = forwarded.split(",")[0].strip()
+        if canonical_ip(candidate) is not None:
+            return canonical_ip(candidate) or candidate
     found = find_source(raw)
     if found and found.ip:
         return found.ip
@@ -568,9 +575,17 @@ def normalize_raw(engine: str, device_id: str, raw, observed_at=None) -> dict | 
         return None
 
     source = find_source(record)
-    if source is None or not source.ip:
+    # IP real anotada por el sensor detrás de un proxy de confianza (nginx
+    # del VPS). El sensor valida el peer antes de anotar SRC_IP; aquí solo se
+    # comprueba que sea una IP canónica.
+    forwarded = _text(record, "SRC_IP", "src_ip_forwarded")
+    trusted = canonical_ip(forwarded.split(",")[0].strip()) if forwarded else None
+    if trusted:
+        src_ip = trusted
+    elif source is not None and source.ip:
+        src_ip = source.ip
+    else:
         raise NormalizeError("no canonical source IP")
-    src_ip = source.ip
     original_type = _resolve_type(record, engine)
     probe = _protocol_probe(record, original_type)
     # A bare HTTP request line accepted by a Telnet listener is a protocol
@@ -590,7 +605,11 @@ def normalize_raw(engine: str, device_id: str, raw, observed_at=None) -> dict | 
         "type": etype,
         "proto": proto,
     }
-    src_port = source.port if source.port is not None else _src_port(record)
+    src_port = (
+        source.port
+        if source is not None and source.port is not None
+        else _src_port(record)
+    )
     if src_port is not None:
         event["src_port"] = src_port
     destination = find_destination(record)
