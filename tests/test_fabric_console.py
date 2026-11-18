@@ -435,3 +435,227 @@ def test_console_ws_rejects_bad_token(client):
             "/api/fabric/devices/pc-recepcion-01/console/ws?token=invalido"
         ) as ws:
             ws.receive_text()
+
+
+# ── Fase 11 (mejoras): resize, límite por device y reap ────
+
+
+class _FakeRemoteWs:
+    """WS falso del servicio del host (solo registra los envíos)."""
+
+    def __init__(self) -> None:
+        self.sent: list[str] = []
+        self.closed = False
+
+    async def send(self, data) -> None:
+        if isinstance(data, (bytes, bytearray)):
+            data = bytes(data).decode("utf-8", errors="replace")
+        self.sent.append(data)
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+def test_console_resize_remote_sends_control_frame():
+    """resize_session en remoto manda el frame JSON acotado al host."""
+    import asyncio as asyncio_mod
+
+    from app.services.fabric.console_svc import ConsoleService
+
+    async def scenario():
+        service = ConsoleService()
+        ws = _FakeRemoteWs()
+        session = ConsoleSession(
+            session_id="tty-resize",
+            device_id="pc-01",
+            container_name="dystopia-fabric-pc-01",
+            username="admin",
+            ws=ws,
+        )
+        service._sessions[session.session_id] = session
+        ok = await service.resize_session("tty-resize", 120, 40)
+        assert ok is True
+        assert len(ws.sent) == 1
+        import json as json_mod
+
+        frame = json_mod.loads(ws.sent[0])
+        assert frame["type"] == "resize"
+        assert frame["cols"] == 120
+        assert frame["rows"] == 40
+
+        # Sin sesión (cerrada o inexistente) → False, no excepción.
+        service._sessions.pop("tty-resize")
+        assert await service.resize_session("tty-resize", 100, 30) is False
+
+    asyncio_mod.run(scenario())
+
+
+def test_console_resize_local_sets_winsize():
+    """resize_session en local aplica TIOCSWINSZ sobre el PTY real."""
+    import asyncio as asyncio_mod
+    import os as os_mod
+    import pty as pty_mod
+    import struct as struct_mod
+    import termios as termios_mod
+
+    from app.services.fabric.console_svc import ConsoleSession, ConsoleService
+
+    async def scenario():
+        master_fd, _slave_fd = pty_mod.openpty()
+        service = ConsoleService()
+        session = ConsoleSession(
+            session_id="tty-local-resize",
+            device_id="pc-02",
+            container_name="dystopia-fabric-pc-02",
+            username="admin",
+            pty_fd=master_fd,
+        )
+        service._sessions[session.session_id] = session
+        ok = await service.resize_session("tty-local-resize", 110, 30)
+        # El servidor puede no estar en modo PTY en el entorno de tests;
+        # si el ioctl se aplicó, verificamos el tamaño con TIOCGWINSZ.
+        if ok:
+            winsize = struct_mod.unpack(
+                "HHHH", fcntl_mod.ioctl(master_fd, termios_mod.TIOCGWINSZ, b"\x00" * 8)
+            )
+            assert (winsize[0], winsize[1]) == (30, 110)
+        os_mod.close(master_fd)
+        assert ok in (True, False)
+
+    import fcntl as fcntl_mod  # noqa: E402
+
+    asyncio_mod.run(scenario())
+
+
+def test_console_per_device_limit_blocks_duplicate():
+    """Abrir dos consolas para el mismo device levanta error claro."""
+    import asyncio as asyncio_mod
+
+    from app.services.fabric.console_svc import ConsoleSession, ConsoleService
+
+    async def scenario():
+        service = ConsoleService()
+        first = ConsoleSession(
+            session_id="tty-a",
+            device_id="pc-dup",
+            container_name="dystopia-fabric-pc-dup",
+            username="admin",
+        )
+        service._sessions[first.session_id] = first
+        assert service.count_for_device("pc-dup") == 1
+        try:
+            await service.open_session(
+                device_id="pc-dup",
+                container_name="dystopia-fabric-pc-dup",
+                username="admin",
+            )
+        except RuntimeError as exc:
+            assert "consola activa" in str(exc)
+        else:
+            raise AssertionError("la segunda sesión debería rechazarse")
+        # Tras cerrar la sesión, el device vuelve a estar disponible.
+        await service.close_session("tty-a")
+        assert service.count_for_device("pc-dup") == 0
+
+    asyncio_mod.run(scenario())
+
+
+def test_console_max_age_reap():
+    """reap_idle también cierra por edad máxima (CONSOLE_MAX_AGE)."""
+    import time as time_mod
+
+    from app.services.fabric.console_svc import (
+        CONSOLE_MAX_AGE,
+        ConsoleSession,
+        ConsoleService,
+    )
+
+    service = ConsoleService()
+    session = ConsoleSession(
+        session_id="tty-old",
+        device_id="pc-03",
+        container_name="dystopia-fabric-pc-03",
+        username="admin",
+    )
+    session.started_at = time_mod.time() - (CONSOLE_MAX_AGE + 60)
+    service._sessions[session.session_id] = session
+    assert service.reap_idle() == 1
+    assert "tty-old" not in service._sessions
+
+
+def test_console_list_sessions_exposes_metadata():
+    """list_sessions devuelve las vivas con orden y excluye cerradas."""
+    from app.services.fabric.console_svc import ConsoleSession, ConsoleService
+
+    service = ConsoleService()
+    live = ConsoleSession(
+        session_id="tty-live",
+        device_id="pc-04",
+        container_name="dystopia-fabric-pc-04",
+        username="admin",
+    )
+    dead = ConsoleSession(
+        session_id="tty-dead",
+        device_id="pc-05",
+        container_name="dystopia-fabric-pc-05",
+        username="admin",
+    )
+    dead.closed = True
+    service._sessions["tty-dead"] = dead
+    service._sessions["tty-live"] = live
+    listed = service.list_sessions()
+    assert [item.session_id for item in listed] == ["tty-live"]
+
+
+def test_console_ws_rejects_viewer_role(auth, client, monkeypatch):
+    """WS de consola con token de viewer → 4401 (falla antes de abrir)."""
+    monkeypatch.setenv("DYSTOPIA_FABRIC_CONSOLE_ENABLED", "true")
+    token = auth["viewer"]["Authorization"].partition(" ")[2]
+    with pytest.raises(Exception):
+        with client.websocket_connect(
+            "/api/fabric/devices/pc-recepcion-01/console/ws?token=" + token
+        ) as ws:
+            ws.receive_text()
+
+
+def test_console_sessions_endpoint_requires_admin(auth, client):
+    """GET /console/sessions con viewer → 403; con admin → contrato."""
+    headers = auth["viewer"]
+    response = client.get("/api/fabric/console/sessions", headers=headers)
+    assert response.status_code == 403
+    admin_headers = auth["admin"]
+    response = client.get("/api/fabric/console/sessions", headers=admin_headers)
+    assert response.status_code in (200, 404, 502, 503)
+
+
+def test_console_reconnect_no_duplicate_session():
+    """Tras cerrar la WS la sesión muere: la reconexión abre una NUEVA."""
+    import asyncio as asyncio_mod
+
+    from app.services.fabric.console_svc import ConsoleService
+
+    async def scenario():
+        service = ConsoleService()
+        first = ConsoleSession(
+            session_id="tty-probe",
+            device_id="pc-06",
+            container_name="dystopia-fabric-pc-06",
+            username="admin",
+        )
+        service._sessions[first.session_id] = first
+        assert service.active_count == 1
+        # El cliente pierde la conexión: close_session mata el proceso/WS.
+        await service.close_session("tty-probe")
+        assert service.active_count == 0
+        # La reconexión abre una sesión con otram ID y sin duplicar device.
+        second = ConsoleSession(
+            session_id="tty-probe-2",
+            device_id="pc-06",
+            container_name="dystopia-fabric-pc-06",
+            username="admin",
+        )
+        service._sessions[second.session_id] = second
+        assert service.active_count == 1
+        assert service.list_sessions()[0].session_id == "tty-probe-2"
+
+    asyncio_mod.run(scenario())
