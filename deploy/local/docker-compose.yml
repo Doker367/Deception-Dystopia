@@ -78,6 +78,10 @@ services:
       # solo loopback y, con el override remoto, 10.66.0.3:8080. Nunca se
       # publican 80/443 ni el resto de puertos de los honeypots.
       - "${DYSTOPIA_HTTP_TRAP_BIND:-127.0.0.1}:${DYSTOPIA_HTTP_TRAP_PORT:-8080}:80/tcp"
+    environment:
+      # El módulo HTTP parcheado registra todas las peticiones (incluidos 404)
+      # con IP real; el shim no duplica el acceso sin IP.
+      OPENCANARY_ACCESS_JSON: "0"
     volumes: ["opencanary_log:/var/log/opencanary"]
     tmpfs:
       - "/tmp:rw,noexec,nosuid,size=64m"

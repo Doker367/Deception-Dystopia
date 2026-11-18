@@ -28,6 +28,11 @@ import re
 import sys
 
 LOG_PATH = os.environ.get("OPENCANARY_ACCESS_LOG", "/var/log/opencanary/opencanary.log")
+# Con el parche del módulo HTTP (patch_http_capture.py) las peticiones —incluidos
+# los 404— se registran por el logger JSON con datos completos (método, headers,
+# credenciales, SRC_IP del proxy). En ese modo el shim solo reenvía stdout para
+# ``docker logs`` y no duplica el evento sin IP: OPENCANARY_ACCESS_JSON=0.
+PERSIST_ACCESS = os.environ.get("OPENCANARY_ACCESS_JSON", "1") != "0"
 # El campo de IP llega entrecomillado en algunas versiones de Twisted y sin
 # comillas en otras; ambos formatos son línea de acceso NCSA/combined.
 ACCESS = re.compile(
@@ -39,6 +44,8 @@ ACCESS = re.compile(
 
 def access_record(line: str) -> dict | None:
     """Parse one Twisted access line into an OpenCanary-shaped JSON record."""
+    if not PERSIST_ACCESS:
+        return None
     # /__fp is already logged with its full fingerprint by the HTTP handler.
     if " /__fp " in line:
         return None
