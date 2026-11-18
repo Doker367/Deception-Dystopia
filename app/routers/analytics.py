@@ -7,6 +7,7 @@ resolved SQLite path so operators can confirm both planes share one store.
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -110,6 +111,54 @@ def events(
             protocol=protocol,
         )
     )
+
+
+@router.get("/attacker/{src_ip}/fingerprint")
+def attacker_fingerprint(src_ip: str, request: Request):
+    """Mejor huella de navegador registrada para una IP.
+
+    Las peticiones de acceso (``GET /index.html``) no traen huella: la envía
+    el beacon en un ``POST /__fp`` posterior. Este endpoint devuelve la huella
+    más completa de esa IP para que el detalle del evento la muestre aunque el
+    evento abierto sea el de acceso.
+    """
+    _human_session(request)
+    import ipaddress
+
+    try:
+        ipaddress.ip_address(src_ip)
+    except ValueError:
+        raise HTTPException(422, "IP inválida") from None
+    from app.services.deception import store_svc
+
+    best = None
+    best_score = -1
+    for row in store_svc.get_events(limit=200, src_ip=src_ip):
+        raw = row.get("detail")
+        if not isinstance(raw, str) or "fingerprint" not in raw:
+            continue
+        try:
+            parsed = json.loads(raw)
+        except ValueError:
+            continue
+        value = parsed.get("fingerprint") if isinstance(parsed, dict) else None
+        if not isinstance(value, str):
+            continue
+        try:
+            client = json.loads(value)
+            client = client.get("client", client) if isinstance(client, dict) else None
+            if isinstance(client, str):
+                client = json.loads(client)
+        except ValueError:
+            continue
+        if not isinstance(client, dict):
+            continue
+        score = len([v for v in client.values() if v not in (None, "", [], {})])
+        if score > best_score:
+            best, best_score = value, score
+    if best is None:
+        raise HTTPException(404, "sin huella para esa IP")
+    return {"src_ip": src_ip, "fingerprint": best, "score": best_score}
 
 
 @router.get("/health")
