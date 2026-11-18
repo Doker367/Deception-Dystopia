@@ -182,3 +182,16 @@ def test_opencanary_ip_reenviada_invalida_se_ignora():
     event = normalize_raw("opencanary", "sw-access-01", record)
     assert event is not None
     assert event["src_ip"] == "10.66.0.1"
+
+
+def test_opencanary_src_ip_dentro_de_logdata():
+    record = {
+        "src_host": "10.66.0.1",
+        "dst_port": 80,
+        "logtype": 3000,
+        "logdata": {"PATH": "/.env", "METHOD": "GET", "SRC_IP": "198.51.100.42"},
+        "utc_time": "2026-11-18 02:00:00",
+    }
+    event = normalize_raw("opencanary", "sw-access-01", record)
+    assert event is not None
+    assert event["src_ip"] == "198.51.100.42"
