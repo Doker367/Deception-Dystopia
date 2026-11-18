@@ -28,8 +28,10 @@ RUN groupadd --gid 2000 opencanary \
 
 COPY --chown=2000:2000 opencanary.conf /etc/opencanaryd/opencanary.conf
 COPY --chown=2000:2000 access_shim.py /usr/local/bin/access_shim.py
-COPY fingerprint.js patch_fp.py /tmp/
-RUN python3 /tmp/patch_fp.py && rm -f /tmp/patch_fp.py /tmp/fingerprint.js
+COPY fingerprint.js patch_fp.py patch_http_capture.py /tmp/
+RUN python3 /tmp/patch_fp.py \
+    && python3 /tmp/patch_http_capture.py \
+    && rm -f /tmp/patch_fp.py /tmp/patch_http_capture.py /tmp/fingerprint.js
 
 # El wrapper opencanaryd usa `sudo -E` incluso cuando ya corre como usuario
 # sin privilegios. Un shim que solo elimina -E y executa el comando evita
@@ -51,3 +53,7 @@ EXPOSE 21 22 23 80 3306
 # stdout and mirrors Twisted HTTP access lines into the JSON log tailed by the
 # collector, so arbitrary paths and user agents reach the analytics plane.
 CMD ["sh", "-c", "opencanaryd --dev 2>&1 | python3 /usr/local/bin/access_shim.py"]
+
+# Señuelo HTTP: el módulo http de opencanary escucha en el 80 del contenedor;
+# la exposición (puerto del host e IP) la fija compose con
+# DYSTOPIA_HTTP_TRAP_PORT / DYSTOPIA_HTTP_TRAP_BIND (docker-compose.yml).
