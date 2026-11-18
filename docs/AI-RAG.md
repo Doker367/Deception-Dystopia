@@ -361,3 +361,88 @@ Protocolo mínimo:
 | `el modelo de embeddings cambió` | Índice incompatible | Reindexar con `--force` |
 | Respuestas vacías o solo razonamiento | La plantilla ignoró `enable_thinking` y consumió `max_tokens` | Arrancar con `--reasoning-format none` o subir `NETPULSE_RAG_LLM_MAX_TOKENS` |
 | OOM de VRAM | Contexto o modelo grande | Bajar `--ctx-size`, usar Q4, cerrar otros servidores |
+
+## 5.1 Evaluación de la recuperación (scripts/eval_rag.py)
+
+`scripts/eval_rag.py` mide la calidad del recuperador en un corpus
+sintético determinista (semilla 20261115, sin red) y — con `--real` —
+contra la base SQLite real. El corpus de calidad cubre seis dominios de
+consulta: ataques por IP, credenciales capturadas, MITRE, dispositivos
+señuelo, movimiento lateral y puertos; 15 casos en total.
+
+| Métrica | Qué mide |
+|---|---|
+| `recall@8` | el fragmento gold aparece entre los 8 primeros |
+| `citation_hit@1` | la cita `[1]` de la respuesta cae en el fragmento gold |
+| `mrr` | media del inverso del puesto del gold |
+
+Resultado medido con embedder sintético (bolsa de palabras, dim 128):
+
+| Modo | recall@8 | citation_hit@1 | mrr |
+|---|---|---|---|
+| baseline (RRF puro) | 0.867 | 0.600 | 0.702 |
+| RRF + señales (rerank) | 0.867 | **0.867** | **0.867** |
+
+El reranking no cambia el recall (los candidatos ya incluyen el gold) pero
+sí la calidad de la cita: sube de 0.60 a 0.867 la proporción de preguntas
+cuya primera evidencia es el fragmento correcto. En la base real
+(43 documentos, 906 fragmentos) las 6 consultas de conocimiento anotadas
+aciertan al gold enpuesto 1 en ambos modos.
+
+## 5.2 Reranking determinista y señales (tarea 2)
+
+Tras la fusión RRF, `app/services/ai/rag/rerank.py` recalcula el orden con
+señales baratas (todas en `[0, 1]`) y pesos configurables:
+
+| Señal | Peso (env) | Defecto | Motivo |
+|---|---|---|---|
+| `rrf_norm` | `NETPULSE_RAG_RERANK_W_RRF` | 1.0 | domina: conserva el fusionado de ambas vías (léxico + semántico) |
+| `exact` | `NETPULSE_RAG_RERANK_W_EXACT` | 0.35 | IP/puerto/usuario citado en la query es un identificador único: sube al fragmento que lo contiene |
+| `proximity` | `NETPULSE_RAG_RERANK_W_PROXIMITY` | 0.25 | ventana mínima de términos: premisa de frase ("fuerza bruta SSH" contigua) |
+| `recency` | `NETPULSE_RAG_RERANK_W_RECENCY` | 0.15 | eventos recientes pesan algo más; `tau` = `NETPULSE_RAG_RERANK_RECENCY_DAYS` (45 días) |
+
+- `rrf_norm` es el score RRF del candidato normalizado por el máximo del
+  pool: sin sesgo de volumen.
+- `exact` detecta IPs (regex estricta), puertos (2-5 dígitos) y tokens de
+  contenido; cuenta fracción de entidades de la consulta presentes.
+- `proximity` usa ventana mínima que cubre todos los términos; 1/(1+extra).
+- `recency` es `exp(-edad_días/tau)` con `tau` 45; documentos sin `ts`
+  valen 0 (no penalizan conocimiento estable).
+- Empates: desempate por `chunk_id` — orden estable y determinista.
+- Desactivar todo: `NETPULSE_RAG_RERANK_ENABLED=false`, o pesos 0.
+
+## 5.3 Citas validadas contra fragmentos recuperados (tarea 3)
+
+La respuesta valida cada cita `[n]` con `answer.validate_citations`:
+
+1. `[n]` fuera de rango (no hay evidencia n) se **descarta** y aparece en
+   `dropped_citations`.
+2. `[n]` que apunta a un `chunk_id` **no recuperado** por el híbrido se
+   descarta: nunca se cita de memoria ni inventa fuente y figura en
+   `dropped_citations`.
+3. `citation_chunks` enumera los `chunk_id` recuperados que respaldan las
+   citas válidas; `citations` mantiene el índice `[n]` (formato UI).
+4. `grounded` queda `false` si tras validar no queda ninguna cita.
+
+Test: `tests/test_ai_rag.py::test_citas_validadas_descarta_inventadas`.
+
+## 5.4 Degradación y límites de escaneo (tareas 4 y 5)
+
+- **Sin embedder** (o `embedder=None`): la búsqueda sigue léxica con
+  `degraded=true` y `mode="keyword"`; la respuesta se abstiene si no hay
+  evidencia. Test: `test_degradado_sin_embedder` y `..._nulo`.
+- **Escaneo vectorial acotado**: `store.vector_search` recorre en lotes
+  (`NETPULSE_RAG_SCAN_BATCH`, 2048 filas) y corta o degrada cuando la
+  consulta supera `NETPULSE_RAG_SCAN_CAP` (defecto 20000):
+  | Cap | p50 (10k chunk, dim 1024) | Cobertura |
+  |---|---|---|
+  | 250 | 4.9 ms | degrada (20k+ corpus) |
+  | 2000 | 33.1 ms | degrada |
+  | 5000 | 80.6 ms | degrada |
+  | 10000 (índice completo) | 154.8 ms | híbrido completo |
+  El coste es ≈15 ms por 1 000 fragmentos a 1024 dims; para superar el
+  millón de fragmentos, migrar a `sqlite-vec` manteniendo el contrato.
+- Latencias a 10 000 fragmentos (fake embedder, dim 1024, p50/p95):
+  keyword 5.4/6.4 ms · vector 153.9/156.9 ms · híbrido RRF 159.2/163.2 ms ·
+  híbrido + señales 159.1/163.4 ms. El reranking añade < 0.3 ms por
+  consulta: opera solo sobre los ~24 candidatos, nunca sobre todo el índice.
