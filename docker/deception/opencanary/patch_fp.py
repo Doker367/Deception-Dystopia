@@ -65,15 +65,24 @@ def patch_http() -> None:
 
 
 def patch_skin() -> None:
-    html = SKIN.read_text(encoding="utf-8")
-    if "dystopia-fp" in html:
-        return
+    """Inyecta el beacon en TODAS las páginas HTML del skin.
+
+    El login (index.html) ya lo llevaba, pero un 404 (/version,
+    /wp-includes/...) no: el visitante nunca ejecutaba el fingerprint. Se
+    inyecta en 404/400/403/redirect y en cualquier *.html del skin, con
+    marca idempotente.
+    """
     script = '<script id="dystopia-fp">' + FP_JS.read_text(encoding="utf-8") + "</script>"
-    if "</body>" in html:
-        html = html.replace("</body>", script + "</body>", 1)
-    else:
-        html += script
-    SKIN.write_text(html, encoding="utf-8")
+    pages = sorted(SKIN.parent.glob("*.html"))
+    for page in pages:
+        html = page.read_text(encoding="utf-8")
+        if "dystopia-fp" in html:
+            continue
+        if "</body>" in html:
+            html = html.replace("</body>", script + "</body>", 1)
+        else:
+            html += script
+        page.write_text(html, encoding="utf-8")
 
 
 if __name__ == "__main__":
