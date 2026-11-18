@@ -485,11 +485,16 @@ def _detail(raw: dict, engine: str, etype: str, source_field: str = "") -> dict:
             parsed = None
         if isinstance(parsed, dict):
             client = parsed.get("client")
-            if isinstance(client, str) and client.strip().startswith("{"):
-                try:
-                    client = json.loads(client)
-                except ValueError:
-                    client = None
+            # El cliente puede venir anidado (``{"client": "{\"client\": ...}"``)
+            # por dobles envoltorios del beacon; se desenvuelve hasta 3 niveles.
+            for _ in range(3):
+                if isinstance(client, str) and client.strip().startswith("{"):
+                    try:
+                        client = json.loads(client)
+                    except ValueError:
+                        client = None
+                else:
+                    break
             if isinstance(client, dict):
                 summary = {
                     "cpu_cores": client.get("cores"),
